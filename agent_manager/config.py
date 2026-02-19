@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     OPENCLAW_STATE_DIR: str = "/root/.openclaw"
     SERVER_HOST: str = "0.0.0.0"
     SERVER_PORT: int = 8000
+    ROOT_PATH: str = "/agents"  # Set when behind a reverse proxy with a path prefix
 
 
 settings = Settings()
