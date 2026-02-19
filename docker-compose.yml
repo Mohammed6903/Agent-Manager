@@ -1,0 +1,40 @@
+services:
+  # ── OpenClaw Gateway ───────────────────────────────────────────────────────
+  # Uncomment this service if you want docker-compose to also run the gateway.
+  # If the gateway is already running on the host, leave it commented out and
+  # use `network_mode: host` on the agent-manager service instead.
+  #
+  # openclaw-gateway:
+  #   image: node:20-slim
+  #   command: >
+  #     sh -c "npm install -g openclaw@2026.2.17 && openclaw gateway start"
+  #   ports:
+  #     - "18789:18789"
+  #   volumes:
+  #     - openclaw-state:/root/.openclaw
+  #   restart: unless-stopped
+
+  # ── AgentManager API ──────────────────────────────────────────────────────
+  agent-manager:
+    build: .
+    ports:
+      - "${SERVER_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      # Share the OpenClaw state directory so the manager can read/write
+      # agent workspaces and the CLI can access session data.
+      - ${OPENCLAW_STATE_DIR:-/root/.openclaw}:/root/.openclaw
+    # Use host networking if the gateway is running directly on the host
+    # (uncomment the line below and remove the ports mapping above):
+    # network_mode: host
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# volumes:
+#   openclaw-state:
