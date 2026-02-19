@@ -90,10 +90,10 @@ def _build_agents_raw(agents: list[dict[str, Any]]) -> str:
     entries: list[str] = []
     for a in agents:
         entry = (
-            f'{{ id: \\"{a["id"]}\\", '
-            f'name: \\"{a["name"]}\\", '
-            f'workspace: \\"{a["workspace"]}\\", '
-            f'agentDir: \\"{a["agentDir"]}\\" }}'
+            f'{{ id: "{a["id"]}", '
+            f'name: "{a["name"]}", '
+            f'workspace: "{a["workspace"]}", '
+            f'agentDir: "{a["agentDir"]}" }}'
         )
         entries.append(entry)
     joined = ", ".join(entries)
