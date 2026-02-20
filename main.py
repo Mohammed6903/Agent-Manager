@@ -170,15 +170,28 @@ async def new_session():
 # ── Sessions ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/agents/{agent_id}/sessions", tags=["Sessions"])
-async def list_sessions(agent_id: str):
-    """List sessions for a specific agent."""
-    return await session_service.list_sessions(agent_id)
+async def list_sessions(agent_id: str, user_id: str | None = None):
+    """List sessions for a specific agent. Optionally filter by user_id."""
+    return await session_service.list_sessions(agent_id, user_id=user_id)
 
 
 @app.get("/api/sessions", tags=["Sessions"])
-async def list_all_sessions():
-    """List all sessions across all agents."""
-    return await session_service.list_all_sessions()
+async def list_all_sessions(user_id: str | None = None):
+    """List all sessions across all agents. Optionally filter by user_id."""
+    return await session_service.list_all_sessions(user_id=user_id)
+
+
+@app.get("/api/agents/{agent_id}/sessions/{user_id}/history", tags=["Sessions"])
+async def get_session_history(
+    agent_id: str,
+    user_id: str,
+    session_id: str | None = None,
+    limit: int = 50,
+):
+    """Get chat history for a specific user+agent session."""
+    return await session_service.get_session_history(
+        agent_id, user_id, session_id=session_id, limit=limit,
+    )
 
 
 @app.delete("/api/agents/{agent_id}/memory", tags=["Sessions"])
