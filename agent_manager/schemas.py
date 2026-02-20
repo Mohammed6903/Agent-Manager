@@ -55,6 +55,9 @@ class ChatRequest(BaseModel):
     agent_id: str
     user_id: str
     session_id: Optional[str] = None
+    # Group chat fields — set room_id for @mention in a group room
+    room_id: Optional[str] = None
+    recent_context: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

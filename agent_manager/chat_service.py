@@ -19,18 +19,50 @@ logger = logging.getLogger("agent_manager.chat_service")
 _HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
 
 
-def _build_user_field(agent_id: str, user_id: str, session_id: str | None) -> str:
+def _build_user_field(
+    agent_id: str,
+    user_id: str,
+    session_id: str | None = None,
+    room_id: str | None = None,
+) -> str:
+    """Build the user field for session isolation.
+
+    DM sessions:    agent_id:user_id[:session_id]
+    Group sessions: agent_id:group:room_id
+    """
+    if room_id:
+        return f"{agent_id}:group:{room_id}"
     if session_id:
         return f"{agent_id}:{user_id}:{session_id}"
     return f"{agent_id}:{user_id}"
 
 
+def _build_messages(req: "ChatRequest") -> list[dict]:
+    """Build the messages list, injecting recent_context for group @mentions."""
+    messages = [{"role": m.role, "content": m.content} for m in req.history]
+
+    if req.room_id and req.recent_context:
+        # Group chat: prepend recent conversation context so the agent
+        # sees who said what, then the triggering user's actual message.
+        context_block = (
+            f"[Group chat in room '{req.room_id}' — recent messages]\n"
+            f"{req.recent_context}\n\n"
+            f"[{req.user_id} mentioned you and said]:\n{req.message}"
+        )
+        messages.append({"role": "user", "content": context_block})
+    else:
+        messages.append({"role": "user", "content": req.message})
+
+    return messages
+
+
 async def _stream_gateway(req: ChatRequest) -> AsyncGenerator[bytes, None]:
     """Open a streaming connection to the OpenClaw Gateway and yield SSE chunks."""
-    user_field = _build_user_field(req.agent_id, req.user_id, req.session_id)
-
-    messages = [{"role": m.role, "content": m.content} for m in req.history]
-    messages.append({"role": "user", "content": req.message})
+    user_field = _build_user_field(
+        req.agent_id, req.user_id,
+        session_id=req.session_id, room_id=req.room_id,
+    )
+    messages = _build_messages(req)
 
     body = {
         "model": f"openclaw:{req.agent_id}",
@@ -99,10 +131,11 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 
 async def chat_non_stream(req: ChatRequest) -> dict:
     """Send a non-streaming chat request and return the full response."""
-    user_field = _build_user_field(req.agent_id, req.user_id, req.session_id)
-
-    messages = [{"role": m.role, "content": m.content} for m in req.history]
-    messages.append({"role": "user", "content": req.message})
+    user_field = _build_user_field(
+        req.agent_id, req.user_id,
+        session_id=req.session_id, room_id=req.room_id,
+    )
+    messages = _build_messages(req)
 
     body = {
         "model": f"openclaw:{req.agent_id}",

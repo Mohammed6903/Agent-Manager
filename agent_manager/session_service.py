@@ -26,26 +26,42 @@ def _sessions_index(agent_id: str) -> dict:
     return json.loads(sessions_file.read_text())
 
 
-async def list_sessions(agent_id: str, user_id: Optional[str] = None) -> Any:
+async def list_sessions(
+    agent_id: str,
+    user_id: Optional[str] = None,
+    room_id: Optional[str] = None,
+) -> Any:
     """
     List sessions for a specific agent.
-    If user_id is provided, returns only that user's sessions.
+    If user_id is provided, returns only that user's DM sessions.
+    If room_id is provided, returns only that room's group sessions.
     """
     index = await asyncio.to_thread(_sessions_index, agent_id)
 
     sessions = []
     for session_key, meta in index.items():
-        # Filter by user_id if provided
-        if user_id:
-            # Session key format: agent:{agent_id}:openai-user:{agent_id}:{user_id}
-            # or agent:{agent_id}:openai-user:{agent_id}:{user_id}:{session_id}
+        # Filter by room_id (group sessions)
+        if room_id:
+            # Group session key: agent:{agent_id}:openai-user:{agent_id}:group:{room_id}
+            if f"openai-user:{agent_id}:group:{room_id}" not in session_key:
+                continue
+        # Filter by user_id (DM sessions only — exclude group sessions)
+        elif user_id:
+            # DM key: agent:{agent_id}:openai-user:{agent_id}:{user_id}
             if f"openai-user:{agent_id}:{user_id}" not in session_key:
                 continue
+            # Exclude group sessions from user_id filter
+            if f"openai-user:{agent_id}:group:" in session_key:
+                continue
+
+        # Detect session type
+        is_group = ":group:" in session_key
 
         sessions.append({
             "session_key": session_key,
             "agent_id": agent_id,
             "session_id": meta.get("sessionId"),
+            "session_type": "group" if is_group else "dm",
             "updated_at": meta.get("updatedAt"),
             "input_tokens": meta.get("inputTokens", 0),
             "output_tokens": meta.get("outputTokens", 0),
@@ -60,6 +76,7 @@ async def list_sessions(agent_id: str, user_id: Optional[str] = None) -> Any:
     return {
         "agent_id": agent_id,
         "user_id": user_id,
+        "room_id": room_id,
         "sessions": sessions,
         "count": len(sessions),
     }
@@ -96,18 +113,22 @@ async def list_all_sessions(user_id: Optional[str] = None) -> Any:
 
 async def get_session_history(
     agent_id: str,
-    user_id: str,
+    user_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    room_id: Optional[str] = None,
     limit: int = 50,
 ) -> Any:
     """
-    Get chat history for a specific user+agent session.
-    Reads JSONL transcript directly — filters to user/assistant text only.
+    Get chat history for a specific session.
+    For DM: supply user_id (and optionally session_id).
+    For group: supply room_id.
     """
     index = await asyncio.to_thread(_sessions_index, agent_id)
 
     # Build session key — must match what chat endpoint sends
-    if session_id:
+    if room_id:
+        session_key = f"agent:{agent_id}:openai-user:{agent_id}:group:{room_id}"
+    elif session_id:
         session_key = f"agent:{agent_id}:openai-user:{agent_id}:{user_id}:{session_id}"
     else:
         session_key = f"agent:{agent_id}:openai-user:{agent_id}:{user_id}"
@@ -117,6 +138,7 @@ async def get_session_history(
         return {
             "agent_id": agent_id,
             "user_id": user_id,
+            "room_id": room_id,
             "session_key": session_key,
             "messages": [],
             "count": 0,
@@ -135,6 +157,7 @@ async def get_session_history(
         return {
             "agent_id": agent_id,
             "user_id": user_id,
+            "room_id": room_id,
             "session_key": session_key,
             "messages": [],
             "count": 0,
@@ -182,6 +205,7 @@ async def get_session_history(
     return {
         "agent_id": agent_id,
         "user_id": user_id,
+        "room_id": room_id,
         "session_key": session_key,
         "messages": messages,
         "count": len(messages),

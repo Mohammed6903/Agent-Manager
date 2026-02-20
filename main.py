@@ -170,9 +170,13 @@ async def new_session():
 # ── Sessions ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/agents/{agent_id}/sessions", tags=["Sessions"])
-async def list_sessions(agent_id: str, user_id: str | None = None):
-    """List sessions for a specific agent. Optionally filter by user_id."""
-    return await session_service.list_sessions(agent_id, user_id=user_id)
+async def list_sessions(
+    agent_id: str,
+    user_id: str | None = None,
+    room_id: str | None = None,
+):
+    """List sessions for a specific agent. Filter by user_id (DM) or room_id (group)."""
+    return await session_service.list_sessions(agent_id, user_id=user_id, room_id=room_id)
 
 
 @app.get("/api/sessions", tags=["Sessions"])
@@ -188,9 +192,21 @@ async def get_session_history(
     session_id: str | None = None,
     limit: int = 50,
 ):
-    """Get chat history for a specific user+agent session."""
+    """Get chat history for a specific user DM session."""
     return await session_service.get_session_history(
-        agent_id, user_id, session_id=session_id, limit=limit,
+        agent_id, user_id=user_id, session_id=session_id, limit=limit,
+    )
+
+
+@app.get("/api/agents/{agent_id}/rooms/{room_id}/history", tags=["Sessions"])
+async def get_room_history(
+    agent_id: str,
+    room_id: str,
+    limit: int = 50,
+):
+    """Get chat history for a group room session."""
+    return await session_service.get_session_history(
+        agent_id, room_id=room_id, limit=limit,
     )
 
 
