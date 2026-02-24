@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import HTTPException, Request, UploadFile
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .config import settings
 from .schemas import ChatMessage, ChatRequest
@@ -108,7 +109,7 @@ def _uploads_dir(agent_id: str) -> Path:
     return Path(settings.OPENCLAW_STATE_DIR) / f"workspace-{agent_id}" / "uploads"
 
 
-async def save_upload(agent_id: str, file: UploadFile) -> str:
+async def save_upload(agent_id: str, file: StarletteUploadFile) -> str:
     """Save an uploaded file to the agent's workspace and return the path.
 
     Images are auto-compressed to fit within MAX_UPLOAD_SIZE_MB.
@@ -260,7 +261,7 @@ async def _parse_multipart(
     for key in form:
         value = form.getlist(key)
         for item in value:
-            if isinstance(item, UploadFile) and item.filename:
+            if isinstance(item, StarletteUploadFile) and item.filename:
                 path = await save_upload(req.agent_id, item)
                 file_paths.append(path)
 
