@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import time
@@ -16,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from .config import settings
 from .schemas import ChatRequest, NewSessionResponse
+from PIL import Image
 
 logger = logging.getLogger("agent_manager.chat_service")
 
@@ -227,9 +229,13 @@ def new_session() -> NewSessionResponse:
 
 # ── File upload helpers ─────────────────────────────────────────────────────────
 
+_IMAGE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+    ".tiff", ".tif", ".heic", ".heif", ".svg",
+}
+
 _ALLOWED_EXTENSIONS = {
-    # Images
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
+    *_IMAGE_EXTENSIONS,
     # Documents
     ".pdf", ".txt", ".csv", ".json", ".yaml", ".yml", ".xml",
     ".md", ".html", ".htm", ".log",
@@ -243,10 +249,73 @@ def _uploads_dir(agent_id: str) -> Path:
     return Path(settings.OPENCLAW_STATE_DIR) / f"workspace-{agent_id}" / "uploads"
 
 
+def _compress_image(content: bytes, target_bytes: int) -> tuple[bytes, str]:
+    """Compress an image to fit within target_bytes.
+
+    Returns (compressed_bytes, new_extension).
+    Progressively reduces quality and dimensions until the target is met.
+    """
+
+    img = Image.open(io.BytesIO(content))
+
+    # Convert RGBA/palette to RGB for JPEG output
+    if img.mode in ("RGBA", "P", "LA"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        background.paste(img, mask=img.split()[-1] if "A" in img.mode else None)
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Step 1: Resize if very large (cap longest edge at 2048px)
+    max_dim = 2048
+    if max(img.size) > max_dim:
+        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+    # Step 2: Try decreasing JPEG quality until under target
+    for quality in (85, 70, 55, 40, 30):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        result = buf.getvalue()
+        if len(result) <= target_bytes:
+            logger.info(
+                "Image compressed: %dKB -> %dKB (quality=%d, size=%sx%s)",
+                len(content) // 1024, len(result) // 1024, quality, *img.size,
+            )
+            return result, ".jpg"
+
+    # Step 3: If still too large, progressively shrink dimensions
+    for scale in (0.75, 0.5, 0.35, 0.25):
+        w, h = int(img.size[0] * scale), int(img.size[1] * scale)
+        if w < 100 or h < 100:
+            break
+        resized = img.resize((w, h), Image.LANCZOS)
+        buf = io.BytesIO()
+        resized.save(buf, format="JPEG", quality=50, optimize=True)
+        result = buf.getvalue()
+        if len(result) <= target_bytes:
+            logger.info(
+                "Image compressed (resized): %dKB -> %dKB (size=%dx%d)",
+                len(content) // 1024, len(result) // 1024, w, h,
+            )
+            return result, ".jpg"
+
+    # Fallback: return the smallest version we produced
+    if result is None:
+        # This shouldn't happen, but produce a last-resort JPEG
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=30, optimize=True)
+        result = buf.getvalue()
+    logger.warning("Image could not be compressed below target (%dKB)", len(result) // 1024)
+    return result, ".jpg"
+
+
 async def save_upload(agent_id: str, file: UploadFile) -> str:
     """Save an uploaded file to the agent's workspace and return the path.
 
-    Validates file size and extension. Raises HTTPException on errors.
+    Images are auto-compressed to fit within MAX_UPLOAD_SIZE_MB.
+    Non-image files that exceed the limit are rejected.
     """
     # Validate filename
     if not file.filename:
@@ -263,22 +332,54 @@ async def save_upload(agent_id: str, file: UploadFile) -> str:
             },
         )
 
-    # Read file and validate size
-    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    # Read file content
+    max_raw_bytes = settings.MAX_RAW_UPLOAD_SIZE_MB * 1024 * 1024
     content = await file.read()
 
-    if len(content) > max_bytes:
+    # Reject files that exceed the raw upload limit
+    if len(content) > max_raw_bytes:
         raise HTTPException(
             status_code=413,
             detail={
                 "error": "file_too_large",
-                "message": f"File size ({len(content) / 1024 / 1024:.1f}MB) exceeds the {settings.MAX_UPLOAD_SIZE_MB}MB limit.",
+                "message": (
+                    f"File size ({len(content) / 1024 / 1024:.1f}MB) exceeds the "
+                    f"{settings.MAX_RAW_UPLOAD_SIZE_MB}MB upload limit."
+                ),
+                "max_size_mb": settings.MAX_RAW_UPLOAD_SIZE_MB,
+            },
+        )
+
+    is_image = ext in _IMAGE_EXTENSIONS and ext != ".svg"
+    target_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    save_name = file.filename
+
+    # Auto-compress images that exceed the target size
+    if is_image and len(content) > target_bytes:
+        logger.info(
+            "Compressing image %s (%dKB) to fit under %dMB",
+            file.filename, len(content) // 1024, settings.MAX_UPLOAD_SIZE_MB,
+        )
+        content, new_ext = await asyncio.to_thread(_compress_image, content, target_bytes)
+        # Update filename extension to .jpg after compression
+        base_name = os.path.splitext(file.filename)[0]
+        save_name = f"{base_name}{new_ext}"
+    elif not is_image and len(content) > target_bytes:
+        # Non-image files cannot be compressed — reject
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "file_too_large",
+                "message": (
+                    f"File size ({len(content) / 1024 / 1024:.1f}MB) exceeds the "
+                    f"{settings.MAX_UPLOAD_SIZE_MB}MB limit. Only images are auto-compressed."
+                ),
                 "max_size_mb": settings.MAX_UPLOAD_SIZE_MB,
             },
         )
 
     # Generate unique filename to avoid collisions
-    unique_name = f"{uuid.uuid4().hex[:12]}_{file.filename}"
+    unique_name = f"{uuid.uuid4().hex[:12]}_{save_name}"
     upload_dir = _uploads_dir(agent_id)
     await asyncio.to_thread(os.makedirs, str(upload_dir), exist_ok=True)
 

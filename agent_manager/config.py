@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     SERVER_HOST: str = "0.0.0.0"
     SERVER_PORT: int = 8000
     ROOT_PATH: str = "/agents"  # Set when behind a reverse proxy with a path prefix
-    MAX_UPLOAD_SIZE_MB: int = 5  # Maximum file upload size in megabytes
+    MAX_UPLOAD_SIZE_MB: int = 5  # Target max size after compression (in MB)
+    MAX_RAW_UPLOAD_SIZE_MB: int = 20  # Maximum raw upload size before compression (in MB)
 
 
 settings = Settings()
