@@ -44,7 +44,7 @@ def _compress_image(content: bytes, target_bytes: int) -> tuple[bytes, str]:
     """
     from PIL import Image
 
-    img = Image.open(io.BytesIO(content))
+    img: Image.Image = Image.open(io.BytesIO(content))
 
     # Convert RGBA/palette to RGB for JPEG output
     if img.mode in ("RGBA", "P", "LA"):
@@ -59,7 +59,7 @@ def _compress_image(content: bytes, target_bytes: int) -> tuple[bytes, str]:
     # Step 1: Resize if very large (cap longest edge at 2048px)
     max_dim = 2048
     if max(img.size) > max_dim:
-        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
     # Step 2: Try decreasing JPEG quality until under target
     result = None
@@ -79,7 +79,7 @@ def _compress_image(content: bytes, target_bytes: int) -> tuple[bytes, str]:
         w, h = int(img.size[0] * scale), int(img.size[1] * scale)
         if w < 100 or h < 100:
             break
-        resized = img.resize((w, h), Image.LANCZOS)
+        resized = img.resize((w, h), Image.Resampling.LANCZOS)
         buf = io.BytesIO()
         resized.save(buf, format="JPEG", quality=50, optimize=True)
         result = buf.getvalue()

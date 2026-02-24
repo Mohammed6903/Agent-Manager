@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from agent_manager import agent_service, chat_service, session_service
@@ -150,7 +150,65 @@ async def delete_agent(agent_id: str):
 
 # ── Chat ────────────────────────────────────────────────────────────────────────
 
-@app.post("/api/chat", tags=["Chat"])
+# OpenAPI schema shared by both chat endpoints so Swagger shows the full
+# request body for JSON **and** multipart (with file uploads).
+_CHAT_OPENAPI_EXTRA: dict = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["message", "agent_id", "user_id"],
+                    "properties": {
+                        "message":        {"type": "string", "description": "The user message to send to the agent."},
+                        "agent_id":       {"type": "string", "description": "Target agent identifier."},
+                        "user_id":        {"type": "string", "description": "Caller's user identifier."},
+                        "history":        {
+                            "type": "array",
+                            "default": [],
+                            "description": "Previous messages for context.",
+                            "items": {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role":    {"type": "string"},
+                                    "content": {"type": "string"},
+                                },
+                            },
+                        },
+                        "session_id":     {"type": "string", "nullable": True, "description": "Optional session id for DM isolation."},
+                        "room_id":        {"type": "string", "nullable": True, "description": "Room id for group @mention chats."},
+                        "recent_context": {"type": "string", "nullable": True, "description": "Recent conversation context for group chats."},
+                    },
+                },
+            },
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["message", "agent_id", "user_id"],
+                    "properties": {
+                        "message":        {"type": "string"},
+                        "agent_id":       {"type": "string"},
+                        "user_id":        {"type": "string"},
+                        "history":        {"type": "string", "description": "JSON-encoded array of {role, content} objects."},
+                        "session_id":     {"type": "string"},
+                        "room_id":        {"type": "string"},
+                        "recent_context": {"type": "string"},
+                        "files":          {
+                            "type": "array",
+                            "items": {"type": "string", "format": "binary"},
+                            "description": "Files to upload (images auto-compressed).",
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+@app.post("/api/chat", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
 async def chat(request: Request):
     """Send a message to an agent. Returns a streaming SSE response.
 
@@ -162,7 +220,7 @@ async def chat(request: Request):
     return await chat_service.chat_stream(req, uploaded_file_paths=file_paths)
 
 
-@app.post("/api/chat/completions", tags=["Chat"])
+@app.post("/api/chat/completions", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
 async def chat_completions(request: Request):
     """Send a message and get the full response (non-streaming).
 
