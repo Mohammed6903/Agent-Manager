@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from agent_manager import agent_service, chat_service, session_service
@@ -159,6 +159,60 @@ async def chat(req: ChatRequest):
 async def chat_completions(req: ChatRequest):
     """Send a message and get the full response (non-streaming)."""
     return await chat_service.chat_non_stream(req)
+
+
+@app.post("/api/chat/with-files", tags=["Chat"])
+async def chat_with_files(
+    message: str = Form(...),
+    agent_id: str = Form(...),
+    user_id: str = Form(...),
+    session_id: str | None = Form(default=None),
+    room_id: str | None = Form(default=None),
+    recent_context: str | None = Form(default=None),
+    history: str | None = Form(default=None, description="JSON array of {role, content} objects"),
+    stream: bool = Form(default=True),
+    files: list[UploadFile] = File(default=[]),
+):
+    """Send a message with file attachments to an agent.
+
+    Files are saved to the agent's workspace and the agent is instructed
+    to read, process, and then delete them. Supports images, PDFs, and
+    text files.
+    """
+    if not files:
+        raise chat_service.HTTPException(
+            status_code=400,
+            detail="No files uploaded. Use /api/chat or /api/chat/completions for text-only.",
+        )
+
+    # Save all uploaded files
+    file_paths: list[str] = []
+    for f in files:
+        path = await chat_service.save_upload(agent_id, f)
+        file_paths.append(path)
+
+    if stream:
+        return await chat_service.chat_with_files_stream(
+            message=message,
+            agent_id=agent_id,
+            user_id=user_id,
+            file_paths=file_paths,
+            session_id=session_id,
+            room_id=room_id,
+            recent_context=recent_context,
+            history_json=history,
+        )
+    else:
+        return await chat_service.chat_with_files_non_stream(
+            message=message,
+            agent_id=agent_id,
+            user_id=user_id,
+            file_paths=file_paths,
+            session_id=session_id,
+            room_id=room_id,
+            recent_context=recent_context,
+            history_json=history,
+        )
 
 
 @app.post("/api/chat/new-session", tags=["Chat"])
