@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import settings
-from ..garage_tool import GARAGE_TOOLS, execute_create_garage_post, load_garage_credentials
+from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post, load_garage_credentials
 from ..schemas.chat import ChatRequest, NewSessionResponse
 
 logger = logging.getLogger("agent_manager.services.chat_service")

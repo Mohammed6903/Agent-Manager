@@ -8,7 +8,7 @@ import httpx
 
 from ..config import settings
 
-logger = logging.getLogger("agent_manager.garage_tool")
+logger = logging.getLogger("agent_manager.tools.garage_tool")
 
 GARAGE_TOOLS = [
     {

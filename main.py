@@ -41,8 +41,8 @@ app = FastAPI(
     title="OpenClaw API",
     description=(
         "Unified API for OpenClaw Agent Management AND Gmail Service.\n\n"
-        "- **Agent Manager**: `/agent-manager/api/...`\n"
-        "- **Gmail Service**: `/gmail-auth/auth/...`, `/gmail-auth/email/...`"
+        "- **Agents, Chat, Skills**: `/api/...`\n"
+        "- **Gmail, Calendar, Secrets**: `/api/gmail/...`"
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -68,18 +68,18 @@ async def _unhandled_exception(request: Request, exc: Exception):
 
 # ── Routers ─────────────────────────────────────────────────────────────────────
 
-# Agent Manager endpoints: /agent-manager/...
+# Agent Manager endpoints: /api/health, /api/agents, /api/chat, /api/skills, etc.
 app.include_router(
     agent_router,
-    prefix="/agent-manager",
+    prefix="",
     tags=["Agent Manager"],
     responses={404: {"description": "Agent or resource not found"}},
 )
 
-# Gmail Service endpoints: /gmail-auth/...
+# Gmail Service endpoints: /api/gmail/auth, /api/gmail/email, /api/gmail/calendar, etc.
 app.include_router(
     gmail_router,
-    prefix="/gmail-auth",
+    prefix="/api/gmail",
     tags=["Gmail Service"],
     responses={404: {"description": "Resource not found"}},
 )
