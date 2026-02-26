@@ -68,6 +68,30 @@ class AgentService:
         joined = ", ".join(entries)
         return f"{{ agents: {{ list: [{joined}] }} }}"
 
+    # Skills that every new agent gets automatically
+    DEFAULT_SKILLS = ["task-manager", "workspace-bridge"]
+
+    async def _install_default_skills(self, agent_id: str, workspace: str):
+        """Copy default skills from templates into the agent's workspace."""
+        templates_dir = Path(__file__).resolve().parent.parent / "templates" / "skills"
+        skills_dir = Path(workspace) / "skills"
+
+        for skill_name in self.DEFAULT_SKILLS:
+            src = templates_dir / f"{skill_name}.md"
+            if not src.exists():
+                logger.warning("Default skill template '%s' not found at %s", skill_name, src)
+                continue
+
+            dest_dir = skills_dir / skill_name
+            dest_file = dest_dir / "SKILL.md"
+            try:
+                await self.storage.ensure_dir(str(dest_dir))
+                content = src.read_text(encoding="utf-8")
+                await self.storage.write_text(str(dest_file), content)
+                logger.info("Auto-installed skill '%s' for agent '%s'", skill_name, agent_id)
+            except Exception as e:
+                logger.error("Failed to install default skill '%s' for '%s': %s", skill_name, agent_id, e)
+
     async def create_agent(self, req: CreateAgentRequest) -> AgentResponse:
         agent_id = req.agent_id
 
@@ -86,6 +110,9 @@ class AgentService:
 
         soul_content = req.soul or self._default_soul(agent_id, req.name, req.role)
         await self.storage.write_text(str(Path(workspace) / "SOUL.md"), soul_content)
+
+        # Auto-install default skills
+        await self._install_default_skills(agent_id, workspace)
 
         config_data = await self.gateway.get_config()
         config_hash = config_data.get("hash")
