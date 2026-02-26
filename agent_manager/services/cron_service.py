@@ -40,7 +40,7 @@ class CronService:
         if req.delivery_mode == "webhook":
             # Ensure WEBHOOK_BASE_URL is available or use SERVER_URL
             webhook_url = getattr(settings, "WEBHOOK_BASE_URL", settings.SERVER_URL)
-            delivery["to"] = f"{webhook_url.rstrip('/')}/agent-manager/api/internal/cron-webhook"
+            delivery["to"] = f"{webhook_url.rstrip('/')}/api/internal/cron-webhook"
 
         job = {
             "name": req.name,

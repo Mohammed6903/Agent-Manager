@@ -35,7 +35,7 @@ router = APIRouter()
 
 # ── Health ──────────────────────────────────────────────────────────────────────
 
-@router.get("/api/health", response_model=HealthResponse, tags=["Health"])
+@router.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
     gateway: Annotated[GatewayClient, Depends(get_gateway)],
@@ -80,7 +80,7 @@ async def health(
 
 # ── Agent CRUD ──────────────────────────────────────────────────────────────────
 
-@router.post("/api/agents", tags=["Agents"], status_code=201)
+@router.post("/agents", tags=["Agents"], status_code=201)
 async def create_agent(
     req: CreateAgentRequest,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
@@ -89,7 +89,7 @@ async def create_agent(
     return await agent_service.create_agent(req)
 
 
-@router.get("/api/agents", tags=["Agents"])
+@router.get("/agents", tags=["Agents"])
 async def list_agents(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
 ):
@@ -97,7 +97,7 @@ async def list_agents(
     return await agent_service.list_agents()
 
 
-@router.get("/api/agents/{agent_id}", tags=["Agents"])
+@router.get("/agents/{agent_id}", tags=["Agents"])
 async def get_agent(
     agent_id: str,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
@@ -106,7 +106,7 @@ async def get_agent(
     return await agent_service.get_agent(agent_id)
 
 
-@router.patch("/api/agents/{agent_id}", tags=["Agents"])
+@router.patch("/agents/{agent_id}", tags=["Agents"])
 async def update_agent(
     agent_id: str,
     req: UpdateAgentRequest,
@@ -116,7 +116,7 @@ async def update_agent(
     return await agent_service.update_agent(agent_id, req)
 
 
-@router.delete("/api/agents/{agent_id}", tags=["Agents"])
+@router.delete("/agents/{agent_id}", tags=["Agents"])
 async def delete_agent(
     agent_id: str,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
@@ -183,7 +183,7 @@ _CHAT_OPENAPI_EXTRA: dict = {
 }
 
 
-@router.post("/api/chat", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
+@router.post("/chat", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
 async def chat(
     request: Request,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
@@ -193,7 +193,7 @@ async def chat(
     return await chat_service.chat_stream(req, uploaded_file_paths=file_paths)
 
 
-@router.post("/api/chat/completions", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
+@router.post("/chat/completions", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
 async def chat_completions(
     request: Request,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
@@ -203,7 +203,7 @@ async def chat_completions(
     return await chat_service.chat_non_stream(req, uploaded_file_paths=file_paths)
 
 
-@router.post("/api/chat/new-session", tags=["Chat"])
+@router.post("/chat/new-session", tags=["Chat"])
 async def new_session(
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
@@ -213,7 +213,7 @@ async def new_session(
 
 # ── Sessions ────────────────────────────────────────────────────────────────────
 
-@router.get("/api/agents/{agent_id}/sessions", tags=["Sessions"])
+@router.get("/agents/{agent_id}/sessions", tags=["Sessions"])
 async def list_sessions(
     agent_id: str,
     user_id: str | None = None,
@@ -224,7 +224,7 @@ async def list_sessions(
     return await session_service.list_sessions(agent_id, user_id=user_id, room_id=room_id)
 
 
-@router.get("/api/sessions", tags=["Sessions"])
+@router.get("/sessions", tags=["Sessions"])
 async def list_all_sessions(
     user_id: str | None = None,
     session_service: Annotated[SessionService, Depends(get_session_service)] = None,
@@ -233,7 +233,7 @@ async def list_all_sessions(
     return await session_service.list_all_sessions(user_id=user_id)
 
 
-@router.get("/api/agents/{agent_id}/sessions/{user_id}/history", tags=["Sessions"])
+@router.get("/agents/{agent_id}/sessions/{user_id}/history", tags=["Sessions"])
 async def get_session_history(
     agent_id: str,
     user_id: str,
@@ -247,7 +247,7 @@ async def get_session_history(
     )
 
 
-@router.get("/api/agents/{agent_id}/rooms/{room_id}/history", tags=["Sessions"])
+@router.get("/agents/{agent_id}/rooms/{room_id}/history", tags=["Sessions"])
 async def get_room_history(
     agent_id: str,
     room_id: str,
@@ -260,7 +260,7 @@ async def get_room_history(
     )
 
 
-@router.delete("/api/agents/{agent_id}/memory", tags=["Sessions"])
+@router.delete("/agents/{agent_id}/memory", tags=["Sessions"])
 async def clear_memory(
     agent_id: str,
     session_service: Annotated[SessionService, Depends(get_session_service)] = None,
@@ -271,7 +271,7 @@ async def clear_memory(
 
 # ── Skills ──────────────────────────────────────────────────────────────────────
 
-@router.post("/api/skills", tags=["Skills"], status_code=201, response_model=SkillResponse)
+@router.post("/skills", tags=["Skills"], status_code=201, response_model=SkillResponse)
 async def create_skill(
     req: CreateSkillRequest,
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
@@ -280,7 +280,7 @@ async def create_skill(
     return await skill_service.create_skill(req)
 
 
-@router.get("/api/skills", tags=["Skills"], response_model=SkillListResponse)
+@router.get("/skills", tags=["Skills"], response_model=SkillListResponse)
 async def list_skills(
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
 ):
@@ -288,7 +288,7 @@ async def list_skills(
     return await skill_service.list_skills()
 
 
-@router.get("/api/skills/all", tags=["Skills"])
+@router.get("/skills/all", tags=["Skills"])
 async def all_skills(
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
 ):
@@ -304,7 +304,7 @@ async def all_skills(
     return {"skills": result, "count": len(result)}
 
 
-@router.get("/api/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
+@router.get("/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
 async def get_skill(
     skill_name: str,
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
@@ -313,7 +313,7 @@ async def get_skill(
     return await skill_service.get_skill(skill_name)
 
 
-@router.get("/api/skills/{skill_name}/content", tags=["Skills"])
+@router.get("/skills/{skill_name}/content", tags=["Skills"])
 async def get_skill_content(
     skill_name: str,
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
@@ -323,7 +323,7 @@ async def get_skill_content(
     return {"name": skill_name, "content": content}
 
 
-@router.patch("/api/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
+@router.patch("/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
 async def update_skill(
     skill_name: str,
     req: UpdateSkillRequest,
@@ -333,7 +333,7 @@ async def update_skill(
     return await skill_service.update_skill(skill_name, req)
 
 
-@router.delete("/api/skills/{skill_name}", tags=["Skills"])
+@router.delete("/skills/{skill_name}", tags=["Skills"])
 async def delete_skill(
     skill_name: str,
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
@@ -344,7 +344,7 @@ async def delete_skill(
 
 # ── Agent-scoped Skills ─────────────────────────────────────────────────────────
 
-@router.post("/api/agents/{agent_id}/skills/install/{skill_name}", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
+@router.post("/agents/{agent_id}/skills/install/{skill_name}", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
 async def install_global_skill(
     agent_id: str,
     skill_name: str,
@@ -354,7 +354,7 @@ async def install_global_skill(
     return await skill_service.install_global_skill(agent_id, skill_name)
 
 
-@router.post("/api/agents/{agent_id}/skills", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
+@router.post("/agents/{agent_id}/skills", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
 async def create_agent_skill(
     agent_id: str,
     req: CreateSkillRequest,
@@ -364,7 +364,7 @@ async def create_agent_skill(
     return await skill_service.create_agent_skill(agent_id, req)
 
 
-@router.get("/api/agents/{agent_id}/skills", tags=["Agent Skills"], response_model=SkillListResponse)
+@router.get("/agents/{agent_id}/skills", tags=["Agent Skills"], response_model=SkillListResponse)
 async def list_agent_skills(
     agent_id: str,
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
@@ -373,7 +373,7 @@ async def list_agent_skills(
     return await skill_service.list_agent_skills(agent_id)
 
 
-@router.get("/api/agents/{agent_id}/skills/all", tags=["Agent Skills"])
+@router.get("/agents/{agent_id}/skills/all", tags=["Agent Skills"])
 async def all_agent_skills(
     agent_id: str,
     skill_service: Annotated[SkillService, Depends(get_skill_service)],
@@ -390,7 +390,7 @@ async def all_agent_skills(
     return {"agent_id": agent_id, "skills": result, "count": len(result)}
 
 
-@router.get("/api/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
+@router.get("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
 async def get_agent_skill(
     agent_id: str,
     skill_name: str,
@@ -400,7 +400,7 @@ async def get_agent_skill(
     return await skill_service.get_agent_skill(agent_id, skill_name)
 
 
-@router.get("/api/agents/{agent_id}/skills/{skill_name}/content", tags=["Agent Skills"])
+@router.get("/agents/{agent_id}/skills/{skill_name}/content", tags=["Agent Skills"])
 async def get_agent_skill_content(
     agent_id: str,
     skill_name: str,
@@ -411,7 +411,7 @@ async def get_agent_skill_content(
     return {"agent_id": agent_id, "name": skill_name, "content": content}
 
 
-@router.patch("/api/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
+@router.patch("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
 async def update_agent_skill(
     agent_id: str,
     skill_name: str,
@@ -422,7 +422,7 @@ async def update_agent_skill(
     return await skill_service.update_agent_skill(agent_id, skill_name, req)
 
 
-@router.delete("/api/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"])
+@router.delete("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"])
 async def delete_agent_skill(
     agent_id: str,
     skill_name: str,

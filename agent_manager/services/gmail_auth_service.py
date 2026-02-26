@@ -28,7 +28,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # credentials file is in the parent (agent_manager/) directory
 CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(CURRENT_DIR), "credentials_for_local.json")
 # TODO: Make this configurable via environment variable
-REDIRECT_URI = f"{settings.SERVER_URL}/gmail-auth/auth/callback"
+REDIRECT_URI = f"{settings.SERVER_URL}/api/gmail/auth/callback"
 
 def get_google_flow(state=None):
     return Flow.from_client_secrets_file(

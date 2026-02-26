@@ -71,7 +71,7 @@ async def _unhandled_exception(request: Request, exc: Exception):
 # Agent Manager endpoints: /api/health, /api/agents, /api/chat, /api/skills, etc.
 app.include_router(
     agent_router,
-    prefix="",
+    prefix="/api",
     tags=["Agent Manager"],
     responses={404: {"description": "Agent or resource not found"}},
 )

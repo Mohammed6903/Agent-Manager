@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     ROOT_PATH: str = "/"  # Set when behind a reverse proxy with a path prefix
     MAX_UPLOAD_SIZE_MB: int = 5  # Target max size after compression (in MB)
     MAX_RAW_UPLOAD_SIZE_MB: int = 20  # Maximum raw upload size before compression (in MB)
-    GMAIL_SERVICE_URL: str = "https://openclaw.marketsverse.com/gmail-auth"
+    GMAIL_SERVICE_URL: str = "https://openclaw.marketsverse.com/api/gmail"
     GARAGE_API_URL: str = "http://localhost:4000"
 
     # ── Database ────────────────────────────────────────────────────────────────

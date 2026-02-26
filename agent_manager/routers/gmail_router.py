@@ -1,4 +1,4 @@
-"""Gmail, Calendar, and Secrets router — all routes served under /gmail-auth prefix."""
+"""Gmail, Calendar, and Secrets router — all routes served under /api/gmail prefix."""
 
 import os
 from typing import Optional, Dict, Any, List
