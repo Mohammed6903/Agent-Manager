@@ -106,6 +106,20 @@ class SkillService:
         slugs = await self.storage.list_dirs(self._skills_root())
         return SkillListResponse(skills=sorted(slugs))
 
+    async def list_skills_with_status(self, agent_id: str) -> list[dict]:
+        """Return all global skills with an `installed` flag for the given agent."""
+        global_slugs = await self.storage.list_dirs(self._skills_root())
+        agent_slugs = set()
+        try:
+            agent_slugs = set(await self.storage.list_dirs(self._agent_skills_root(agent_id)))
+        except Exception:
+            pass  # agent may not have a skills dir yet
+
+        return [
+            {"name": slug, "installed": slug in agent_slugs}
+            for slug in sorted(global_slugs)
+        ]
+
     async def get_skill(self, skill_name: str) -> SkillResponse:
         """Read the SKILL.md content for a given skill, returned as a SkillResponse."""
         slug = _to_slug(skill_name)

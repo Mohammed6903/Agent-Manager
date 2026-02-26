@@ -4,12 +4,13 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from agent_manager.config import settings
 from agent_manager.routers.agent_router import router as agent_router
 from agent_manager.routers.gmail_router import router as gmail_router
+from agent_manager.ws_manager import task_ws_manager
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,20 @@ app.include_router(
     tags=["Gmail Service"],
     responses={404: {"description": "Resource not found"}},
 )
+
+
+# ── WebSocket ───────────────────────────────────────────────────────────────────
+
+@app.websocket("/api/tasks/ws")
+async def tasks_websocket(ws: WebSocket):
+    """Real-time task board updates."""
+    await task_ws_manager.connect(ws)
+    try:
+        while True:
+            # Keep connection alive; ignore incoming messages
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        task_ws_manager.disconnect(ws)
 
 
 def main():

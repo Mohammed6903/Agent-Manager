@@ -19,14 +19,19 @@ from ..schemas.chat import (
     SkillResponse,
     SkillListResponse,
 )
+from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
+from ..schemas.task import CreateTaskRequest, UpdateTaskRequest, TaskResponse
 from ..chat_helpers import parse_chat_request
 from ..dependencies import (
-    get_agent_service, get_session_service, get_chat_service, get_gateway, get_skill_service,
+    get_agent_service, get_session_service, get_chat_service, get_gateway,
+    get_skill_service, get_cron_service, get_task_service,
 )
 from ..services.agent_service import AgentService
 from ..services.session_service import SessionService
 from ..services.chat_service import ChatService
 from ..services.skill_service import SkillService
+from ..services.cron_service import CronService
+from ..services.task_service import TaskService
 from ..clients.gateway_client import GatewayClient
 
 logger = logging.getLogger("agent_manager")
@@ -344,6 +349,16 @@ async def delete_skill(
 
 # ── Agent-scoped Skills ─────────────────────────────────────────────────────────
 
+@router.get("/agents/{agent_id}/skills/status", tags=["Agent Skills"])
+async def get_skills_status(
+    agent_id: str,
+    skill_service: Annotated[SkillService, Depends(get_skill_service)],
+):
+    """List all global skills with an `installed` flag for this agent."""
+    skills = await skill_service.list_skills_with_status(agent_id)
+    return {"agent_id": agent_id, "skills": skills, "count": len(skills)}
+
+
 @router.post("/agents/{agent_id}/skills/install/{skill_name}", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
 async def install_global_skill(
     agent_id: str,
@@ -430,3 +445,132 @@ async def delete_agent_skill(
 ):
     """Remove a skill from a specific agent's workspace."""
     return await skill_service.delete_agent_skill(agent_id, skill_name)
+
+
+# ── Cron Jobs ──────────────────────────────────────────────────────────────────
+
+@router.post("/crons", tags=["Cron Jobs"], status_code=201)
+async def create_cron(
+    req: CreateCronRequest,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Create a new cron job."""
+    job_id = await cron_service.create_cron(req)
+    return {"job_id": job_id, "status": "created"}
+
+
+@router.get("/crons", tags=["Cron Jobs"], response_model=list[CronResponse])
+async def list_crons(
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+    user_id: str | None = None,
+    session_id: str | None = None,
+):
+    """List cron jobs. Optionally filter by user_id and/or session_id."""
+    return await cron_service.list_crons(user_id=user_id, session_id=session_id)
+
+
+@router.get("/crons/{job_id}", tags=["Cron Jobs"], response_model=CronResponse)
+async def get_cron(
+    job_id: str,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Get details for a single cron job."""
+    return await cron_service.get_cron(job_id)
+
+
+@router.patch("/crons/{job_id}", tags=["Cron Jobs"])
+async def update_cron(
+    job_id: str,
+    req: UpdateCronRequest,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Update an existing cron job's schedule, payload, or enabled state."""
+    return await cron_service.update_cron(job_id, req)
+
+
+@router.delete("/crons/{job_id}", tags=["Cron Jobs"])
+async def delete_cron(
+    job_id: str,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Delete a cron job."""
+    await cron_service.delete_cron(job_id)
+    return {"status": "deleted", "job_id": job_id}
+
+
+@router.post("/crons/{job_id}/trigger", tags=["Cron Jobs"])
+async def trigger_cron(
+    job_id: str,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Manually trigger a cron job to run immediately."""
+    return await cron_service.trigger_cron(job_id)
+
+
+@router.get("/crons/{job_id}/runs", tags=["Cron Jobs"])
+async def get_cron_runs(
+    job_id: str,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+    limit: int = 20,
+):
+    """Get the run history for a cron job."""
+    return await cron_service.get_cron_runs(job_id, limit=limit)
+
+
+# ── Tasks (AI Kanban) ──────────────────────────────────────────────────────────
+
+@router.post("/tasks", tags=["Tasks"], status_code=201, response_model=TaskResponse)
+async def create_task(
+    req: CreateTaskRequest,
+    task_service: Annotated[TaskService, Depends(get_task_service)],
+):
+    """Create a new agent task."""
+    return await task_service.create_task(req)
+
+
+@router.get("/tasks", tags=["Tasks"], response_model=list[TaskResponse])
+async def list_tasks(
+    task_service: Annotated[TaskService, Depends(get_task_service)],
+    agent_id: str | None = None,
+    status: str | None = None,
+):
+    """List tasks. Optionally filter by agent_id and/or status."""
+    return await task_service.list_tasks(agent_id=agent_id, status=status)
+
+
+@router.get("/tasks/{task_id}", tags=["Tasks"], response_model=TaskResponse)
+async def get_task(
+    task_id: str,
+    task_service: Annotated[TaskService, Depends(get_task_service)],
+):
+    """Get a single task by ID."""
+    return await task_service.get_task(task_id)
+
+
+@router.patch("/tasks/{task_id}", tags=["Tasks"], response_model=TaskResponse)
+async def update_task(
+    task_id: str,
+    req: UpdateTaskRequest,
+    task_service: Annotated[TaskService, Depends(get_task_service)],
+):
+    """Update a task (status, sub-tasks, issues, etc.)."""
+    return await task_service.update_task(task_id, req)
+
+
+@router.delete("/tasks/{task_id}", tags=["Tasks"])
+async def delete_task(
+    task_id: str,
+    task_service: Annotated[TaskService, Depends(get_task_service)],
+):
+    """Delete a task."""
+    return await task_service.delete_task(task_id)
+
+
+@router.patch("/tasks/{task_id}/issues/{issue_index}/resolve", tags=["Tasks"], response_model=TaskResponse)
+async def resolve_issue(
+    task_id: str,
+    issue_index: int,
+    task_service: Annotated[TaskService, Depends(get_task_service)],
+):
+    """Mark a specific issue on a task as resolved (by the human)."""
+    return await task_service.resolve_issue(task_id, issue_index)
