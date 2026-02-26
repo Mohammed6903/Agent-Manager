@@ -31,8 +31,8 @@ class CronResponse(BaseModel):
     payload_message: str
     delivery_mode: str
     enabled: bool
-    user_id: str
-    session_id: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
     last_run_at: Optional[int] = None
     next_run_at: Optional[int] = None
     last_run_status: Optional[str] = None

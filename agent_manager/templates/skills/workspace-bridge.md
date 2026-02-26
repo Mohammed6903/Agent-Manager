@@ -1,22 +1,24 @@
 ---
 name: workspace-bridge
-description: Use for any Gmail or Notion task — send email, reply, read inbox, search emails, manage labels, read threads, download attachments, connect Gmail, store or retrieve secrets, manage Notion pages and databases.
-trigger: "email|gmail|notion|page|database|send email|reply email|read email|search email|thread|attachment|label|archive|mark read|star|create page|search notion|connect gmail|secrets"
+description: Use for any Gmail, Calendar, or Notion task — manage emails (send, reply, search), calendar events, and Notion pages/databases. Handles secure secret storage for external integrations.
+trigger: "email|gmail|notion|calendar|event|schedule|page|database|send email|reply email|read email|search email|thread|attachment|label|archive|mark read|star|create page|search notion|connect gmail|secrets"
 tools: [shell]
 metadata: {"openclaw": {"requires": {"bins": ["curl", "jq"]}}}
 ---
 
 # Workspace Bridge
 
-Internal API: http://localhost:8000/gmail-auth
-Public Base: https://openclaw.marketsverse.com/gmail-auth
+Internal API: http://localhost:8000/api/gmail
+Public Base: https://openclaw.marketsverse.com/api/gmail
 
 ## Your Identity
 Your agent_id is your agent name in lowercase (e.g. aura, nexus, main).
 Read it from your IDENTITY.md if unsure:
 ```bash
 grep -i "agent id" ~/IDENTITY.md | awk -F: '{print $2}' | tr -d ' '
+
 ```
+
 Always use it exactly as-is. Never modify or guess it.
 
 ---
@@ -24,118 +26,113 @@ Always use it exactly as-is. Never modify or guess it.
 ## GMAIL AUTH
 
 ### Connect Gmail (first time or after 401)
+
 ```bash
-curl -s "http://localhost:8000/auth/login?agent_id=YOUR_ID" | jq -r '.auth_url'
+curl -s "http://localhost:8000/api/gmail/auth/login?agent_id=YOUR_ID" | jq -r '.auth_url'
+
 ```
+
 Show the returned URL to the user as: "Please open this link to authorize Gmail: <url>"
 Wait for confirmation before retrying. Do NOT proceed until they confirm.
-
-### Manual callback (if user pastes just the code)
-```bash
-curl -s -X POST "http://localhost:8000/auth/callback/manual" \
-  -H "Content-Type: application/json" \
-  -d '{"agent_id": "YOUR_ID", "code": "AUTH_CODE"}' | jq .
-```
 
 ---
 
 ## GMAIL — READING
 
-### List recent emails
+### List/Search emails
+
 ```bash
-curl -s "http://localhost:8000/email/list?agent_id=YOUR_ID&max_results=10" | jq .
+curl -s "http://localhost:8000/api/gmail/email/list?agent_id=YOUR_ID&max_results=10&query=QUERY" | jq .
+
 ```
 
-### Search emails (Gmail query syntax)
+### Read email or thread
+
 ```bash
-curl -s "http://localhost:8000/email/search?agent_id=YOUR_ID&query=QUERY&max_results=10" | jq .
+curl -s "http://localhost:8000/api/gmail/email/read?agent_id=YOUR_ID&message_id=MESSAGE_ID" | jq .
+curl -s "http://localhost:8000/api/gmail/email/thread?agent_id=YOUR_ID&thread_id=THREAD_ID" | jq .
+
 ```
 
-### Read a full email
-```bash
-curl -s "http://localhost:8000/email/read?agent_id=YOUR_ID&message_id=MESSAGE_ID" | jq .
-```
+### Batch Read (multiple IDs)
 
-### Read multiple emails at once
 ```bash
-curl -s -X POST "http://localhost:8000/email/batch_read" \
+curl -s -X POST "http://localhost:8000/api/gmail/email/batch_read" \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "YOUR_ID", "message_ids": ["ID1", "ID2"]}' | jq .
+
 ```
 
 ---
 
 ## GMAIL — SENDING
 
-### Send a new email
-Always confirm recipient, subject, and body with user before sending.
-```bash
-curl -s -X POST "http://localhost:8000/email/send" \
-  -H "Content-Type: application/json" \
-  -d '{ "agent_id": "YOUR_ID", "to": "recipient@example.com", "subject": "SUBJECT", "body": "BODY" }' | jq .
-```
+### Send or Reply
 
-### Reply to an email (preserves thread)
 ```bash
-curl -s -X POST "http://localhost:8000/email/reply" \
+# For new emails
+curl -s -X POST "http://localhost:8000/api/gmail/email/send" \
   -H "Content-Type: application/json" \
-  -d '{ "agent_id": "YOUR_ID", "message_id": "MESSAGE_ID", "body": "REPLY_BODY" }' | jq .
+  -d '{ "agent_id": "YOUR_ID", "to": "recipient@example.com", "subject": "SUB", "body": "BODY" }' | jq .
+
+# For replies (preserves thread)
+curl -s -X POST "http://localhost:8000/api/gmail/email/reply" \
+  -H "Content-Type: application/json" \
+  -d '{ "agent_id": "YOUR_ID", "message_id": "ORIGINAL_ID", "body": "REPLY_TEXT" }' | jq .
+
 ```
 
 ---
 
-## SECRETS
+## CALENDAR
 
-### Store or update a secret
+### List or Create Events
+
 ```bash
-curl -s -X POST "http://localhost:8000/secrets" \
+# List
+curl -s "http://localhost:8000/api/gmail/calendar/events?agent_id=YOUR_ID&max_results=5" | jq .
+
+# Create
+curl -s -X POST "http://localhost:8000/api/gmail/calendar/events" \
   -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "YOUR_ID",
-    "service_name": "SERVICE",
-    "secret_data": {"key": "VALUE"}
-  }' | jq .
-```
+  -d '{ "agent_id": "YOUR_ID", "summary": "TITLE", "start_time": "YYYY-MM-DDTHH:MM:SS", "end_time": "YYYY-MM-DDTHH:MM:SS" }' | jq .
 
-### Retrieve a secret
-```bash
-curl -s "http://localhost:8000/secrets/YOUR_ID/SERVICE_NAME" | jq .
-```
-
-### List all secrets for an agent
-```bash
-curl -s "http://localhost:8000/secrets/YOUR_ID" | jq .
-```
-
-### Delete a secret
-```bash
-curl -s -X DELETE "http://localhost:8000/secrets/YOUR_ID/SERVICE_NAME" | jq .
 ```
 
 ---
 
-## NOTION
+## SECRETS & NOTION
 
-### Step 0 — Fetch your Notion key
+### Manage Secrets
+
 ```bash
-NOTION_KEY=$(curl -s "http://localhost:8000/secrets/YOUR_ID/notion" \
-  | jq -r '.secret_data.api_key')
+# Store
+curl -s -X POST "http://localhost:8000/api/gmail/secrets" \
+  -H "Content-Type: application/json" \
+  -d '{ "agent_id": "YOUR_ID", "service_name": "notion", "secret_data": {"api_key": "ntn_..."} }' | jq .
+
+# Retrieve Key
+NOTION_KEY=$(curl -s "http://localhost:8000/api/gmail/secrets/YOUR_ID/notion" | jq -r '.secret_data.api_key')
+
 ```
 
-### Search workspace
+### Notion Actions (Direct API)
+
 ```bash
-curl -s -X POST "https://api.notion.com/v1/search" \
+curl -s -X POST "[https://api.notion.com/v1/search](https://api.notion.com/v1/search)" \
   -H "Authorization: Bearer $NOTION_KEY" \
   -H "Notion-Version: 2022-06-28" \
   -H "Content-Type: application/json" \
   -d '{"query": "QUERY"}' | jq .
+
 ```
 
 ---
 
 ## Error Handling & Best Practices
-- 401 on Gmail → run Gmail connect flow, wait for confirmation, retry.
-- 404 on secrets → key not stored yet; ask user to provide it, store it, retry.
-- 401 on Notion → key invalid or integration not shared with the target page/database.
-- 500 anywhere → report the `detail` field verbatim to the user.
-- Never send or reply to email without explicit user confirmation.
+
+* **401 (Unauthorized):** Trigger Gmail Auth flow immediately.
+* **404 (Secrets):** Key missing; request Notion token from user and store via secrets endpoint.
+* **500 (Server Error):** Verbatim report the `detail` field to the user.
+* **Confirmations:** Never send/reply to email or modify calendar/Notion without explicit user approval.
+* **Production:** In remote environments, use the Public Base URL.

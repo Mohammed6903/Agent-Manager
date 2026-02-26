@@ -55,7 +55,8 @@ class CronService:
 
         try:
             result = await self.gateway.cron_add(job)
-            job_id = result.get("jobId")
+            # CLI may return "id" or "jobId"
+            job_id = result.get("jobId") or result.get("id")
             if not job_id:
                 raise HTTPException(status_code=500, detail="Failed to get jobId from OpenClaw")
 
@@ -66,6 +67,15 @@ class CronService:
             logger.error(f"Error creating cron job: {e}")
             raise
 
+    def _extract_state(self, job: dict) -> tuple:
+        """Extract last_run_at, next_run_at, last_run_status from CLI output."""
+        state = job.get("state", {})
+        return (
+            state.get("lastRunAtMs") or job.get("lastRunAt"),
+            state.get("nextRunAtMs") or job.get("nextRunAt"),
+            state.get("lastStatus") or job.get("lastRunStatus"),
+        )
+
     async def list_crons(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[CronResponse]:
         """List and enrich cron jobs from OpenClaw."""
         jobs = await self.gateway.cron_list()
@@ -73,21 +83,22 @@ class CronService:
 
         enriched = []
         for job in jobs:
-            job_id = job.get("jobId")
-            owner = ownership_map.get(job_id)
-            if not owner:
-                continue
-            
-            # Filter if requested
-            if user_id and owner["user_id"] != user_id:
-                continue
-            if session_id and owner["session_id"] != session_id:
+            # CLI returns "id", not "jobId"
+            job_id = job.get("id") or job.get("jobId")
+            if not job_id:
                 continue
 
-            # Extract last run info if available
-            last_run_at = job.get("lastRunAt")
-            next_run_at = job.get("nextRunAt")
-            last_run_status = job.get("lastRunStatus")
+            owner = ownership_map.get(job_id)
+
+            # Filter by ownership if requested
+            if user_id:
+                if not owner or owner["user_id"] != user_id:
+                    continue
+            if session_id:
+                if not owner or owner["session_id"] != session_id:
+                    continue
+
+            last_run_at, next_run_at, last_run_status = self._extract_state(job)
 
             enriched.append(CronResponse(
                 job_id=job_id,
@@ -97,24 +108,23 @@ class CronService:
                 payload_message=job.get("payload", {}).get("message", ""),
                 delivery_mode=job.get("delivery", {}).get("mode", ""),
                 enabled=job.get("enabled", True),
-                user_id=owner["user_id"],
-                session_id=owner["session_id"],
+                user_id=owner["user_id"] if owner else None,
+                session_id=owner["session_id"] if owner else None,
                 last_run_at=last_run_at,
                 next_run_at=next_run_at,
-                last_run_status=last_run_status
+                last_run_status=last_run_status,
             ))
         return enriched
 
     async def get_cron(self, job_id: str) -> CronResponse:
         """Get a single enriched cron job."""
         jobs = await self.gateway.cron_list()
-        job = next((j for j in jobs if j.get("jobId") == job_id), None)
+        job = next((j for j in jobs if (j.get("id") or j.get("jobId")) == job_id), None)
         if not job:
             raise HTTPException(status_code=404, detail=f"Cron job {job_id} not found in OpenClaw")
 
         owner = self.ownership.get(job_id)
-        if not owner:
-            raise HTTPException(status_code=404, detail=f"Ownership record for cron {job_id} not found")
+        last_run_at, next_run_at, last_run_status = self._extract_state(job)
 
         return CronResponse(
             job_id=job_id,
@@ -124,11 +134,11 @@ class CronService:
             payload_message=job.get("payload", {}).get("message", ""),
             delivery_mode=job.get("delivery", {}).get("mode", ""),
             enabled=job.get("enabled", True),
-            user_id=owner["user_id"],
-            session_id=owner["session_id"],
-            last_run_at=job.get("lastRunAt"),
-            next_run_at=job.get("nextRunAt"),
-            last_run_status=job.get("lastRunStatus")
+            user_id=owner["user_id"] if owner else None,
+            session_id=owner["session_id"] if owner else None,
+            last_run_at=last_run_at,
+            next_run_at=next_run_at,
+            last_run_status=last_run_status,
         )
 
     async def update_cron(self, job_id: str, req: UpdateCronRequest) -> dict:
