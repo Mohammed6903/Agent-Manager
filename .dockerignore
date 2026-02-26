@@ -1,0 +1,10 @@
+.venv/
+.env
+.git/
+.mypy_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+uv.lock
+.python-version
+credentials_*.json

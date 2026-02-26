@@ -1,8 +1,24 @@
-fastapi
+# FastAPI & web
+fastapi[standard]
 uvicorn[standard]
 httpx
+python-multipart
 python-dotenv
+
+# Data validation
 pydantic
 pydantic-settings
-python-multipart
+
+# Image processing
 Pillow
+
+# Google APIs (Gmail & Calendar)
+cryptography
+google-api-python-client
+google-auth
+google-auth-oauthlib
+
+# Database
+psycopg2-binary
+sqlalchemy
+alembic

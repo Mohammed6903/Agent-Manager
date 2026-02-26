@@ -1,40 +1,87 @@
+# ── OpenClaw API — Docker Compose ────────────────────────────────────────────
+#
+# Architecture:
+#
+#   Host :18789 ──► OpenClaw Gateway (chat/completions, control UI, channels)
+#   Host :8001  ──► FastAPI          (agent-manager API, gmail-auth API)
+#
+# Both services share the OpenClaw state directory so the FastAPI CLI
+# client can read/write agent configs managed by the gateway.
+#
+# Usage:
+#   cp .env.example .env   # fill in secrets
+#   docker compose up --build
+
 services:
   # ── OpenClaw Gateway ───────────────────────────────────────────────────────
-  # Uncomment this service if you want docker-compose to also run the gateway.
-  # If the gateway is already running on the host, leave it commented out and
-  # use `network_mode: host` on the agent-manager service instead.
-  #
-  # openclaw-gateway:
-  #   image: node:20-slim
-  #   command: >
-  #     sh -c "npm install -g openclaw@2026.2.17 && openclaw gateway start"
-  #   ports:
-  #     - "18789:18789"
-  #   volumes:
-  #     - openclaw-state:/root/.openclaw
-  #   restart: unless-stopped
-
-  # ── AgentManager API ──────────────────────────────────────────────────────
-  agent-manager:
-    build: .
+  # Built from npm (openclaw@latest).  Exposes the gateway on :18789.
+  openclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.openclaw
     ports:
-      - "${SERVER_PORT:-8000}:8000"
-    env_file:
-      - .env
+      - "${OPENCLAW_PORT:-18789}:18789"
     volumes:
-      # Share the OpenClaw state directory so the manager can read/write
-      # agent workspaces and the CLI can access session data.
-      - ${OPENCLAW_STATE_DIR:-/root/.openclaw}:/root/.openclaw
-    # Use host networking if the gateway is running directly on the host
-    # (uncomment the line below and remove the ports mapping above):
-    # network_mode: host
+      - openclaw-data:/root/.openclaw
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+    networks:
+      - internal
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
-# volumes:
-#   openclaw-state:
+  # ── FastAPI Application ────────────────────────────────────────────────────
+  # Agent-manager + Gmail-auth APIs.
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-8001}:${APP_PORT:-8001}"
+    env_file: .env
+    environment:
+      # Docker-internal overrides (take precedence over .env values)
+      OPENCLAW_GATEWAY_URL: http://openclaw:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_STATE_DIR: /root/.openclaw
+      DATABASE_URL: postgresql://${POSTGRES_USER:-openclaw}:${POSTGRES_PASSWORD:-openclaw}@postgres:5432/${POSTGRES_DB:-openclaw}
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "${APP_PORT:-8001}"
+      SERVER_URL: "http://localhost:${APP_PORT:-8001}"
+    volumes:
+      - openclaw-data:/root/.openclaw
+      # Mount Google OAuth credentials at runtime (not baked into image)
+      - ./gmail_service/credentials_for_local.json:/app/gmail_service/credentials_for_local.json:ro
+    depends_on:
+      openclaw:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openclaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openclaw}
+      POSTGRES_DB: ${POSTGRES_DB:-openclaw}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openclaw}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - internal
+    restart: unless-stopped
+
+volumes:
+  openclaw-data:
+  postgres-data:
+
+networks:
+  internal:
+    driver: bridge
