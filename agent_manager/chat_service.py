@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -12,12 +13,17 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from .config import settings
+from .garage_tool import GARAGE_TOOLS, execute_create_garage_post, load_garage_credentials
 from .schemas import ChatRequest, NewSessionResponse
 
 logger = logging.getLogger("agent_manager.chat_service")
 
-# Generous timeout for long LLM generations.
-_HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+# Timeout for non-streaming requests (sync completions).
+_HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+
+# For streaming: no read timeout — reasoning models may think silently for
+# several minutes before emitting the first token.
+_HTTPX_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
 
 
 def _build_user_field(
@@ -114,23 +120,26 @@ def _build_messages(
     return messages
 
 
+def _sse_bytes(content: str) -> bytes:
+    """Wrap a content string as a minimal SSE data line (for synthetic responses)."""
+    chunk = {"choices": [{"delta": {"content": content}, "finish_reason": None}]}
+    return f"data: {json.dumps(chunk)}\n\n".encode()
+
+
 async def _stream_gateway(
     req: ChatRequest,
     uploaded_file_paths: list[str] | None = None,
 ) -> AsyncGenerator[bytes, None]:
-    """Open a streaming connection to the OpenClaw Gateway and yield SSE chunks."""
+    """Open a streaming connection to the OpenClaw Gateway and yield SSE chunks.
+
+    If the agent has Garage Feed connected, a non-streaming probe is made first
+    to detect tool_calls. Tools are executed and then the final answer is streamed.
+    """
     user_field = _build_user_field(
         req.agent_id, req.user_id,
         session_id=req.session_id, room_id=req.room_id,
     )
     messages = _build_messages(req, uploaded_file_paths=uploaded_file_paths)
-
-    body = {
-        "model": f"openclaw:{req.agent_id}",
-        "messages": messages,
-        "stream": True,
-        "user": user_field,
-    }
 
     headers = {
         "Content-Type": "application/json",
@@ -139,7 +148,104 @@ async def _stream_gateway(
     if settings.OPENCLAW_GATEWAY_TOKEN:
         headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
 
-    async with httpx.AsyncClient(timeout=_HTTPX_TIMEOUT) as client:
+    # ── Tool-enabled path ──────────────────────────────────────────────────────
+    garage_creds = await load_garage_credentials(req.agent_id)
+    if garage_creds:
+        probe_body = {
+            "model": f"openclaw:{req.agent_id}",
+            "messages": messages,
+            "stream": False,
+            "user": user_field,
+            "tools": GARAGE_TOOLS,
+        }
+        async with httpx.AsyncClient(timeout=_HTTPX_TIMEOUT) as client:
+            try:
+                probe_resp = await client.post(
+                    f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
+                    json=probe_body,
+                    headers=headers,
+                )
+            except httpx.ConnectError as exc:
+                logger.error("Cannot connect to OpenClaw Gateway: %s", exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "gateway_connection_error",
+                        "message": "Cannot connect to OpenClaw Gateway",
+                        "gateway_url": settings.OPENCLAW_GATEWAY_URL,
+                        "hint": "Is the OpenClaw gateway running?",
+                        "original_error": str(exc),
+                    },
+                )
+
+        if probe_resp.status_code == 200:
+            data = probe_resp.json()
+            choice = data.get("choices", [{}])[0]
+
+            if choice.get("finish_reason") == "tool_calls":
+                # Execute all tool calls
+                assistant_msg = choice.get("message", {})
+                tool_calls = assistant_msg.get("tool_calls", [])
+                tool_results: list[dict] = []
+                for tc in tool_calls:
+                    fn_name = tc.get("function", {}).get("name")
+                    if fn_name == "create_garage_post":
+                        try:
+                            args = json.loads(tc["function"]["arguments"])
+                            result = await execute_create_garage_post(
+                                req.agent_id, args.get("content", "")
+                            )
+                        except Exception as exc:
+                            result = f"Tool execution error: {exc}"
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        })
+
+                # Stream the final answer with tool results in context
+                follow_up_messages = messages + [assistant_msg] + tool_results
+                stream_body = {
+                    "model": f"openclaw:{req.agent_id}",
+                    "messages": follow_up_messages,
+                    "stream": True,
+                    "user": user_field,
+                }
+                async with httpx.AsyncClient(timeout=_HTTPX_STREAM_TIMEOUT) as client:
+                    try:
+                        async with client.stream(
+                            "POST",
+                            f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
+                            json=stream_body,
+                            headers=headers,
+                        ) as resp:
+                            if resp.status_code != 200:
+                                err = await resp.aread()
+                                raise HTTPException(
+                                    status_code=resp.status_code,
+                                    detail=err.decode()[:500],
+                                )
+                            async for chunk in resp.aiter_bytes():
+                                yield chunk
+                    except httpx.ConnectError as exc:
+                        raise HTTPException(status_code=502, detail=str(exc))
+                return
+
+            else:
+                # Model answered directly (no tool call) — emit as synthetic SSE
+                content = choice.get("message", {}).get("content") or ""
+                yield _sse_bytes(content)
+                yield b"data: [DONE]\n\n"
+                return
+
+    # ── Pure streaming passthrough (no tools configured) ──────────────────────
+    body = {
+        "model": f"openclaw:{req.agent_id}",
+        "messages": messages,
+        "stream": True,
+        "user": user_field,
+    }
+    async with httpx.AsyncClient(timeout=_HTTPX_STREAM_TIMEOUT) as client:
         try:
             async with client.stream(
                 "POST",
