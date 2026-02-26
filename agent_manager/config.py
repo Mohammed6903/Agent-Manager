@@ -26,5 +26,11 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 5  # Target max size after compression (in MB)
     MAX_RAW_UPLOAD_SIZE_MB: int = 20  # Maximum raw upload size before compression (in MB)
 
+    # ── Database ────────────────────────────────────────────────────────────────
+    DATABASE_URL: str = "postgresql://localhost/openclaw"
+
+    # ── Encryption ──────────────────────────────────────────────────────────────
+    FERNET_KEY: str = ""
+
 
 settings = Settings()

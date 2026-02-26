@@ -1,5 +1,7 @@
+"""Google Calendar operations service."""
+
 from googleapiclient.discovery import build
-from .auth_service import get_valid_credentials
+from .gmail_auth_service import get_valid_credentials
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional

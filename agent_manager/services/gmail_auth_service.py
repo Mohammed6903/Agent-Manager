@@ -1,10 +1,14 @@
+"""Gmail OAuth authentication service."""
+
 from sqlalchemy.orm import Session
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from .models import GmailAccount
-from .security import encrypt, decrypt
-from agent_manager.config import settings
+
+from ..models.gmail import GmailAccount
+from ..security import encrypt, decrypt
+from ..config import settings
+
 import os
 import json
 import datetime
@@ -21,7 +25,8 @@ SCOPES = [
 
 # Get the directory of the current file
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-CLIENT_SECRETS_FILE = os.path.join(CURRENT_DIR, "credentials_for_local.json")
+# credentials file is in the parent (agent_manager/) directory
+CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(CURRENT_DIR), "credentials_for_local.json")
 # TODO: Make this configurable via environment variable
 REDIRECT_URI = f"{settings.SERVER_URL}/gmail-auth/auth/callback"
 

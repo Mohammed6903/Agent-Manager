@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .config import settings
-from .schemas import ChatMessage, ChatRequest
+from .schemas.chat import ChatMessage, ChatRequest
 
 logger = logging.getLogger("agent_manager.chat_helpers")
 

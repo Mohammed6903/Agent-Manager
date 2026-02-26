@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import settings
-from ..schemas import ChatRequest, NewSessionResponse
+from ..schemas.chat import ChatRequest, NewSessionResponse
 
 logger = logging.getLogger("agent_manager.services.chat_service")
 

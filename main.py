@@ -8,8 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from agent_manager.config import settings
-from agent_manager.router import router as agent_router
-from gmail_service.router import router as gmail_router
+from agent_manager.routers.agent_router import router as agent_router
+from agent_manager.routers.gmail_router import router as gmail_router
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,6 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
-    # The root_path might need to be adjusted if behind proxy, but for now we follow config
     root_path=settings.ROOT_PATH,
 )
 
@@ -70,8 +69,6 @@ async def _unhandled_exception(request: Request, exc: Exception):
 # ── Routers ─────────────────────────────────────────────────────────────────────
 
 # Agent Manager endpoints: /agent-manager/...
-# Note: agent_manager/router.py likely defines paths starting with /api/...,
-# so combined path will be /agent-manager/api/... which is fine.
 app.include_router(
     agent_router,
     prefix="/agent-manager",
@@ -80,8 +77,6 @@ app.include_router(
 )
 
 # Gmail Service endpoints: /gmail-auth/...
-# Note: gmail_service/router.py likely defines paths starting with /auth/...,
-# so combined path will be /gmail-auth/auth/... which matches requirements.
 app.include_router(
     gmail_router,
     prefix="/gmail-auth",

@@ -1,6 +1,9 @@
+"""Gmail-related SQLAlchemy models."""
+
 from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
-from .database import Base
+
+from ..database import Base
 
 
 class GmailAccount(Base):

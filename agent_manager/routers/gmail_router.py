@@ -1,88 +1,33 @@
+"""Gmail, Calendar, and Secrets router — all routes served under /gmail-auth prefix."""
+
 import os
 from typing import Optional, Dict, Any, List
 
 # TODO: Remove this in production
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
 from fastapi import APIRouter, Request, Depends, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse
-from pydantic import BaseModel
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from dotenv import load_dotenv
 
-from .database import get_db, engine, Base
-from .models import AgentSecret
-from .security import encrypt, decrypt
-from . import auth_service
-from . import service as gmail_service
-from . import calendar_service
-
-# load_dotenv() # Handled globally
+from ..database import get_db
+from ..models.gmail import AgentSecret
+from ..security import encrypt, decrypt
+from ..services import gmail_auth_service as auth_service
+from ..services import gmail_service
+from ..services import calendar_service
+from ..schemas.gmail import (
+    ManualCallbackRequest,
+    SecretUpsertRequest,
+    SendEmailRequest,
+    ReplyRequest,
+    ModifyLabelsRequest,
+    BatchReadRequest,
+    CreateEventRequest,
+    UpdateEventRequest,
+)
 
 router = APIRouter()
-
-
-# ── Request models ───────────────────────────────────────────────────────────
-
-class ManualCallbackRequest(BaseModel):
-    agent_id: str
-    code: Optional[str] = None
-    redirect_url: Optional[str] = None
-
-
-class SecretUpsertRequest(BaseModel):
-    agent_id: str
-    service_name: str
-    secret_data: Dict[str, Any]
-
-
-class SendEmailRequest(BaseModel):
-    agent_id: str
-    to: str
-    subject: str
-    body: str
-    cc: Optional[str] = None
-    bcc: Optional[str] = None
-    html_body: Optional[str] = None
-
-
-class ReplyRequest(BaseModel):
-    agent_id: str
-    message_id: str
-    body: str
-    cc: Optional[str] = None
-    bcc: Optional[str] = None
-    html_body: Optional[str] = None
-
-
-class ModifyLabelsRequest(BaseModel):
-    agent_id: str
-    message_ids: List[str]
-    add_labels: Optional[List[str]] = None
-    remove_labels: Optional[List[str]] = None
-
-
-class BatchReadRequest(BaseModel):
-    agent_id: str
-    message_ids: List[str]
-
-
-class CreateEventRequest(BaseModel):
-    agent_id: str
-    summary: str
-    start_time: str  # ISO format: 2024-01-15T10:00:00
-    end_time: str
-    description: Optional[str] = None
-    location: Optional[str] = None
-    attendees: Optional[List[str]] = None
-
-
-class UpdateEventRequest(BaseModel):
-    agent_id: str
-    summary: Optional[str] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    description: Optional[str] = None
-    location: Optional[str] = None
 
 
 # ── Auth endpoints ───────────────────────────────────────────────────────────

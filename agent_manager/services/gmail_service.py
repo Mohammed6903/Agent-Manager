@@ -1,5 +1,7 @@
+"""Gmail email operations service."""
+
 from googleapiclient.discovery import build
-from .auth_service import get_valid_credentials
+from .gmail_auth_service import get_valid_credentials
 from sqlalchemy.orm import Session
 import base64
 from email.mime.text import MIMEText
@@ -16,91 +18,91 @@ def get_service(db: Session, agent_id: str):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _get_header(headers: list, name: str) -> Optional[str]:
+def _get_header(headers: list, name: str):
     """Extract a header value by name (case-insensitive)."""
-    name_lower = name.lower()
-    return next((h["value"] for h in headers if h["name"].lower() == name_lower), None)
+    for h in headers:
+        if h["name"].lower() == name.lower():
+            return h["value"]
+    return None
 
 
-def _extract_body(payload: dict) -> dict:
+def _extract_body(payload: dict):
     """Recursively extract plain text and HTML body from a message payload."""
-    plain = ""
-    html = ""
+    text_body = ""
+    html_body = ""
 
     def _walk(part):
-        nonlocal plain, html
+        nonlocal text_body, html_body
         mime = part.get("mimeType", "")
-        if mime == "text/plain" and not plain:
-            data = part.get("body", {}).get("data")
-            if data:
-                plain = base64.urlsafe_b64decode(data).decode(errors="replace")
-        elif mime == "text/html" and not html:
-            data = part.get("body", {}).get("data")
-            if data:
-                html = base64.urlsafe_b64decode(data).decode(errors="replace")
+        data = part.get("body", {}).get("data")
+
+        if data and mime == "text/plain":
+            text_body += base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+        elif data and mime == "text/html":
+            html_body += base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+
         for sub in part.get("parts", []):
             _walk(sub)
 
     _walk(payload)
-    return {"plain": plain, "html": html}
+    return text_body, html_body
 
 
-def _extract_attachments(payload: dict) -> list:
+def _extract_attachments(payload: dict):
     """Extract attachment metadata from a message payload."""
     attachments = []
-
     def _walk(part):
         filename = part.get("filename")
-        if filename:
+        body = part.get("body", {})
+        if filename and body.get("attachmentId"):
             attachments.append({
                 "filename": filename,
-                "mime_type": part.get("mimeType"),
-                "size": part.get("body", {}).get("size", 0),
-                "attachment_id": part.get("body", {}).get("attachmentId"),
+                "mimeType": part.get("mimeType"),
+                "size": body.get("size", 0),
+                "attachmentId": body["attachmentId"],
             })
         for sub in part.get("parts", []):
             _walk(sub)
-
     _walk(payload)
     return attachments
 
 
-def _parse_message(message: dict) -> dict:
+def _parse_message(message: dict):
     """Parse a raw Gmail API message into a rich, agent-friendly dict."""
-    headers = message.get("payload", {}).get("headers", [])
-    body = _extract_body(message["payload"])
-    attachments = _extract_attachments(message["payload"])
+    payload = message.get("payload", {})
+    headers = payload.get("headers", [])
+    text_body, html_body = _extract_body(payload)
+    attachments = _extract_attachments(payload)
 
     return {
-        "message_id": message["id"],
-        "thread_id": message.get("threadId"),
-        "label_ids": message.get("labelIds", []),
-        "snippet": message.get("snippet", ""),
+        "id": message["id"],
+        "threadId": message.get("threadId"),
+        "labelIds": message.get("labelIds", []),
         "subject": _get_header(headers, "Subject"),
         "from": _get_header(headers, "From"),
         "to": _get_header(headers, "To"),
         "cc": _get_header(headers, "Cc"),
         "date": _get_header(headers, "Date"),
-        "in_reply_to": _get_header(headers, "In-Reply-To"),
-        "references": _get_header(headers, "References"),
-        "body": body,
+        "snippet": message.get("snippet", ""),
+        "body": text_body or html_body,
+        "body_html": html_body if html_body else None,
         "attachments": attachments,
-        "size_estimate": message.get("sizeEstimate"),
     }
 
 
-def _parse_message_summary(message: dict) -> dict:
+def _parse_message_summary(message: dict):
     """Parse a message into a lightweight summary (for list/search results)."""
-    headers = message.get("payload", {}).get("headers", [])
+    payload = message.get("payload", {})
+    headers = payload.get("headers", [])
     return {
-        "message_id": message["id"],
-        "thread_id": message.get("threadId"),
-        "label_ids": message.get("labelIds", []),
-        "snippet": message.get("snippet", ""),
+        "id": message["id"],
+        "threadId": message.get("threadId"),
+        "labelIds": message.get("labelIds", []),
         "subject": _get_header(headers, "Subject"),
         "from": _get_header(headers, "From"),
         "to": _get_header(headers, "To"),
         "date": _get_header(headers, "Date"),
+        "snippet": message.get("snippet", ""),
     }
 
 
@@ -122,35 +124,29 @@ def list_messages(
     if not service:
         return None
 
-    kwargs: Dict[str, Any] = {"userId": "me", "maxResults": max_results}
+    kwargs = {"userId": "me", "maxResults": max_results}
     if query:
         kwargs["q"] = query
     if label_ids:
         kwargs["labelIds"] = label_ids
 
-    results = service.users().messages().list(**kwargs).execute()
-    message_ids = results.get("messages", [])
+    response = service.users().messages().list(**kwargs).execute()
+    message_ids = response.get("messages", [])
 
     if not message_ids:
-        return {"messages": [], "result_count": 0}
+        return []
 
-    # Fetch metadata for each message in the list
-    summaries = []
+    results = []
     for msg_ref in message_ids:
         msg = (
             service.users()
             .messages()
-            .get(userId="me", id=msg_ref["id"], format="metadata",
-                 metadataHeaders=["Subject", "From", "To", "Date"])
+            .get(userId="me", id=msg_ref["id"], format="full")
             .execute()
         )
-        summaries.append(_parse_message_summary(msg))
+        results.append(_parse_message_summary(msg))
 
-    return {
-        "messages": summaries,
-        "result_count": len(summaries),
-        "next_page_token": results.get("nextPageToken"),
-    }
+    return results
 
 
 def search_messages(
@@ -169,13 +165,13 @@ def get_message(db: Session, agent_id: str, message_id: str):
     if not service:
         return None
 
-    message = (
+    msg = (
         service.users()
         .messages()
         .get(userId="me", id=message_id, format="full")
         .execute()
     )
-    return _parse_message(message)
+    return _parse_message(msg)
 
 
 def batch_get_messages(db: Session, agent_id: str, message_ids: List[str]):
@@ -186,13 +182,16 @@ def batch_get_messages(db: Session, agent_id: str, message_ids: List[str]):
 
     results = []
     for mid in message_ids:
-        msg = (
-            service.users()
-            .messages()
-            .get(userId="me", id=mid, format="full")
-            .execute()
-        )
-        results.append(_parse_message(msg))
+        try:
+            msg = (
+                service.users()
+                .messages()
+                .get(userId="me", id=mid, format="full")
+                .execute()
+            )
+            results.append(_parse_message(msg))
+        except Exception:
+            results.append({"id": mid, "error": "Failed to fetch message"})
     return results
 
 
@@ -209,11 +208,11 @@ def get_thread(db: Session, agent_id: str, thread_id: str):
         .execute()
     )
 
-    messages = [_parse_message(msg) for msg in thread.get("messages", [])]
+    messages = thread.get("messages", [])
     return {
-        "thread_id": thread["id"],
+        "threadId": thread_id,
+        "messages": [_parse_message(m) for m in messages],
         "message_count": len(messages),
-        "messages": messages,
     }
 
 
@@ -233,22 +232,22 @@ def send_message(
         return None
 
     if html_body:
-        msg = MIMEMultipart("alternative")
-        msg.attach(MIMEText(body, "plain"))
-        msg.attach(MIMEText(html_body, "html"))
+        message = MIMEMultipart("alternative")
+        message.attach(MIMEText(body, "plain"))
+        message.attach(MIMEText(html_body, "html"))
     else:
-        msg = MIMEText(body)
+        message = MIMEText(body)
 
-    msg["to"] = to
-    msg["subject"] = subject
+    message["to"] = to
+    message["subject"] = subject
     if cc:
-        msg["cc"] = cc
+        message["cc"] = cc
     if bcc:
-        msg["bcc"] = bcc
+        message["bcc"] = bcc
 
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
-    return sent
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    result = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    return result
 
 
 def reply_to_message(
@@ -265,48 +264,46 @@ def reply_to_message(
     if not service:
         return None
 
-    # Fetch the original message to get thread context
+    # Get original message to extract thread info and headers
     original = (
         service.users()
         .messages()
-        .get(userId="me", id=message_id, format="metadata",
-             metadataHeaders=["Subject", "From", "Message-ID", "References"])
+        .get(userId="me", id=message_id, format="full")
         .execute()
     )
-    orig_headers = original.get("payload", {}).get("headers", [])
-    orig_subject = _get_header(orig_headers, "Subject") or ""
-    orig_from = _get_header(orig_headers, "From") or ""
-    orig_msg_id = _get_header(orig_headers, "Message-ID") or ""
-    orig_refs = _get_header(orig_headers, "References") or ""
+    headers = original.get("payload", {}).get("headers", [])
     thread_id = original.get("threadId")
-
-    # Build references chain
-    references = f"{orig_refs} {orig_msg_id}".strip()
+    original_subject = _get_header(headers, "Subject") or ""
+    original_from = _get_header(headers, "From") or ""
+    original_message_id = _get_header(headers, "Message-ID") or ""
+    references = _get_header(headers, "References") or ""
 
     if html_body:
-        msg = MIMEMultipart("alternative")
-        msg.attach(MIMEText(body, "plain"))
-        msg.attach(MIMEText(html_body, "html"))
+        message = MIMEMultipart("alternative")
+        message.attach(MIMEText(body, "plain"))
+        message.attach(MIMEText(html_body, "html"))
     else:
-        msg = MIMEText(body)
+        message = MIMEText(body)
 
-    msg["to"] = orig_from
-    msg["subject"] = f"Re: {orig_subject}" if not orig_subject.startswith("Re:") else orig_subject
-    msg["In-Reply-To"] = orig_msg_id
-    msg["References"] = references
+    # Set reply headers
+    reply_subject = original_subject if original_subject.lower().startswith("re:") else f"Re: {original_subject}"
+    message["to"] = original_from
+    message["subject"] = reply_subject
+    message["In-Reply-To"] = original_message_id
+    message["References"] = f"{references} {original_message_id}".strip()
     if cc:
-        msg["cc"] = cc
+        message["cc"] = cc
     if bcc:
-        msg["bcc"] = bcc
+        message["bcc"] = bcc
 
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    sent = (
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    result = (
         service.users()
         .messages()
         .send(userId="me", body={"raw": raw, "threadId": thread_id})
         .execute()
     )
-    return sent
+    return result
 
 
 def modify_labels(
@@ -329,14 +326,23 @@ def modify_labels(
     if not service:
         return None
 
-    body: Dict[str, Any] = {
-        "ids": message_ids,
-        "addLabelIds": add_labels or [],
-        "removeLabelIds": remove_labels or [],
-    }
+    body_payload: Dict[str, Any] = {}
+    if add_labels:
+        body_payload["addLabelIds"] = add_labels
+    if remove_labels:
+        body_payload["removeLabelIds"] = remove_labels
 
-    service.users().messages().batchModify(userId="me", body=body).execute()
-    return {"modified_count": len(message_ids)}
+    results = []
+    for mid in message_ids:
+        result = (
+            service.users()
+            .messages()
+            .modify(userId="me", id=mid, body=body_payload)
+            .execute()
+        )
+        results.append({"id": result["id"], "labelIds": result.get("labelIds", [])})
+
+    return {"modified": results}
 
 
 def get_attachment(db: Session, agent_id: str, message_id: str, attachment_id: str):

@@ -10,7 +10,7 @@ from typing import Any, List
 from fastapi import HTTPException
 
 from ..config import settings
-from ..schemas import AgentResponse, CreateAgentRequest, UpdateAgentRequest
+from ..schemas.chat import AgentResponse, CreateAgentRequest, UpdateAgentRequest
 from ..repositories.storage import StorageRepository
 from ..clients.gateway_client import GatewayClient
 
@@ -28,20 +28,32 @@ class AgentService:
         return str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id / "agent")
 
     def _default_identity(self, agent_id: str, name: str, role: str) -> str:
-        return (
-            "# Identity" +
-            f"Name: {name}"
-            f"Agent ID: {agent_id}"
-            f"Role: {role}"
-        )
+        """
+        Load the default identity template and fill in placeholders.
+        """
+        template_path = Path(__file__).parent / "../templates/IDENTITY.md"
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = f.read()
+            return template.format(name=name, agent_id=agent_id, role=role)
+        except Exception as e:
+            logger.error(f"Failed to load IDENTITY.md template: {e}")
+            # Fallback to a minimal identity
+            return f"Name: {name}\nAgent ID: {agent_id}\nType: {role}"
 
     def _default_soul(self, agent_id: str, name: str, role: str) -> str:
-        return (
-            f"# {name}"
-            f"You are {name}. You are a helpful AI assistant whose role is: {role}."
-            f"Be concise, accurate, and professional."
-            f"Your agent ID is {agent_id}. Always use it exactly when calling tools."
-        )
+        """
+        Load the default soul template and fill in placeholders.
+        """
+        template_path = Path(__file__).parent / "../templates/SOUL.md"
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = f.read()
+            return template.format(name=name, agent_id=agent_id, role=role)
+        except Exception as e:
+            logger.error(f"Failed to load SOUL.md template: {e}")
+            # Fallback to a minimal soul
+            return f"# {name}\nYou are {name}. You are a helpful AI assistant whose role is: {role}.\nYour agent ID is {agent_id}."
 
     def _build_agents_raw(self, agents: List[dict[str, Any]]) -> str:
         entries: List[str] = []
