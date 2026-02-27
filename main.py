@@ -87,7 +87,6 @@ async def _unhandled_exception(request: Request, exc: Exception):
 app.include_router(
     agent_router,
     prefix="/api",
-    tags=["Agent Manager"],
     responses={404: {"description": "Agent or resource not found"}},
 )
 
@@ -95,7 +94,6 @@ app.include_router(
 app.include_router(
     gmail_router,
     prefix="/api/gmail",
-    tags=["Gmail Service"],
     responses={404: {"description": "Resource not found"}},
 )
 

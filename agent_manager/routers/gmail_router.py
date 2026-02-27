@@ -32,14 +32,14 @@ router = APIRouter()
 
 # ── Auth endpoints ───────────────────────────────────────────────────────────
 
-@router.get("/auth/login")
+@router.get("/auth/login", tags=["Gmail Auth"])
 def login(agent_id: str):
     flow = auth_service.get_google_flow(state=agent_id)
     auth_url, _ = flow.authorization_url(prompt="consent")
     return {"auth_url": auth_url}
 
 
-@router.get("/auth/callback")
+@router.get("/auth/callback", tags=["Gmail Auth"])
 def callback(request: Request, db: Session = Depends(get_db)):
     state = request.query_params.get("state")
     if not state:
@@ -128,7 +128,7 @@ def callback(request: Request, db: Session = Depends(get_db)):
     return HTMLResponse(content=html_content)
 
 
-@router.post("/auth/callback/manual")
+@router.post("/auth/callback/manual", tags=["Gmail Auth"])
 def manual_callback(body: ManualCallbackRequest, db: Session = Depends(get_db)):
     """Headless OAuth callback — accepts an authorization code or a full redirect URL."""
     if not body.code and not body.redirect_url:
@@ -147,7 +147,7 @@ def manual_callback(body: ManualCallbackRequest, db: Session = Depends(get_db)):
 
 # ── Email endpoints ──────────────────────────────────────────────────────────
 
-@router.get("/email/list")
+@router.get("/email/list", tags=["Gmail Email"])
 def list_emails(
     agent_id: str,
     max_results: int = 10,
@@ -176,7 +176,7 @@ def list_emails(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/email/search")
+@router.get("/email/search", tags=["Gmail Email"])
 def search_emails(
     agent_id: str,
     query: str,
@@ -202,7 +202,7 @@ def search_emails(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/email/read")
+@router.get("/email/read", tags=["Gmail Email"])
 def read_email(agent_id: str, message_id: str, db: Session = Depends(get_db)):
     """Read a full email — complete body (no truncation), all headers, labels,
     thread_id, and attachment metadata."""
@@ -217,7 +217,7 @@ def read_email(agent_id: str, message_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/email/batch_read")
+@router.post("/email/batch_read", tags=["Gmail Email"])
 def batch_read_emails(body: BatchReadRequest, db: Session = Depends(get_db)):
     """Read multiple emails by ID in a single call."""
     try:
@@ -231,7 +231,7 @@ def batch_read_emails(body: BatchReadRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/email/thread")
+@router.get("/email/thread", tags=["Gmail Email"])
 def get_thread(agent_id: str, thread_id: str, db: Session = Depends(get_db)):
     """Get all messages in a conversation thread."""
     try:
@@ -245,7 +245,7 @@ def get_thread(agent_id: str, thread_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/email/send")
+@router.post("/email/send", tags=["Gmail Email"])
 def send_email(body: SendEmailRequest, db: Session = Depends(get_db)):
     """Send an email with optional cc, bcc, and HTML body."""
     try:
@@ -262,7 +262,7 @@ def send_email(body: SendEmailRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/email/reply")
+@router.post("/email/reply", tags=["Gmail Email"])
 def reply_to_email(body: ReplyRequest, db: Session = Depends(get_db)):
     """Reply to an email in its thread with proper In-Reply-To/References headers."""
     try:
@@ -279,7 +279,7 @@ def reply_to_email(body: ReplyRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/email/modify")
+@router.post("/email/modify", tags=["Gmail Email"])
 def modify_email_labels(body: ModifyLabelsRequest, db: Session = Depends(get_db)):
     """Add/remove labels on messages.
 
@@ -304,7 +304,7 @@ def modify_email_labels(body: ModifyLabelsRequest, db: Session = Depends(get_db)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/email/attachment")
+@router.get("/email/attachment", tags=["Gmail Email"])
 def get_attachment(
     agent_id: str,
     message_id: str,
@@ -325,7 +325,7 @@ def get_attachment(
 
 # ── Calendar endpoints ───────────────────────────────────────────────────────
 
-@router.get("/calendar/events")
+@router.get("/calendar/events", tags=["Gmail Calendar"])
 def list_calendar_events(agent_id: str, max_results: int = 10, db: Session = Depends(get_db)):
     """List upcoming calendar events."""
     try:
@@ -339,7 +339,7 @@ def list_calendar_events(agent_id: str, max_results: int = 10, db: Session = Dep
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/calendar/events/{event_id}")
+@router.get("/calendar/events/{event_id}", tags=["Gmail Calendar"])
 def get_calendar_event(agent_id: str, event_id: str, db: Session = Depends(get_db)):
     """Get a specific calendar event."""
     try:
@@ -353,7 +353,7 @@ def get_calendar_event(agent_id: str, event_id: str, db: Session = Depends(get_d
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/calendar/events")
+@router.post("/calendar/events", tags=["Gmail Calendar"])
 def create_calendar_event(body: CreateEventRequest, db: Session = Depends(get_db)):
     """Create a new calendar event."""
     try:
@@ -375,7 +375,7 @@ def create_calendar_event(body: CreateEventRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/calendar/events/{event_id}")
+@router.put("/calendar/events/{event_id}", tags=["Gmail Calendar"])
 def update_calendar_event(event_id: str, body: UpdateEventRequest, db: Session = Depends(get_db)):
     """Update an existing calendar event."""
     try:
@@ -396,7 +396,7 @@ def update_calendar_event(event_id: str, body: UpdateEventRequest, db: Session =
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/calendar/events/{event_id}")
+@router.delete("/calendar/events/{event_id}", tags=["Gmail Calendar"])
 def delete_calendar_event(agent_id: str, event_id: str, db: Session = Depends(get_db)):
     """Delete a calendar event."""
     try:
@@ -424,7 +424,7 @@ def _decrypt_secret_data(data: Dict[str, Any]) -> Dict[str, str]:
 
 # ── Secrets CRUD endpoints ──────────────────────────────────────────────────
 
-@router.post("/secrets")
+@router.post("/secrets", tags=["Gmail Secrets"])
 def upsert_secret(body: SecretUpsertRequest, db: Session = Depends(get_db)):
     """Create or update a secret for an agent + service combination."""
     encrypted = _encrypt_secret_data(body.secret_data)
@@ -454,7 +454,7 @@ def upsert_secret(body: SecretUpsertRequest, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/secrets/{agent_id}")
+@router.get("/secrets/{agent_id}", tags=["Gmail Secrets"])
 def list_secrets(agent_id: str, db: Session = Depends(get_db)):
     """List all secrets for a given agent (returns service names only, not the data)."""
     secrets = db.query(AgentSecret).filter(AgentSecret.agent_id == agent_id).all()
@@ -468,7 +468,7 @@ def list_secrets(agent_id: str, db: Session = Depends(get_db)):
     ]
 
 
-@router.get("/secrets/{agent_id}/{service_name}")
+@router.get("/secrets/{agent_id}/{service_name}", tags=["Gmail Secrets"])
 def get_secret(agent_id: str, service_name: str, db: Session = Depends(get_db)):
     """Get the full secret data for an agent + service."""
     secret = (
@@ -487,7 +487,7 @@ def get_secret(agent_id: str, service_name: str, db: Session = Depends(get_db)):
     }
 
 
-@router.delete("/secrets/{agent_id}/{service_name}")
+@router.delete("/secrets/{agent_id}/{service_name}", tags=["Gmail Secrets"])
 def delete_secret(agent_id: str, service_name: str, db: Session = Depends(get_db)):
     """Delete a secret for an agent + service."""
     secret = (

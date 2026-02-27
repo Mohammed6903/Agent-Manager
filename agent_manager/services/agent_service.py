@@ -69,7 +69,7 @@ class AgentService:
         return f"{{ agents: {{ list: [{joined}] }} }}"
 
     # Skills that every new agent gets automatically
-    DEFAULT_SKILLS = ["task-manager", "workspace-bridge"]
+    DEFAULT_SKILLS = ["task-manager", "workspace-bridge", "cron-manager"]
 
     async def _install_default_skills(self, agent_id: str, workspace: str):
         """Copy default skills from templates into the agent's workspace."""

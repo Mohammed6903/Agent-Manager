@@ -293,22 +293,6 @@ async def list_skills(
     return await skill_service.list_skills()
 
 
-@router.get("/skills/all", tags=["Skills"])
-async def all_skills(
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Return every skill with its full SKILL.md content."""
-    listing = await skill_service.list_skills()
-    result = []
-    for slug in listing.skills:
-        try:
-            content = await skill_service.get_skill_content(slug)
-        except Exception:
-            content = None
-        result.append({"name": slug, "content": content})
-    return {"skills": result, "count": len(result)}
-
-
 @router.get("/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
 async def get_skill(
     skill_name: str,
@@ -386,23 +370,6 @@ async def list_agent_skills(
 ):
     """List all skills installed for a specific agent."""
     return await skill_service.list_agent_skills(agent_id)
-
-
-@router.get("/agents/{agent_id}/skills/all", tags=["Agent Skills"])
-async def all_agent_skills(
-    agent_id: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Return every skill for this agent with its full SKILL.md content."""
-    listing = await skill_service.list_agent_skills(agent_id)
-    result = []
-    for slug in listing.skills:
-        try:
-            content = await skill_service.get_agent_skill_content(agent_id, slug)
-        except Exception:
-            content = None
-        result.append({"name": slug, "content": content})
-    return {"agent_id": agent_id, "skills": result, "count": len(result)}
 
 
 @router.get("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
