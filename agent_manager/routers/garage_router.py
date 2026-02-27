@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import logging
 
 import httpx
@@ -48,19 +50,30 @@ async def create_garage_post(
     org_id = creds.get("orgId", "")
     channel_ids = creds.get("channelIds", [])
 
-    # channelIds may come back as a string from decryption — parse if needed
+    # channelIds is decrypted as a string (because encrypt does str(v)).
+    # str() on a Python list gives "['id1', 'id2']" (single-quoted repr),
+    # which is NOT valid JSON — so we try json.loads first, then ast.literal_eval.
     if isinstance(channel_ids, str):
-        import json as _json
         try:
-            channel_ids = _json.loads(channel_ids)
+            channel_ids = json.loads(channel_ids)
         except (ValueError, TypeError):
-            channel_ids = [channel_ids] if channel_ids else []
+            try:
+                channel_ids = ast.literal_eval(channel_ids)
+            except (ValueError, SyntaxError):
+                channel_ids = [channel_ids] if channel_ids else []
 
     if not token or not org_id:
         raise HTTPException(
             status_code=422,
             detail="Garage Feed credentials are incomplete (missing token or orgId). Please reconnect the skill.",
         )
+
+    # Debug: log what we're sending (mask the token for security)
+    masked_token = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "***"
+    logger.info(
+        "Garage post request — orgId=%s, token=%s (len=%d), channelIds=%s",
+        org_id, masked_token, len(token), channel_ids,
+    )
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -78,6 +91,9 @@ async def create_garage_post(
                     "status": "published",
                     "message": "Post published successfully on the Garage feed!",
                 }
+            logger.error(
+                "Garage API returned %d: %s", resp.status_code, resp.text[:500],
+            )
             raise HTTPException(
                 status_code=resp.status_code,
                 detail=f"Garage API error: {resp.text[:300]}",
