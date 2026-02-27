@@ -15,7 +15,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent_manager.database import Base
-from agent_manager.models import GmailAccount, AgentSecret, CronOwnership  # Import to register models
+from agent_manager.models import GmailAccount, AgentSecret, CronOwnership, CronPipelineRun  # Import to register models
 
 load_dotenv()
 

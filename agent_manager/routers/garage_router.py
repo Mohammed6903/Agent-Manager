@@ -39,7 +39,7 @@ async def create_garage_post(
     Fetches the agent's `garage_feed` credentials from the secret store
     and forwards the post to the Garage API.
     """
-    creds = SecretService.get_secret(db, body.agent_id, "garage")
+    creds = SecretService.get_secret(db, body.agent_id, "garage_feed")
     if not creds:
         raise HTTPException(
             status_code=404,
@@ -51,16 +51,27 @@ async def create_garage_post(
     channel_ids = creds.get("channelIds", [])
 
     # channelIds is decrypted as a string (because encrypt does str(v)).
-    # str() on a Python list gives "['id1', 'id2']" (single-quoted repr),
-    # which is NOT valid JSON — so we try json.loads first, then ast.literal_eval.
+    # It might be in various formats:
+    # - "['id1', 'id2']" (Python repr, from our old str(list))
+    # - "[\"id1\", \"id2\"]" (Valid JSON)
+    # - "id1, id2" (Comma-separated)
+    # - "id1" (Single string)
     if isinstance(channel_ids, str):
-        try:
-            channel_ids = json.loads(channel_ids)
-        except (ValueError, TypeError):
+        channel_ids = channel_ids.strip()
+        if channel_ids.startswith("[") and channel_ids.endswith("]"):
             try:
-                channel_ids = ast.literal_eval(channel_ids)
-            except (ValueError, SyntaxError):
-                channel_ids = [channel_ids] if channel_ids else []
+                channel_ids = json.loads(channel_ids)
+            except (ValueError, TypeError):
+                try:
+                    channel_ids = ast.literal_eval(channel_ids)
+                except (ValueError, SyntaxError):
+                    channel_ids = []
+        elif "," in channel_ids:
+            channel_ids = [c.strip() for c in channel_ids.split(",") if c.strip()]
+        elif channel_ids:
+            channel_ids = [channel_ids]
+        else:
+            channel_ids = []
 
     if not token or not org_id:
         raise HTTPException(
