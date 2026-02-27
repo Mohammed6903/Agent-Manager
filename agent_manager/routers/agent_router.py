@@ -7,6 +7,7 @@ from typing import Any, Annotated
 
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..schemas.chat import (
@@ -26,6 +27,7 @@ from ..dependencies import (
     get_agent_service, get_session_service, get_chat_service, get_gateway,
     get_skill_service, get_cron_service, get_task_service,
 )
+from ..database import get_db
 from ..services.agent_service import AgentService
 from ..services.session_service import SessionService
 from ..services.chat_service import ChatService
@@ -192,16 +194,18 @@ _CHAT_OPENAPI_EXTRA: dict = {
 async def chat(
     request: Request,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    db: Session = Depends(get_db),
 ):
     """Send a message to an agent. Returns a streaming SSE response."""
     req, file_paths = await parse_chat_request(request)
-    return await chat_service.chat_stream(req, uploaded_file_paths=file_paths)
+    return await chat_service.chat_stream(req, uploaded_file_paths=file_paths, db=db)
 
 
 @router.post("/chat/completions", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
 async def chat_completions(
     request: Request,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    db: Session = Depends(get_db),
 ):
     """Send a message and get the full response (non-streaming)."""
     req, file_paths = await parse_chat_request(request)

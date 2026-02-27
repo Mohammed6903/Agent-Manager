@@ -11,9 +11,11 @@ from typing import AsyncGenerator
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post, load_garage_credentials
+from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post
+from ..services.secret_service import SecretService
 from ..schemas.chat import ChatRequest, NewSessionResponse
 
 logger = logging.getLogger("agent_manager.services.chat_service")
@@ -123,6 +125,7 @@ class ChatService:
         self,
         req: ChatRequest,
         uploaded_file_paths: list[str] | None = None,
+        db: Session | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Open a streaming connection to the OpenClaw Gateway and yield SSE chunks.
 
@@ -143,7 +146,7 @@ class ChatService:
             headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
 
         # ── Tool-enabled path ──────────────────────────────────────────────────
-        garage_creds = await load_garage_credentials(req.agent_id)
+        garage_creds = SecretService.get_secret(db, req.agent_id, "garage_feed") if db else None
         if garage_creds:
             probe_body = {
                 "model": f"openclaw:{req.agent_id}",
@@ -187,7 +190,7 @@ class ChatService:
                             try:
                                 args = json.loads(tc["function"]["arguments"])
                                 result = await execute_create_garage_post(
-                                    req.agent_id, args.get("content", "")
+                                    db, req.agent_id, args.get("content", "")
                                 )
                             except Exception as exc:
                                 result = f"Tool execution error: {exc}"
@@ -281,10 +284,11 @@ class ChatService:
         self,
         req: ChatRequest,
         uploaded_file_paths: list[str] | None = None,
+        db: Session | None = None,
     ) -> StreamingResponse:
         """Return a streaming SSE response proxied from the gateway."""
         return StreamingResponse(
-            self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths),
+            self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
