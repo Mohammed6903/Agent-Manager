@@ -49,8 +49,16 @@ curl -s -X POST "http://localhost:8000/api/crons" \
     "agent_id": "YOUR_ID",
     "schedule_kind": "every",
     "schedule_expr": "5m",
+    "schedule_human": "Every 5 minutes",
     "session_target": "isolated",
-    "payload_message": "The prompt/instruction the agent will execute each run",
+    "payload_message": "The primary prompt the agent will execute",
+    "pipeline_template": {
+      "tasks": [
+        { "name": "Fetch Data", "description": "Get latest news", "status": "pending", "integrations": [], "context_sources": [] }
+      ],
+      "global_integrations": [],
+      "global_context_sources": []
+    },
     "delivery_mode": "webhook",
     "enabled": true,
     "delete_after_run": false,
@@ -69,8 +77,10 @@ curl -s -X POST "http://localhost:8000/api/crons" \
 | `schedule_kind` | ✅ | `every`, `cron`, or `at` |
 | `schedule_expr` | ✅ | Duration string (e.g. `3m`, `1h`, `1d`), cron expr, or ISO timestamp |
 | `schedule_tz` | ❌ | IANA timezone (only for `cron` kind, e.g. `Asia/Kolkata`) |
+| `schedule_human`| ❌ | Human readable schedule string (e.g. "Every Monday at 9AM") |
 | `session_target` | ❌ | `isolated` (default) or `main` |
-| `payload_message` | ✅ | The prompt the agent receives each run |
+| `payload_message` | ✅ | The base prompt the agent receives each run |
+| `pipeline_template`| ❌ | JSON object defining structured tasks (agent will return status for each task) |
 | `delivery_mode` | ❌ | `webhook` (default) or `none` |
 | `enabled` | ❌ | `true` (default) or `false` |
 | `delete_after_run` | ❌ | `true` to auto-delete after first run (for `at` jobs) |

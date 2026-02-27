@@ -1,5 +1,6 @@
 """Cron job management service — wraps OpenClaw gateway cron API + DB ownership."""
 
+import json
 import logging
 from typing import List, Optional
 from fastapi import HTTPException
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..clients.gateway_client import GatewayClient
 from ..repositories.cron_ownership_repository import CronOwnershipRepository
+from ..repositories.cron_pipeline_repository import CronPipelineRepository
 from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
 from ..config import settings
 from ..ws_manager import cron_ws_manager
@@ -18,6 +20,7 @@ class CronService:
     def __init__(self, gateway: GatewayClient, db: Session):
         self.gateway = gateway
         self.ownership = CronOwnershipRepository(db)
+        self.pipelines = CronPipelineRepository(db)
 
     async def create_cron(self, req: CreateCronRequest) -> str:
         """Create a cron job in OpenClaw and store ownership."""
@@ -30,9 +33,59 @@ class CronService:
         elif req.schedule_kind == "every":
             schedule = {"kind": "every", "every": req.schedule_expr}
 
+        payload_msg = req.payload_message
+        if req.pipeline_template:
+            template_json = json.dumps(req.pipeline_template, indent=2)
+            payload_msg = f"""{req.payload_message}
+
+---
+## PIPELINE EXECUTION FRAMEWORK
+
+You are executing a structured scheduled pipeline. Follow all rules exactly.
+
+### PIPELINE DEFINITION
+```json
+{template_json}
+```
+
+### EXECUTION RULES
+1. Execute tasks in the exact order listed. Do not skip or reorder.
+2. Before starting each task, update its status to "running".
+3. Immediately after each task completes successfully, update its status to "success".
+4. If a task fails, set status to "error" and populate the "error" field with a concise description. Then continue to the next task — do not abort the pipeline.
+5. Never add an "error" field to a task that succeeded.
+6. integrations and context_sources on each task reflect what that specific task actually used. They may differ from the template if a task used fewer integrations than planned.
+7. global_integrations and global_context_sources in your final output must be the union of all task integrations and context_sources actually used.
+
+### REQUIRED FINAL OUTPUT
+At the very end of your response, after all task execution, output this exact block and nothing after it:
+
+```pipeline_result
+{{
+  "tasks": [
+    {{
+      "name": "<task name>",
+      "status": "success" | "error",
+      "error": "<only if status=error>",
+      "integrations": [],
+      "context_sources": []
+    }}
+  ],
+  "global_integrations": [],
+  "global_context_sources": [],
+  "pipeline_status": "success" | "partial" | "error"
+}}
+```
+
+pipeline_status rules:
+- "success" — all tasks succeeded
+- "partial" — at least one task succeeded and at least one failed
+- "error" — every task failed
+---"""
+
         payload = {
             "kind": "agentTurn" if req.session_target == "isolated" else "systemEvent",
-            "message": req.payload_message
+            "message": payload_msg
         }
 
         delivery = {
@@ -93,6 +146,9 @@ class CronService:
         """List and enrich cron jobs from OpenClaw."""
         jobs = await self.gateway.cron_list()
         ownership_map = self.ownership.list_all()
+        
+        cron_ids = [job.get("id") or job.get("jobId") for job in jobs if (job.get("id") or job.get("jobId"))]
+        stats_map = self.pipelines.aggregate_stats(cron_ids)
 
         enriched = []
         for job in jobs:
@@ -112,6 +168,7 @@ class CronService:
                     continue
 
             last_run_at, next_run_at, last_run_status = self._extract_state(job)
+            stats = stats_map.get(job_id, {})
 
             enriched.append(CronResponse(
                 job_id=job_id,
@@ -126,6 +183,9 @@ class CronService:
                 last_run_at=last_run_at,
                 next_run_at=next_run_at,
                 last_run_status=last_run_status,
+                total_runs=stats.get("total_runs"),
+                success_rate=stats.get("success_rate"),
+                avg_duration_ms=stats.get("avg_duration_ms")
             ))
         return enriched
 
@@ -138,6 +198,7 @@ class CronService:
 
         owner = self.ownership.get(job_id)
         last_run_at, next_run_at, last_run_status = self._extract_state(job)
+        stats = self.pipelines.aggregate_stats([job_id]).get(job_id, {})
 
         return CronResponse(
             job_id=job_id,
@@ -152,6 +213,9 @@ class CronService:
             last_run_at=last_run_at,
             next_run_at=next_run_at,
             last_run_status=last_run_status,
+            total_runs=stats.get("total_runs"),
+            success_rate=stats.get("success_rate"),
+            avg_duration_ms=stats.get("avg_duration_ms")
         )
 
     async def update_cron(self, job_id: str, req: UpdateCronRequest) -> dict:
@@ -198,6 +262,6 @@ class CronService:
         return result
 
     async def get_cron_runs(self, job_id: str, limit: int = 20) -> List[dict]:
-        """Get run history."""
-        return await self.gateway.cron_runs(job_id, limit)
+        """Get run history from CronPipelineRun database."""
+        return self.pipelines.list_by_cron(job_id, limit)
 

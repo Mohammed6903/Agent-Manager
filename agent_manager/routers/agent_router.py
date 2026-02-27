@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any, Annotated
 
 from fastapi import APIRouter, Request, Depends, HTTPException
@@ -326,6 +328,15 @@ async def update_skill(
     return await skill_service.update_skill(skill_name, req)
 
 
+@router.post("/skills/{skill_name}/sync", tags=["Skills"], response_model=SkillResponse)
+async def sync_skill(
+    skill_name: str,
+    skill_service: Annotated[SkillService, Depends(get_skill_service)],
+):
+    """Sync an existing skill's SKILL.md content with its default template."""
+    return await skill_service.sync_skill(skill_name)
+
+
 @router.delete("/skills/{skill_name}", tags=["Skills"])
 async def delete_skill(
     skill_name: str,
@@ -408,6 +419,16 @@ async def update_agent_skill(
     return await skill_service.update_agent_skill(agent_id, skill_name, req)
 
 
+@router.post("/agents/{agent_id}/skills/{skill_name}/sync", tags=["Agent Skills"], response_model=SkillResponse)
+async def sync_agent_skill(
+    agent_id: str,
+    skill_name: str,
+    skill_service: Annotated[SkillService, Depends(get_skill_service)],
+):
+    """Sync an existing agent skill's SKILL.md content with its default template."""
+    return await skill_service.sync_agent_skill(agent_id, skill_name)
+
+
 @router.delete("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"])
 async def delete_agent_skill(
     agent_id: str,
@@ -486,6 +507,101 @@ async def get_cron_runs(
 ):
     """Get the run history for a cron job."""
     return await cron_service.get_cron_runs(job_id, limit=limit)
+
+
+@router.get("/crons/{job_id}/detail", tags=["Cron Jobs"])
+async def get_cron_detail(
+    job_id: str,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Get the enriched cron job along with parsed run history."""
+    job = await cron_service.get_cron(job_id)
+    runs = await cron_service.get_cron_runs(job_id, limit=20)
+    
+    template_tasks = {}
+    if job.pipeline_template and isinstance(job.pipeline_template, dict):
+        for t in job.pipeline_template.get("tasks", []):
+            if "name" in t:
+                template_tasks[t["name"]] = t.get("description", "")
+                
+    for run in runs:
+        if run.get("tasks"):
+            for task in run["tasks"]:
+                task_name = task.get("name")
+                if task_name in template_tasks:
+                    task["description"] = template_tasks[task_name]
+                
+    return {
+        "job": job.model_dump(),
+        "runs": runs
+    }
+
+
+@router.post("/internal/cron-webhook", tags=["Internal"])
+async def cron_webhook_receiver(
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    """Receive webhook from OpenClaw when a cron job finishes."""
+    payload = await req.json()
+    job_id = payload.get("jobId")
+    if not job_id:
+        return {"status": "ignored"}
+        
+    status_raw = payload.get("status", "")
+    summary = payload.get("summary", "")
+    
+    base_status = "success" if status_raw in ("ok", "success") else "error"
+    
+    tasks = []
+    global_int = []
+    global_ctx = []
+    pipeline_status = base_status
+    
+    match = re.search(r"```pipeline_result\n(.*?)\n```", summary, re.DOTALL)
+    if match:
+        try:
+            parsed = json.loads(match.group(1))
+            tasks = parsed.get("tasks", [])
+            global_int = parsed.get("global_integrations", [])
+            global_ctx = parsed.get("global_context_sources", [])
+            pipeline_status = parsed.get("pipeline_status", base_status)
+        except json.JSONDecodeError:
+            pass
+            
+    from ..repositories.cron_pipeline_repository import CronPipelineRepository
+    repo = CronPipelineRepository(db)
+    
+    run_id = payload.get("sessionKey") or payload.get("sessionId") or f"run-{payload.get('ts')}"
+    
+    run_data = {
+        "id": run_id,
+        "cron_id": job_id,
+        "status": pipeline_status,
+        "started_at": payload.get("runAtMs"),
+        "finished_at": payload.get("ts"),
+        "duration_ms": payload.get("durationMs"),
+        "tasks": tasks,
+        "global_integrations": global_int,
+        "global_context_sources": global_ctx,
+        "raw_summary": summary,
+        "model": payload.get("model"),
+        "input_tokens": payload.get("usage", {}).get("input_tokens"),
+        "output_tokens": payload.get("usage", {}).get("output_tokens"),
+    }
+    
+    try:
+        repo.insert_run(run_data)
+        
+        # Broadcast the new run to Websocket if needed
+        from ..ws_manager import cron_ws_manager
+        import asyncio
+        asyncio.create_task(cron_ws_manager.broadcast("cron_run_finished", {"job_id": job_id, "run": run_data}))
+        
+    except Exception as e:
+        logger.error(f"Failed to process cron webhook: {e}")
+        
+    return {"status": "ok"}
 
 
 # ── Tasks (AI Kanban) ──────────────────────────────────────────────────────────
