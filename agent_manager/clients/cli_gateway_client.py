@@ -126,7 +126,7 @@ class CLIGatewayClient(GatewayClient):
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            for key in ("runs", "list", "payload", "data"):
+            for key in ("entries", "runs", "list", "payload", "data"):
                 if key in data and isinstance(data[key], list):
                     return data[key]
         return []

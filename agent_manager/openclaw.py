@@ -47,8 +47,17 @@ async def run_openclaw(args: list[str]) -> dict[str, Any]:
     try:
         return json.loads(stdout_text)
     except json.JSONDecodeError:
-        # Some commands return plain text — wrap it so callers can still
-        # work with the result uniformly.
+        # CLI may wrap JSON in decorative text (emoji headers, box chars).
+        # Try to extract the JSON object/array from within.
+        for start_char, end_char in [('{', '}'), ('[', ']')]:
+            start = stdout_text.find(start_char)
+            end = stdout_text.rfind(end_char)
+            if start != -1 and end > start:
+                try:
+                    return json.loads(stdout_text[start:end + 1])
+                except json.JSONDecodeError:
+                    continue
+        # Truly plain text — wrap it
         return {"raw": stdout_text}
 
 

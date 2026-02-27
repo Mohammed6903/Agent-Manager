@@ -27,9 +27,6 @@
             --accent-rose: #fb7185;
             --accent-violet: #a78bfa;
             --accent-cyan: #22d3ee;
-            --gradient-1: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
-            --gradient-2: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%);
-            --gradient-3: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
             --shadow-glow: 0 0 40px rgba(251, 191, 36, 0.12);
         }
@@ -48,6 +45,7 @@
             overflow-x: hidden;
         }
 
+        /* BG gradient */
         .bg-gradient {
             position: fixed;
             inset: 0;
@@ -68,7 +66,7 @@
         .bg-gradient::before {
             width: 500px;
             height: 500px;
-            background: var(--gradient-1);
+            background: linear-gradient(135deg, #f6d365, #fda085);
             top: -80px;
             left: -80px;
         }
@@ -76,7 +74,7 @@
         .bg-gradient::after {
             width: 400px;
             height: 400px;
-            background: var(--gradient-2);
+            background: linear-gradient(135deg, #a18cd1, #fbc2eb);
             bottom: -80px;
             right: -80px;
             animation-delay: -10s;
@@ -94,7 +92,7 @@
             }
 
             66% {
-                transform: translate(-30px, 30px) scale(0.95)
+                transform: translate(-30px, 30px) scale(.95)
             }
         }
 
@@ -105,7 +103,7 @@
 
         /* Header */
         .header {
-            padding: 20px 40px;
+            padding: 16px 32px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -120,23 +118,23 @@
         .header-left {
             display: flex;
             align-items: center;
-            gap: 14px;
+            gap: 12px;
         }
 
         .logo {
-            width: 38px;
-            height: 38px;
-            background: var(--gradient-1);
-            border-radius: 10px;
+            width: 34px;
+            height: 34px;
+            background: linear-gradient(135deg, #f6d365, #fda085);
+            border-radius: 9px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 18px;
+            font-size: 17px;
             font-weight: 800;
         }
 
         .header h1 {
-            font-size: 18px;
+            font-size: 17px;
             font-weight: 700;
             letter-spacing: -0.5px;
         }
@@ -148,19 +146,19 @@
         .ws-status {
             display: flex;
             align-items: center;
-            gap: 8px;
-            font-size: 12px;
+            gap: 7px;
+            font-size: 11px;
             font-weight: 500;
             color: var(--text-secondary);
-            padding: 6px 14px;
+            padding: 5px 12px;
             border-radius: 100px;
-            background: rgba(255, 255, 255, 0.04);
+            background: rgba(255, 255, 255, .04);
             border: 1px solid var(--border);
         }
 
         .ws-dot {
-            width: 8px;
-            height: 8px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
             background: var(--accent-rose);
             transition: background .3s;
@@ -171,127 +169,153 @@
             box-shadow: 0 0 8px var(--accent-emerald);
         }
 
-        /* Config bar */
-        .config-bar {
+        /* Toolbar */
+        .toolbar {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 10px 40px;
+            gap: 8px;
+            padding: 10px 32px;
             flex-wrap: wrap;
-            background: rgba(255, 255, 255, 0.02);
+            background: rgba(255, 255, 255, .02);
             border-bottom: 1px solid var(--border);
         }
 
-        .config-bar label {
-            font-size: 11px;
+        .toolbar label {
+            font-size: 10px;
             color: var(--text-muted);
-            font-weight: 500;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .5px;
         }
 
-        .config-bar input {
+        .toolbar input,
+        .toolbar select {
             background: var(--bg-card);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 5px 10px;
+            border-radius: 7px;
+            padding: 5px 9px;
             font-size: 12px;
             color: var(--text-primary);
             font-family: inherit;
             outline: none;
         }
 
-        .config-bar input:focus {
+        .toolbar input:focus,
+        .toolbar select:focus {
             border-color: var(--accent-amber);
         }
 
+        .toolbar select {
+            cursor: pointer;
+        }
+
+        .toolbar .sep {
+            width: 1px;
+            height: 24px;
+            background: var(--border);
+            margin: 0 4px;
+            flex-shrink: 0;
+        }
+
         .btn {
-            padding: 5px 14px;
-            border-radius: 8px;
+            padding: 5px 12px;
+            border-radius: 7px;
             border: 1px solid var(--accent-amber);
-            background: rgba(251, 191, 36, 0.1);
+            background: rgba(251, 191, 36, .1);
             color: var(--accent-amber);
             font-size: 11px;
             font-weight: 600;
             cursor: pointer;
             transition: all .2s;
+            font-family: inherit;
+            white-space: nowrap;
         }
 
         .btn:hover {
-            background: rgba(251, 191, 36, 0.2);
+            background: rgba(251, 191, 36, .2);
         }
 
         .btn-danger {
             border-color: var(--accent-rose);
-            background: rgba(251, 113, 133, 0.1);
+            background: rgba(251, 113, 133, .1);
             color: var(--accent-rose);
         }
 
         .btn-danger:hover {
-            background: rgba(251, 113, 133, 0.2);
+            background: rgba(251, 113, 133, .2);
         }
 
         .btn-success {
             border-color: var(--accent-emerald);
-            background: rgba(52, 211, 153, 0.1);
+            background: rgba(52, 211, 153, .1);
             color: var(--accent-emerald);
         }
 
         .btn-success:hover {
-            background: rgba(52, 211, 153, 0.2);
+            background: rgba(52, 211, 153, .2);
         }
 
         .btn-blue {
             border-color: var(--accent-blue);
-            background: rgba(96, 165, 250, 0.1);
+            background: rgba(96, 165, 250, .1);
             color: var(--accent-blue);
         }
 
         .btn-blue:hover {
-            background: rgba(96, 165, 250, 0.2);
+            background: rgba(96, 165, 250, .2);
+        }
+
+        .btn-sm {
+            padding: 3px 8px;
+            font-size: 10px;
         }
 
         /* Stats */
         .stats-bar {
             display: flex;
-            gap: 10px;
-            padding: 14px 40px;
+            gap: 8px;
+            padding: 12px 32px;
             overflow-x: auto;
         }
 
         .stat-chip {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 8px 14px;
-            border-radius: 10px;
+            gap: 5px;
+            padding: 6px 12px;
+            border-radius: 9px;
             background: var(--bg-card);
             border: 1px solid var(--border);
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 500;
             white-space: nowrap;
-            backdrop-filter: blur(10px);
         }
 
         .stat-count {
             font-weight: 700;
-            font-size: 15px;
+            font-size: 14px;
         }
 
         /* Grid */
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-            gap: 16px;
-            padding: 16px 40px 40px;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 14px;
+            padding: 14px 32px 32px;
         }
 
         @media (max-width: 700px) {
 
             .grid,
             .stats-bar,
-            .config-bar,
+            .toolbar,
             .header {
-                padding-left: 16px;
-                padding-right: 16px;
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -299,17 +323,18 @@
         .cron-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 18px;
+            border-radius: 12px;
+            padding: 16px;
             backdrop-filter: blur(10px);
+            cursor: pointer;
             transition: all .25s cubic-bezier(.4, 0, .2, 1);
-            animation: cardIn .35s cubic-bezier(.4, 0, .2, 1);
+            animation: cardIn .3s cubic-bezier(.4, 0, .2, 1);
         }
 
         @keyframes cardIn {
             from {
                 opacity: 0;
-                transform: translateY(10px) scale(.97)
+                transform: translateY(8px) scale(.97)
             }
 
             to {
@@ -326,7 +351,7 @@
         }
 
         .cron-card.updated {
-            animation: pulse .6s ease-out;
+            animation: pulse .5s ease-out;
         }
 
         @keyframes pulse {
@@ -335,7 +360,7 @@
             }
 
             100% {
-                box-shadow: 0 0 0 12px rgba(251, 191, 36, 0)
+                box-shadow: 0 0 0 10px rgba(251, 191, 36, 0)
             }
         }
 
@@ -344,22 +369,22 @@
             align-items: flex-start;
             justify-content: space-between;
             gap: 8px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
 
         .card-title {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
             line-height: 1.4;
         }
 
         .enabled-badge {
-            font-size: 10px;
+            font-size: 9px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: .5px;
-            padding: 3px 8px;
-            border-radius: 6px;
+            padding: 2px 7px;
+            border-radius: 5px;
             white-space: nowrap;
             flex-shrink: 0;
         }
@@ -375,77 +400,74 @@
         }
 
         .card-agent {
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 600;
             color: var(--accent-violet);
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 4px;
+            margin-bottom: 6px;
         }
 
         .card-id {
-            font-size: 10px;
+            font-size: 9px;
             color: var(--text-muted);
             font-family: monospace;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             word-break: break-all;
         }
 
         .schedule-badge {
             display: inline-flex;
             align-items: center;
-            gap: 5px;
-            padding: 5px 10px;
-            border-radius: 8px;
+            gap: 4px;
+            padding: 4px 9px;
+            border-radius: 7px;
             background: rgba(251, 191, 36, .08);
             border: 1px solid rgba(251, 191, 36, .15);
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 500;
             color: var(--accent-amber);
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
 
         .payload-section {
             background: rgba(255, 255, 255, .03);
-            border-radius: 8px;
-            padding: 10px 12px;
-            margin-bottom: 10px;
+            border-radius: 7px;
+            padding: 8px 10px;
+            margin-bottom: 8px;
             border: 1px solid var(--border);
         }
 
         .payload-label {
-            font-size: 10px;
+            font-size: 9px;
             font-weight: 700;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: .5px;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
         }
 
         .payload-text {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-secondary);
-            line-height: 1.5;
+            line-height: 1.4;
             display: -webkit-box;
-            -webkit-line-clamp: 3;
+            -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
 
         .run-info {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
 
         .run-chip {
-            font-size: 11px;
+            font-size: 10px;
             color: var(--text-secondary);
             display: flex;
             align-items: center;
-            gap: 4px;
+            gap: 3px;
         }
 
         .run-chip .label {
@@ -462,49 +484,46 @@
 
         .card-actions {
             display: flex;
-            gap: 6px;
-            margin-top: 10px;
+            gap: 5px;
+            margin-top: 8px;
             border-top: 1px solid var(--border);
-            padding-top: 10px;
+            padding-top: 8px;
         }
 
         .card-owner {
-            font-size: 10px;
+            font-size: 9px;
             color: var(--text-muted);
-            margin-top: 6px;
+            margin-top: 4px;
         }
 
         /* Empty state */
         .empty-state {
             text-align: center;
-            padding: 80px 20px;
+            padding: 60px 20px;
             color: var(--text-muted);
+            grid-column: 1/-1;
         }
 
         .empty-state .icon {
-            font-size: 48px;
-            margin-bottom: 12px;
-        }
-
-        .empty-state p {
-            font-size: 14px;
+            font-size: 40px;
+            margin-bottom: 10px;
         }
 
         /* Toast */
         .toast-container {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
+            bottom: 16px;
+            right: 16px;
             z-index: 1000;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 5px;
         }
 
         .toast {
-            padding: 10px 16px;
-            border-radius: 10px;
-            font-size: 12px;
+            padding: 8px 14px;
+            border-radius: 9px;
+            font-size: 11px;
             font-weight: 500;
             backdrop-filter: blur(20px);
             background: var(--bg-card);
@@ -513,7 +532,7 @@
             animation: toastIn .3s ease-out, toastOut .3s ease-in 3.5s forwards;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
         }
 
         @keyframes toastIn {
@@ -530,6 +549,273 @@
             }
         }
 
+        /* Event log */
+        .event-log {
+            position: fixed;
+            bottom: 16px;
+            left: 16px;
+            width: 320px;
+            max-height: 200px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            backdrop-filter: blur(20px);
+            overflow: hidden;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .event-log-header {
+            padding: 6px 10px;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .event-log-body {
+            padding: 6px;
+            overflow-y: auto;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .event-entry {
+            font-size: 10px;
+            color: var(--text-secondary);
+            padding: 2px 5px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, .02);
+            animation: eventIn .2s ease-out;
+        }
+
+        @keyframes eventIn {
+            from {
+                opacity: 0;
+                transform: translateX(-6px)
+            }
+        }
+
+        .event-entry .etype {
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .event-entry .etime {
+            color: var(--text-muted);
+            font-size: 9px;
+        }
+
+        /* Modal overlay */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            background: rgba(0, 0, 0, .6);
+            backdrop-filter: blur(6px);
+            display: none;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 40px 16px;
+            overflow-y: auto;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+            animation: fadeIn .2s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0
+            }
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            width: 100%;
+            max-width: 700px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadow-lg);
+            animation: modalIn .25s ease-out;
+        }
+
+        @keyframes modalIn {
+            from {
+                opacity: 0;
+                transform: translateY(12px) scale(.97)
+            }
+        }
+
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .modal-header h2 {
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: all .2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(251, 113, 133, .15);
+            color: var(--accent-rose);
+            border-color: var(--accent-rose);
+        }
+
+        .modal-body {
+            padding: 16px 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        /* Modal job summary */
+        .modal-job-info {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .modal-chip {
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 7px;
+            background: rgba(255, 255, 255, .04);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        /* Run history entries */
+        .run-entry {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            animation: cardIn .25s ease-out;
+        }
+
+        .run-entry.status-ok-bg {
+            border-left: 3px solid var(--accent-emerald);
+        }
+
+        .run-entry.status-error-bg {
+            border-left: 3px solid var(--accent-rose);
+        }
+
+        .run-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .run-status-badge {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            padding: 2px 7px;
+            border-radius: 5px;
+        }
+
+        .run-status-ok {
+            background: rgba(52, 211, 153, .12);
+            color: var(--accent-emerald);
+        }
+
+        .run-status-error {
+            background: rgba(251, 113, 133, .12);
+            color: var(--accent-rose);
+        }
+
+        .run-meta {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .run-meta span {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .run-summary {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            background: rgba(52, 211, 153, .04);
+            border: 1px solid rgba(52, 211, 153, .1);
+            border-radius: 7px;
+            padding: 8px 10px;
+            margin-top: 6px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .run-error {
+            font-size: 12px;
+            color: var(--accent-rose);
+            line-height: 1.5;
+            background: rgba(251, 113, 133, .06);
+            border: 1px solid rgba(251, 113, 133, .12);
+            border-radius: 7px;
+            padding: 8px 10px;
+            margin-top: 6px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .runs-empty {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .runs-loading {
+            text-align: center;
+            padding: 30px;
+            color: var(--accent-amber);
+            font-size: 13px;
+        }
+
         /* Scrollbar */
         ::-webkit-scrollbar {
             width: 4px;
@@ -542,70 +828,6 @@
 
         ::-webkit-scrollbar-track {
             background: transparent;
-        }
-
-        /* Event log */
-        .event-log {
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            width: 340px;
-            max-height: 240px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            backdrop-filter: blur(20px);
-            overflow: hidden;
-            z-index: 100;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .event-log-header {
-            padding: 8px 12px;
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--accent-cyan);
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .event-log-body {
-            padding: 8px;
-            overflow-y: auto;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-        }
-
-        .event-entry {
-            font-size: 11px;
-            color: var(--text-secondary);
-            font-family: 'Inter', monospace;
-            padding: 3px 6px;
-            border-radius: 4px;
-            background: rgba(255, 255, 255, .02);
-            animation: eventIn .2s ease-out;
-        }
-
-        @keyframes eventIn {
-            from {
-                opacity: 0;
-                transform: translateX(-8px)
-            }
-        }
-
-        .event-entry .etype {
-            color: var(--accent-cyan);
-            font-weight: 600;
-        }
-
-        .event-entry .etime {
-            color: var(--text-muted);
-            font-size: 10px;
         }
     </style>
 </head>
@@ -624,21 +846,49 @@
             </div>
         </header>
 
-        <div class="config-bar">
+        <div class="toolbar">
             <label>API</label>
-            <input id="apiUrl" value="http://localhost:8000" style="width:220px" />
+            <input id="apiUrl" value="http://localhost:8000" style="width:180px" />
             <button class="btn" onclick="reconnect()">Connect</button>
             <button class="btn btn-blue" onclick="fetchCrons()">⟳ Refresh</button>
+            <div class="sep"></div>
+            <label>User</label>
+            <input id="filterUser" placeholder="All users" style="width:120px" oninput="applyFilters()" />
+            <div class="sep"></div>
+            <label>Agent</label>
+            <select id="filterAgent" onchange="applyFilters()">
+                <option value="">All Agents</option>
+            </select>
+            <div class="sep"></div>
+            <label>Status</label>
+            <select id="filterStatus" onchange="applyFilters()">
+                <option value="">All</option>
+                <option value="active">Active</option>
+                <option value="disabled">Disabled</option>
+            </select>
         </div>
 
         <div class="stats-bar" id="statsBar"></div>
         <div class="grid" id="grid"></div>
     </div>
 
+    <!-- Run History Modal -->
+    <div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modalTitle">Run History</h2>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <div class="runs-loading">Loading...</div>
+            </div>
+        </div>
+    </div>
+
     <div class="event-log">
         <div class="event-log-header">
             <span>📡 WebSocket Events</span>
-            <button class="btn" style="padding:2px 8px;font-size:10px" onclick="clearLog()">Clear</button>
+            <button class="btn btn-sm" onclick="clearLog()">Clear</button>
         </div>
         <div class="event-log-body" id="eventLog"></div>
     </div>
@@ -646,7 +896,7 @@
     <div class="toast-container" id="toasts"></div>
 
     <script>
-        let crons = {};
+        let allCrons = {};
         let ws = null;
 
         function api() { return document.getElementById('apiUrl').value.replace(/\/$/, ''); }
@@ -657,20 +907,44 @@
             try {
                 const res = await fetch(api() + '/api/crons');
                 const data = await res.json();
-                crons = {};
-                data.forEach(c => crons[c.job_id] = c);
-                render();
+                allCrons = {};
+                data.forEach(c => allCrons[c.job_id] = c);
+                populateAgentFilter();
+                applyFilters();
                 toast('📥 Loaded ' + data.length + ' cron jobs');
             } catch (e) {
                 toast('❌ Fetch failed: ' + e.message);
             }
         }
 
+        // ── Filters ────────────────────────────────────────────────────────
+        function populateAgentFilter() {
+            const sel = document.getElementById('filterAgent');
+            const current = sel.value;
+            const agents = [...new Set(Object.values(allCrons).map(c => c.agent_id).filter(Boolean))].sort();
+            sel.innerHTML = '<option value="">All Agents</option>' + agents.map(a => '<option value="' + esc(a) + '"' + (a === current ? ' selected' : '') + '>' + esc(a) + '</option>').join('');
+        }
+
+        function getFiltered() {
+            const userFilter = document.getElementById('filterUser').value.trim().toLowerCase();
+            const agentFilter = document.getElementById('filterAgent').value;
+            const statusFilter = document.getElementById('filterStatus').value;
+
+            return Object.values(allCrons).filter(c => {
+                if (userFilter && !(c.user_id || '').toLowerCase().includes(userFilter)) return false;
+                if (agentFilter && c.agent_id !== agentFilter) return false;
+                if (statusFilter === 'active' && !c.enabled) return false;
+                if (statusFilter === 'disabled' && c.enabled) return false;
+                return true;
+            });
+        }
+
+        function applyFilters() { render(getFiltered()); }
+
         // ── WebSocket ──────────────────────────────────────────────────────
         function connectWs() {
             if (ws) { ws.close(); ws = null; }
             ws = new WebSocket(wsUrl());
-
             ws.onopen = () => {
                 document.getElementById('wsDot').classList.add('connected');
                 document.getElementById('wsLabel').textContent = 'Live';
@@ -682,56 +956,43 @@
                 setTimeout(() => { if (!ws || ws.readyState === WebSocket.CLOSED) connectWs(); }, 3000);
             };
             ws.onerror = () => { };
-            ws.onmessage = (evt) => {
-                try { handleEvent(JSON.parse(evt.data)); } catch { }
-            };
+            ws.onmessage = (evt) => { try { handleEvent(JSON.parse(evt.data)); } catch { } };
         }
 
         function handleEvent(msg) {
             const { event, data } = msg;
             logEvent(event, data);
-
-            if (event === 'cron_created') {
-                // Refetch to get full enriched data
-                fetchCrons();
-                toast('✨ Cron created: ' + (data.name || data.job_id));
-            } else if (event === 'cron_updated') {
+            if (event === 'cron_created') { fetchCrons(); toast('✨ Cron created: ' + (data.name || data.job_id)); }
+            else if (event === 'cron_updated') {
                 fetchCrons();
                 toast('📝 Cron updated: ' + data.job_id);
                 setTimeout(() => {
                     const el = document.querySelector('[data-job-id="' + data.job_id + '"]');
                     if (el) { el.classList.add('updated'); setTimeout(() => el.classList.remove('updated'), 700); }
                 }, 300);
-            } else if (event === 'cron_deleted') {
-                delete crons[data.job_id];
-                render();
-                toast('🗑️ Cron deleted: ' + data.job_id);
-            } else if (event === 'cron_triggered') {
-                toast('🚀 Cron triggered: ' + data.job_id);
-                // Refetch to update run info
-                setTimeout(fetchCrons, 1500);
             }
+            else if (event === 'cron_deleted') { delete allCrons[data.job_id]; applyFilters(); toast('🗑️ Deleted: ' + data.job_id); }
+            else if (event === 'cron_triggered') { toast('🚀 Triggered: ' + data.job_id); setTimeout(fetchCrons, 1500); }
         }
 
         function reconnect() { fetchCrons(); connectWs(); }
 
         // ── Render ─────────────────────────────────────────────────────────
-        function render() {
-            const list = Object.values(crons);
+        function render(list) {
             const enabled = list.filter(c => c.enabled);
             const disabled = list.filter(c => !c.enabled);
+            const total = Object.values(allCrons).length;
 
             document.getElementById('statsBar').innerHTML =
-                '<div class="stat-chip"><span class="stat-count">' + list.length + '</span> Total</div>' +
+                '<div class="stat-chip"><span class="stat-count">' + total + '</span> Total</div>' +
+                '<div class="stat-chip"><span class="stat-count">' + list.length + '</span> Showing</div>' +
                 '<div class="stat-chip"><span class="stat-count" style="color:var(--accent-emerald)">' + enabled.length + '</span> Active</div>' +
                 '<div class="stat-chip"><span class="stat-count" style="color:var(--accent-rose)">' + disabled.length + '</span> Disabled</div>';
 
             if (list.length === 0) {
-                document.getElementById('grid').innerHTML = '<div class="empty-state"><div class="icon">⏰</div><p>No cron jobs found. Create one through the API or agent.</p></div>';
+                document.getElementById('grid').innerHTML = '<div class="empty-state"><div class="icon">⏰</div><p>No cron jobs match the current filters.</p></div>';
                 return;
             }
-
-            // Sort: enabled first, then by name
             list.sort((a, b) => (b.enabled - a.enabled) || a.name.localeCompare(b.name));
             document.getElementById('grid').innerHTML = list.map(renderCard).join('');
         }
@@ -742,7 +1003,7 @@
             const nextRun = c.next_run_at ? timeAgo(c.next_run_at) : '—';
             const statusCls = c.last_run_status === 'ok' ? 'status-ok' : (c.last_run_status ? 'status-fail' : '');
 
-            return '<div class="cron-card" data-job-id="' + c.job_id + '">' +
+            return '<div class="cron-card" data-job-id="' + c.job_id + '" onclick="openRunHistory(\'' + c.job_id + '\')">' +
                 '<div class="card-top">' +
                 '<div class="card-title">' + esc(c.name) + '</div>' +
                 '<span class="enabled-badge enabled-' + c.enabled + '">' + (c.enabled ? '● Active' : '● Disabled') + '</span>' +
@@ -751,7 +1012,7 @@
                 '<div class="card-id">' + c.job_id + '</div>' +
                 '<div class="schedule-badge">⏱ ' + esc(sched) + '</div>' +
                 '<div class="payload-section">' +
-                '<div class="payload-label">Payload Message</div>' +
+                '<div class="payload-label">Payload</div>' +
                 '<div class="payload-text">' + esc(c.payload_message) + '</div>' +
                 '</div>' +
                 '<div class="run-info">' +
@@ -759,30 +1020,110 @@
                 '<div class="run-chip"><span class="label">Next:</span> ' + nextRun + '</div>' +
                 (c.last_run_status ? '<div class="run-chip"><span class="label">Status:</span> <span class="' + statusCls + '">' + esc(c.last_run_status) + '</span></div>' : '') +
                 '</div>' +
-                (c.user_id ? '<div class="card-owner">👤 ' + esc(c.user_id) + ' · ' + esc(c.session_id || '') + '</div>' : '<div class="card-owner">👤 No owner (CLI-created)</div>') +
+                (c.user_id ? '<div class="card-owner">👤 ' + esc(c.user_id) + '</div>' : '<div class="card-owner">👤 No owner (CLI-created)</div>') +
                 '<div class="card-actions">' +
-                '<button class="btn btn-blue" onclick="triggerJob(\'' + c.job_id + '\')">▶ Trigger</button>' +
-                '<button class="btn" onclick="toggleJob(\'' + c.job_id + '\',' + !c.enabled + ')">' + (c.enabled ? '⏸ Disable' : '▶ Enable') + '</button>' +
-                '<button class="btn btn-danger" onclick="deleteJob(\'' + c.job_id + '\')">✕ Delete</button>' +
+                '<button class="btn btn-blue btn-sm" onclick="event.stopPropagation();openRunHistory(\'' + c.job_id + '\')">📜 History</button>' +
+                '<button class="btn btn-sm" onclick="event.stopPropagation();triggerJob(\'' + c.job_id + '\')">▶ Trigger</button>' +
+                '<button class="btn btn-sm" onclick="event.stopPropagation();toggleJob(\'' + c.job_id + '\',' + !c.enabled + ')">' + (c.enabled ? '⏸ Disable' : '▶ Enable') + '</button>' +
+                '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteJob(\'' + c.job_id + '\')">✕ Delete</button>' +
                 '</div>' +
                 '</div>';
         }
 
+        // ── Run History Modal ──────────────────────────────────────────────
+        async function openRunHistory(jobId) {
+            const cron = allCrons[jobId];
+            document.getElementById('modalTitle').textContent = '📜 Run History — ' + (cron ? cron.name : jobId);
+            document.getElementById('modalBody').innerHTML = '<div class="runs-loading">Loading run history...</div>';
+            document.getElementById('modalOverlay').classList.add('active');
+
+            if (cron) {
+                document.getElementById('modalBody').innerHTML =
+                    '<div class="modal-job-info">' +
+                    '<div class="modal-chip">🤖 ' + esc(cron.agent_id) + '</div>' +
+                    '<div class="modal-chip">⏱ ' + esc(formatSchedule(cron.schedule)) + '</div>' +
+                    '<div class="modal-chip">' + (cron.enabled ? '🟢 Active' : '🔴 Disabled') + '</div>' +
+                    (cron.user_id ? '<div class="modal-chip">👤 ' + esc(cron.user_id) + '</div>' : '') +
+                    '</div>' +
+                    '<div id="runsContainer"><div class="runs-loading">Loading run history...</div></div>';
+            }
+
+            try {
+                const res = await fetch(api() + '/api/crons/' + jobId + '/runs?limit=20');
+                const data = await res.json();
+                // data might be an array  or { entries: [...] } or { raw: "..." }
+                let entries = [];
+                if (Array.isArray(data)) entries = data;
+                else if (data.entries) entries = data.entries;
+                else if (data.runs) entries = data.runs;
+                else if (data.raw) {
+                    // Try to parse the raw text
+                    try { const parsed = JSON.parse(data.raw); entries = parsed.entries || parsed.runs || (Array.isArray(parsed) ? parsed : []); } catch { }
+                }
+
+                const container = document.getElementById('runsContainer') || document.getElementById('modalBody');
+                if (entries.length === 0) {
+                    container.innerHTML = '<div class="runs-empty">No run history found for this job.</div>';
+                    return;
+                }
+
+                // Sort newest first
+                entries.sort((a, b) => (b.ts || b.runAtMs || 0) - (a.ts || a.runAtMs || 0));
+                container.innerHTML = entries.map(renderRunEntry).join('');
+            } catch (e) {
+                const container = document.getElementById('runsContainer') || document.getElementById('modalBody');
+                container.innerHTML = '<div class="runs-empty">Failed to load run history: ' + esc(e.message) + '</div>';
+            }
+        }
+
+        function renderRunEntry(entry) {
+            const isOk = entry.status === 'ok' || entry.status === 'success';
+            const bgClass = isOk ? 'status-ok-bg' : 'status-error-bg';
+            const badgeClass = isOk ? 'run-status-ok' : 'run-status-error';
+            const ts = entry.runAtMs || entry.ts;
+            const dur = entry.durationMs;
+
+            let html = '<div class="run-entry ' + bgClass + '">';
+            html += '<div class="run-header">';
+            html += '<span class="run-status-badge ' + badgeClass + '">' + (entry.status || 'unknown').toUpperCase() + '</span>';
+            html += '<span style="font-size:11px;color:var(--text-muted)">' + (ts ? new Date(ts).toLocaleString() : '—') + '</span>';
+            html += '</div>';
+
+            html += '<div class="run-meta">';
+            if (dur) html += '<span>⏱ ' + (dur > 60000 ? (dur / 60000).toFixed(1) + ' min' : (dur / 1000).toFixed(1) + 's') + '</span>';
+            if (entry.model) html += '<span>🧠 ' + esc(entry.model) + '</span>';
+            if (entry.provider) html += '<span>☁️ ' + esc(entry.provider) + '</span>';
+            if (entry.usage) {
+                const u = entry.usage;
+                html += '<span>📊 ' + (u.total_tokens || ((u.input_tokens || 0) + (u.output_tokens || 0))).toLocaleString() + ' tokens</span>';
+            }
+            if (entry.action) html += '<span>📌 ' + esc(entry.action) + '</span>';
+            html += '</div>';
+
+            if (entry.summary) {
+                html += '<div class="run-summary"><strong>✅ Response:</strong>\n' + esc(entry.summary) + '</div>';
+            }
+            if (entry.error) {
+                html += '<div class="run-error"><strong>❌ Error:</strong>\n' + esc(entry.error) + '</div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function closeModal() {
+            document.getElementById('modalOverlay').classList.remove('active');
+        }
+
         // ── Actions ────────────────────────────────────────────────────────
         async function triggerJob(id) {
-            try {
-                await fetch(api() + '/api/crons/' + id + '/trigger', { method: 'POST' });
-                toast('🚀 Triggered ' + id);
-            } catch (e) { toast('❌ ' + e.message); }
+            try { await fetch(api() + '/api/crons/' + id + '/trigger', { method: 'POST' }); toast('🚀 Triggered ' + id); }
+            catch (e) { toast('❌ ' + e.message); }
         }
 
         async function toggleJob(id, enabled) {
             try {
-                await fetch(api() + '/api/crons/' + id, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled })
-                });
+                await fetch(api() + '/api/crons/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
                 toast((enabled ? '▶ Enabled ' : '⏸ Disabled ') + id);
                 fetchCrons();
             } catch (e) { toast('❌ ' + e.message); }
@@ -790,12 +1131,8 @@
 
         async function deleteJob(id) {
             if (!confirm('Delete cron job ' + id + '?')) return;
-            try {
-                await fetch(api() + '/api/crons/' + id, { method: 'DELETE' });
-                toast('🗑️ Deleted ' + id);
-                delete crons[id];
-                render();
-            } catch (e) { toast('❌ ' + e.message); }
+            try { await fetch(api() + '/api/crons/' + id, { method: 'DELETE' }); toast('🗑️ Deleted ' + id); delete allCrons[id]; applyFilters(); }
+            catch (e) { toast('❌ ' + e.message); }
         }
 
         // ── Event log ──────────────────────────────────────────────────────
@@ -804,12 +1141,10 @@
             const time = new Date().toLocaleTimeString();
             const entry = document.createElement('div');
             entry.className = 'event-entry';
-            entry.innerHTML = '<span class="etime">' + time + '</span> <span class="etype">' + type + '</span> ' + JSON.stringify(data).substring(0, 80);
+            entry.innerHTML = '<span class="etime">' + time + '</span> <span class="etype">' + type + '</span> ' + JSON.stringify(data).substring(0, 70);
             el.prepend(entry);
-            // Keep max 50 entries
             while (el.children.length > 50) el.removeChild(el.lastChild);
         }
-
         function clearLog() { document.getElementById('eventLog').innerHTML = ''; }
 
         // ── Helpers ────────────────────────────────────────────────────────
@@ -820,7 +1155,8 @@
             if (sched.kind === 'every') {
                 const ms = sched.everyMs || sched.every;
                 if (!ms) return 'every ?';
-                const s = ms / 1000;
+                if (typeof ms === 'string' && !/^\d+$/.test(ms)) return 'Every ' + ms;
+                const s = Number(ms) / 1000;
                 if (s < 60) return 'Every ' + s + 's';
                 if (s < 3600) return 'Every ' + Math.round(s / 60) + ' min';
                 if (s < 86400) return 'Every ' + Math.round(s / 3600) + ' hr';
@@ -836,7 +1172,6 @@
             const ts = typeof val === 'number' ? val : new Date(val).getTime();
             const diff = Date.now() - ts;
             if (diff < 0) {
-                // Future
                 const abs = Math.abs(diff);
                 const mins = Math.floor(abs / 60000);
                 if (mins < 1) return 'in <1m';
@@ -853,11 +1188,13 @@
 
         function toast(text) {
             const el = document.createElement('div');
-            el.className = 'toast';
-            el.textContent = text;
+            el.className = 'toast'; el.textContent = text;
             document.getElementById('toasts').appendChild(el);
             setTimeout(() => el.remove(), 4000);
         }
+
+        // Close modal on Escape
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
         // ── Init ───────────────────────────────────────────────────────────
         fetchCrons();
