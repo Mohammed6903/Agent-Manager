@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw Cron Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --bg-card-hover: rgba(17, 24, 39, 0.9);
+            --border: rgba(255, 255, 255, 0.06);
+            --border-glow: rgba(251, 191, 36, 0.3);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-indigo: #818cf8;
+            --accent-blue: #60a5fa;
+            --accent-emerald: #34d399;
+            --accent-amber: #fbbf24;
+            --accent-rose: #fb7185;
+            --accent-violet: #a78bfa;
+            --accent-cyan: #22d3ee;
+            --gradient-1: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+            --gradient-2: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%);
+            --gradient-3: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --shadow-glow: 0 0 40px rgba(251, 191, 36, 0.12);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .bg-gradient {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .bg-gradient::before,
+        .bg-gradient::after {
+            content: '';
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.12;
+            animation: float 20s ease-in-out infinite;
+        }
+
+        .bg-gradient::before {
+            width: 500px;
+            height: 500px;
+            background: var(--gradient-1);
+            top: -80px;
+            left: -80px;
+        }
+
+        .bg-gradient::after {
+            width: 400px;
+            height: 400px;
+            background: var(--gradient-2);
+            bottom: -80px;
+            right: -80px;
+            animation-delay: -10s;
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translate(0, 0) scale(1)
+            }
+
+            33% {
+                transform: translate(50px, -50px) scale(1.1)
+            }
+
+            66% {
+                transform: translate(-30px, 30px) scale(0.95)
+            }
+        }
+
+        .app {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+        .header {
+            padding: 20px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(20px);
+            background: rgba(10, 14, 26, 0.6);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo {
+            width: 38px;
+            height: 38px;
+            background: var(--gradient-1);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header h1 span {
+            color: var(--accent-amber);
+        }
+
+        .ws-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 100px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+        }
+
+        .ws-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-rose);
+            transition: background .3s;
+        }
+
+        .ws-dot.connected {
+            background: var(--accent-emerald);
+            box-shadow: 0 0 8px var(--accent-emerald);
+        }
+
+        /* Config bar */
+        .config-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 40px;
+            flex-wrap: wrap;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .config-bar label {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .config-bar input {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 5px 10px;
+            font-size: 12px;
+            color: var(--text-primary);
+            font-family: inherit;
+            outline: none;
+        }
+
+        .config-bar input:focus {
+            border-color: var(--accent-amber);
+        }
+
+        .btn {
+            padding: 5px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--accent-amber);
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--accent-amber);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .2s;
+        }
+
+        .btn:hover {
+            background: rgba(251, 191, 36, 0.2);
+        }
+
+        .btn-danger {
+            border-color: var(--accent-rose);
+            background: rgba(251, 113, 133, 0.1);
+            color: var(--accent-rose);
+        }
+
+        .btn-danger:hover {
+            background: rgba(251, 113, 133, 0.2);
+        }
+
+        .btn-success {
+            border-color: var(--accent-emerald);
+            background: rgba(52, 211, 153, 0.1);
+            color: var(--accent-emerald);
+        }
+
+        .btn-success:hover {
+            background: rgba(52, 211, 153, 0.2);
+        }
+
+        .btn-blue {
+            border-color: var(--accent-blue);
+            background: rgba(96, 165, 250, 0.1);
+            color: var(--accent-blue);
+        }
+
+        .btn-blue:hover {
+            background: rgba(96, 165, 250, 0.2);
+        }
+
+        /* Stats */
+        .stats-bar {
+            display: flex;
+            gap: 10px;
+            padding: 14px 40px;
+            overflow-x: auto;
+        }
+
+        .stat-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            backdrop-filter: blur(10px);
+        }
+
+        .stat-count {
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 16px;
+            padding: 16px 40px 40px;
+        }
+
+        @media (max-width: 700px) {
+
+            .grid,
+            .stats-bar,
+            .config-bar,
+            .header {
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+        }
+
+        /* Cron Cards */
+        .cron-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px;
+            backdrop-filter: blur(10px);
+            transition: all .25s cubic-bezier(.4, 0, .2, 1);
+            animation: cardIn .35s cubic-bezier(.4, 0, .2, 1);
+        }
+
+        @keyframes cardIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px) scale(.97)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1)
+            }
+        }
+
+        .cron-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-glow);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-glow);
+        }
+
+        .cron-card.updated {
+            animation: pulse .6s ease-out;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(251, 191, 36, .4)
+            }
+
+            100% {
+                box-shadow: 0 0 0 12px rgba(251, 191, 36, 0)
+            }
+        }
+
+        .card-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+
+        .enabled-badge {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .enabled-true {
+            background: rgba(52, 211, 153, .12);
+            color: var(--accent-emerald);
+        }
+
+        .enabled-false {
+            background: rgba(251, 113, 133, .12);
+            color: var(--accent-rose);
+        }
+
+        .card-agent {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--accent-violet);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .card-id {
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: monospace;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        .schedule-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 8px;
+            background: rgba(251, 191, 36, .08);
+            border: 1px solid rgba(251, 191, 36, .15);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--accent-amber);
+            margin-bottom: 10px;
+        }
+
+        .payload-section {
+            background: rgba(255, 255, 255, .03);
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            border: 1px solid var(--border);
+        }
+
+        .payload-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: 4px;
+        }
+
+        .payload-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .run-info {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        .run-chip {
+            font-size: 11px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .run-chip .label {
+            color: var(--text-muted);
+        }
+
+        .status-ok {
+            color: var(--accent-emerald);
+        }
+
+        .status-fail {
+            color: var(--accent-rose);
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 10px;
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+        }
+
+        .card-owner {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+
+        /* Toast */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .toast {
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 500;
+            backdrop-filter: blur(20px);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-lg);
+            animation: toastIn .3s ease-out, toastOut .3s ease-in 3.5s forwards;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        @keyframes toastIn {
+            from {
+                opacity: 0;
+                transform: translateX(30px)
+            }
+        }
+
+        @keyframes toastOut {
+            to {
+                opacity: 0;
+                transform: translateX(30px)
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, .1);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        /* Event log */
+        .event-log {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 340px;
+            max-height: 240px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            backdrop-filter: blur(20px);
+            overflow: hidden;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .event-log-header {
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .event-log-body {
+            padding: 8px;
+            overflow-y: auto;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .event-entry {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: 'Inter', monospace;
+            padding: 3px 6px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, .02);
+            animation: eventIn .2s ease-out;
+        }
+
+        @keyframes eventIn {
+            from {
+                opacity: 0;
+                transform: translateX(-8px)
+            }
+        }
+
+        .event-entry .etype {
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .event-entry .etime {
+            color: var(--text-muted);
+            font-size: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bg-gradient"></div>
+    <div class="app">
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">⏰</div>
+                <h1>Open<span>Claw</span> Cron Dashboard</h1>
+            </div>
+            <div class="ws-status">
+                <div class="ws-dot" id="wsDot"></div>
+                <span id="wsLabel">Disconnected</span>
+            </div>
+        </header>
+
+        <div class="config-bar">
+            <label>API</label>
+            <input id="apiUrl" value="http://localhost:8000" style="width:220px" />
+            <button class="btn" onclick="reconnect()">Connect</button>
+            <button class="btn btn-blue" onclick="fetchCrons()">⟳ Refresh</button>
+        </div>
+
+        <div class="stats-bar" id="statsBar"></div>
+        <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="event-log">
+        <div class="event-log-header">
+            <span>📡 WebSocket Events</span>
+            <button class="btn" style="padding:2px 8px;font-size:10px" onclick="clearLog()">Clear</button>
+        </div>
+        <div class="event-log-body" id="eventLog"></div>
+    </div>
+
+    <div class="toast-container" id="toasts"></div>
+
+    <script>
+        let crons = {};
+        let ws = null;
+
+        function api() { return document.getElementById('apiUrl').value.replace(/\/$/, ''); }
+        function wsUrl() { return api().replace(/^http/, 'ws') + '/api/crons/ws'; }
+
+        // ── Fetch crons ────────────────────────────────────────────────────
+        async function fetchCrons() {
+            try {
+                const res = await fetch(api() + '/api/crons');
+                const data = await res.json();
+                crons = {};
+                data.forEach(c => crons[c.job_id] = c);
+                render();
+                toast('📥 Loaded ' + data.length + ' cron jobs');
+            } catch (e) {
+                toast('❌ Fetch failed: ' + e.message);
+            }
+        }
+
+        // ── WebSocket ──────────────────────────────────────────────────────
+        function connectWs() {
+            if (ws) { ws.close(); ws = null; }
+            ws = new WebSocket(wsUrl());
+
+            ws.onopen = () => {
+                document.getElementById('wsDot').classList.add('connected');
+                document.getElementById('wsLabel').textContent = 'Live';
+                toast('🟢 WebSocket connected');
+            };
+            ws.onclose = () => {
+                document.getElementById('wsDot').classList.remove('connected');
+                document.getElementById('wsLabel').textContent = 'Disconnected';
+                setTimeout(() => { if (!ws || ws.readyState === WebSocket.CLOSED) connectWs(); }, 3000);
+            };
+            ws.onerror = () => { };
+            ws.onmessage = (evt) => {
+                try { handleEvent(JSON.parse(evt.data)); } catch { }
+            };
+        }
+
+        function handleEvent(msg) {
+            const { event, data } = msg;
+            logEvent(event, data);
+
+            if (event === 'cron_created') {
+                // Refetch to get full enriched data
+                fetchCrons();
+                toast('✨ Cron created: ' + (data.name || data.job_id));
+            } else if (event === 'cron_updated') {
+                fetchCrons();
+                toast('📝 Cron updated: ' + data.job_id);
+                setTimeout(() => {
+                    const el = document.querySelector('[data-job-id="' + data.job_id + '"]');
+                    if (el) { el.classList.add('updated'); setTimeout(() => el.classList.remove('updated'), 700); }
+                }, 300);
+            } else if (event === 'cron_deleted') {
+                delete crons[data.job_id];
+                render();
+                toast('🗑️ Cron deleted: ' + data.job_id);
+            } else if (event === 'cron_triggered') {
+                toast('🚀 Cron triggered: ' + data.job_id);
+                // Refetch to update run info
+                setTimeout(fetchCrons, 1500);
+            }
+        }
+
+        function reconnect() { fetchCrons(); connectWs(); }
+
+        // ── Render ─────────────────────────────────────────────────────────
+        function render() {
+            const list = Object.values(crons);
+            const enabled = list.filter(c => c.enabled);
+            const disabled = list.filter(c => !c.enabled);
+
+            document.getElementById('statsBar').innerHTML =
+                '<div class="stat-chip"><span class="stat-count">' + list.length + '</span> Total</div>' +
+                '<div class="stat-chip"><span class="stat-count" style="color:var(--accent-emerald)">' + enabled.length + '</span> Active</div>' +
+                '<div class="stat-chip"><span class="stat-count" style="color:var(--accent-rose)">' + disabled.length + '</span> Disabled</div>';
+
+            if (list.length === 0) {
+                document.getElementById('grid').innerHTML = '<div class="empty-state"><div class="icon">⏰</div><p>No cron jobs found. Create one through the API or agent.</p></div>';
+                return;
+            }
+
+            // Sort: enabled first, then by name
+            list.sort((a, b) => (b.enabled - a.enabled) || a.name.localeCompare(b.name));
+            document.getElementById('grid').innerHTML = list.map(renderCard).join('');
+        }
+
+        function renderCard(c) {
+            const sched = formatSchedule(c.schedule);
+            const lastRun = c.last_run_at ? timeAgo(c.last_run_at) : 'Never';
+            const nextRun = c.next_run_at ? timeAgo(c.next_run_at) : '—';
+            const statusCls = c.last_run_status === 'ok' ? 'status-ok' : (c.last_run_status ? 'status-fail' : '');
+
+            return '<div class="cron-card" data-job-id="' + c.job_id + '">' +
+                '<div class="card-top">' +
+                '<div class="card-title">' + esc(c.name) + '</div>' +
+                '<span class="enabled-badge enabled-' + c.enabled + '">' + (c.enabled ? '● Active' : '● Disabled') + '</span>' +
+                '</div>' +
+                '<div class="card-agent">🤖 ' + esc(c.agent_id) + '</div>' +
+                '<div class="card-id">' + c.job_id + '</div>' +
+                '<div class="schedule-badge">⏱ ' + esc(sched) + '</div>' +
+                '<div class="payload-section">' +
+                '<div class="payload-label">Payload Message</div>' +
+                '<div class="payload-text">' + esc(c.payload_message) + '</div>' +
+                '</div>' +
+                '<div class="run-info">' +
+                '<div class="run-chip"><span class="label">Last:</span> ' + lastRun + '</div>' +
+                '<div class="run-chip"><span class="label">Next:</span> ' + nextRun + '</div>' +
+                (c.last_run_status ? '<div class="run-chip"><span class="label">Status:</span> <span class="' + statusCls + '">' + esc(c.last_run_status) + '</span></div>' : '') +
+                '</div>' +
+                (c.user_id ? '<div class="card-owner">👤 ' + esc(c.user_id) + ' · ' + esc(c.session_id || '') + '</div>' : '<div class="card-owner">👤 No owner (CLI-created)</div>') +
+                '<div class="card-actions">' +
+                '<button class="btn btn-blue" onclick="triggerJob(\'' + c.job_id + '\')">▶ Trigger</button>' +
+                '<button class="btn" onclick="toggleJob(\'' + c.job_id + '\',' + !c.enabled + ')">' + (c.enabled ? '⏸ Disable' : '▶ Enable') + '</button>' +
+                '<button class="btn btn-danger" onclick="deleteJob(\'' + c.job_id + '\')">✕ Delete</button>' +
+                '</div>' +
+                '</div>';
+        }
+
+        // ── Actions ────────────────────────────────────────────────────────
+        async function triggerJob(id) {
+            try {
+                await fetch(api() + '/api/crons/' + id + '/trigger', { method: 'POST' });
+                toast('🚀 Triggered ' + id);
+            } catch (e) { toast('❌ ' + e.message); }
+        }
+
+        async function toggleJob(id, enabled) {
+            try {
+                await fetch(api() + '/api/crons/' + id, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                toast((enabled ? '▶ Enabled ' : '⏸ Disabled ') + id);
+                fetchCrons();
+            } catch (e) { toast('❌ ' + e.message); }
+        }
+
+        async function deleteJob(id) {
+            if (!confirm('Delete cron job ' + id + '?')) return;
+            try {
+                await fetch(api() + '/api/crons/' + id, { method: 'DELETE' });
+                toast('🗑️ Deleted ' + id);
+                delete crons[id];
+                render();
+            } catch (e) { toast('❌ ' + e.message); }
+        }
+
+        // ── Event log ──────────────────────────────────────────────────────
+        function logEvent(type, data) {
+            const el = document.getElementById('eventLog');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'event-entry';
+            entry.innerHTML = '<span class="etime">' + time + '</span> <span class="etype">' + type + '</span> ' + JSON.stringify(data).substring(0, 80);
+            el.prepend(entry);
+            // Keep max 50 entries
+            while (el.children.length > 50) el.removeChild(el.lastChild);
+        }
+
+        function clearLog() { document.getElementById('eventLog').innerHTML = ''; }
+
+        // ── Helpers ────────────────────────────────────────────────────────
+        function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+        function formatSchedule(sched) {
+            if (!sched) return 'Unknown';
+            if (sched.kind === 'every') {
+                const ms = sched.everyMs || sched.every;
+                if (!ms) return 'every ?';
+                const s = ms / 1000;
+                if (s < 60) return 'Every ' + s + 's';
+                if (s < 3600) return 'Every ' + Math.round(s / 60) + ' min';
+                if (s < 86400) return 'Every ' + Math.round(s / 3600) + ' hr';
+                return 'Every ' + Math.round(s / 86400) + ' day';
+            }
+            if (sched.kind === 'cron') return 'Cron: ' + (sched.expr || sched.cron || '?') + (sched.tz ? ' (' + sched.tz + ')' : '');
+            if (sched.kind === 'at') return 'Once: ' + (sched.at || sched.expr || '?');
+            return JSON.stringify(sched);
+        }
+
+        function timeAgo(val) {
+            if (!val) return '';
+            const ts = typeof val === 'number' ? val : new Date(val).getTime();
+            const diff = Date.now() - ts;
+            if (diff < 0) {
+                // Future
+                const abs = Math.abs(diff);
+                const mins = Math.floor(abs / 60000);
+                if (mins < 1) return 'in <1m';
+                if (mins < 60) return 'in ' + mins + 'm';
+                return 'in ' + Math.floor(mins / 60) + 'h';
+            }
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return mins + 'm ago';
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return hrs + 'h ago';
+            return Math.floor(hrs / 24) + 'd ago';
+        }
+
+        function toast(text) {
+            const el = document.createElement('div');
+            el.className = 'toast';
+            el.textContent = text;
+            document.getElementById('toasts').appendChild(el);
+            setTimeout(() => el.remove(), 4000);
+        }
+
+        // ── Init ───────────────────────────────────────────────────────────
+        fetchCrons();
+        connectWs();
+    </script>
+</body>
+
+</html>

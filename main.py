@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from agent_manager.config import settings
 from agent_manager.routers.agent_router import router as agent_router
 from agent_manager.routers.gmail_router import router as gmail_router
-from agent_manager.ws_manager import task_ws_manager
+from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
@@ -110,6 +110,17 @@ async def tasks_websocket(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         task_ws_manager.disconnect(ws)
+
+
+@app.websocket("/api/crons/ws")
+async def crons_websocket(ws: WebSocket):
+    """Real-time cron job updates."""
+    await cron_ws_manager.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        cron_ws_manager.disconnect(ws)
 
 
 def main():

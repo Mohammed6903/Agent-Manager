@@ -37,7 +37,7 @@ grep -i "agent id" ~/IDENTITY.md | awk -F: '{print $2}' | tr -d ' '
 ## CREATE A CRON JOB
 
 Schedule types:
-- `every` — repeats at a fixed interval (value in milliseconds, e.g. `300000` = 5 minutes)
+- `every` — repeats at a fixed interval using human-readable duration (e.g. `3m` = 3 minutes, `1h` = 1 hour, `1d` = 1 day)
 - `cron` — standard cron expression (e.g. `0 9 * * *` = daily at 9 AM)
 - `at` — one-time execution at a specific ISO timestamp
 
@@ -48,7 +48,7 @@ curl -s -X POST "http://localhost:8000/api/crons" \
     "name": "Human-readable job name",
     "agent_id": "YOUR_ID",
     "schedule_kind": "every",
-    "schedule_expr": "300000",
+    "schedule_expr": "5m",
     "session_target": "isolated",
     "payload_message": "The prompt/instruction the agent will execute each run",
     "delivery_mode": "webhook",
@@ -67,7 +67,7 @@ curl -s -X POST "http://localhost:8000/api/crons" \
 | `name` | ✅ | Display name shown in UI |
 | `agent_id` | ✅ | Which agent runs this job |
 | `schedule_kind` | ✅ | `every`, `cron`, or `at` |
-| `schedule_expr` | ✅ | Interval ms, cron expr, or ISO timestamp |
+| `schedule_expr` | ✅ | Duration string (e.g. `3m`, `1h`, `1d`), cron expr, or ISO timestamp |
 | `schedule_tz` | ❌ | IANA timezone (only for `cron` kind, e.g. `Asia/Kolkata`) |
 | `session_target` | ❌ | `isolated` (default) or `main` |
 | `payload_message` | ✅ | The prompt the agent receives each run |
@@ -112,7 +112,7 @@ curl -s -X PATCH "http://localhost:8000/api/crons/JOB_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "schedule_kind": "every",
-    "schedule_expr": "600000",
+    "schedule_expr": "10m",
     "payload_message": "Updated prompt for the agent",
     "enabled": true
   }' | jq .
@@ -156,8 +156,8 @@ curl -s "http://localhost:8000/api/crons/JOB_ID/runs?limit=10" | jq .
 
 | Goal | Kind | Expression |
 |------|------|------------|
-| Every 5 minutes | `every` | `300000` |
-| Every hour | `every` | `3600000` |
+| Every 5 minutes | `every` | `5m` |
+| Every hour | `every` | `1h` |
 | Every day at 9 AM IST | `cron` | `0 9 * * *` (tz: `Asia/Kolkata`) |
 | Every Monday at 10 AM | `cron` | `0 10 * * 1` |
 | Once at a specific time | `at` | `2026-03-01T09:00:00Z` |

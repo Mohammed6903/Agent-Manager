@@ -87,7 +87,7 @@ class CLIGatewayClient(GatewayClient):
         return await run_openclaw(args)
 
     async def cron_edit(self, job_id: str, updates: dict) -> dict:
-        args = ["cron", "edit", job_id, "--json"]
+        args = ["cron", "edit", job_id]
 
         if "enabled" in updates:
             args.append("--enable" if updates["enabled"] else "--disable")
@@ -117,11 +117,11 @@ class CLIGatewayClient(GatewayClient):
         return await run_openclaw(["cron", "rm", job_id, "--json"])
 
     async def cron_run(self, job_id: str) -> dict:
-        return await run_openclaw(["cron", "run", job_id, "--json"])
+        return await run_openclaw(["cron", "run", job_id])
 
     async def cron_runs(self, job_id: str, limit: int = 20) -> List[dict]:
         data = await run_openclaw([
-            "cron", "runs", "--id", job_id, "--limit", str(limit), "--json",
+            "cron", "runs", "--id", job_id, "--limit", str(limit),
         ])
         if isinstance(data, list):
             return data

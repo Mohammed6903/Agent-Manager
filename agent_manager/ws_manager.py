@@ -41,3 +41,4 @@ class ConnectionManager:
 
 # Singleton used across the app
 task_ws_manager = ConnectionManager()
+cron_ws_manager = ConnectionManager()

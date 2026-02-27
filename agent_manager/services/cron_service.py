@@ -9,6 +9,7 @@ from ..clients.gateway_client import GatewayClient
 from ..repositories.cron_ownership_repository import CronOwnershipRepository
 from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
 from ..config import settings
+from ..ws_manager import cron_ws_manager
 
 logger = logging.getLogger("agent_manager.services.cron_service")
 
@@ -27,7 +28,7 @@ class CronService:
         elif req.schedule_kind == "at":
             schedule = {"kind": "at", "at": req.schedule_expr}
         elif req.schedule_kind == "every":
-            schedule = {"kind": "every", "every": int(req.schedule_expr)}
+            schedule = {"kind": "every", "every": req.schedule_expr}
 
         payload = {
             "kind": "agentTurn" if req.session_target == "isolated" else "systemEvent",
@@ -62,6 +63,18 @@ class CronService:
 
             # Store ownership (sync DB call)
             self.ownership.set(job_id, req.user_id, req.session_id, req.agent_id)
+
+            # Broadcast to WebSocket clients
+            await cron_ws_manager.broadcast("cron_created", {
+                "job_id": job_id,
+                "name": req.name,
+                "agent_id": req.agent_id,
+                "schedule": schedule,
+                "enabled": req.enabled,
+                "user_id": req.user_id,
+                "session_id": req.session_id,
+            })
+
             return job_id
         except Exception as e:
             logger.error(f"Error creating cron job: {e}")
@@ -157,17 +170,34 @@ class CronService:
         if req.payload_message:
             updates["payload"] = {"message": req.payload_message}
 
-        return await self.gateway.cron_edit(job_id, updates)
+        result = await self.gateway.cron_edit(job_id, updates)
+
+        # Broadcast update
+        await cron_ws_manager.broadcast("cron_updated", {
+            "job_id": job_id,
+            "updates": updates,
+        })
+
+        return result
 
     async def delete_cron(self, job_id: str):
         """Remove cron job from OpenClaw and delete ownership."""
         await self.gateway.cron_remove(job_id)
         self.ownership.delete(job_id)
 
+        # Broadcast deletion
+        await cron_ws_manager.broadcast("cron_deleted", {"job_id": job_id})
+
     async def trigger_cron(self, job_id: str) -> dict:
         """Run the job immediately."""
-        return await self.gateway.cron_run(job_id)
+        result = await self.gateway.cron_run(job_id)
+
+        # Broadcast trigger
+        await cron_ws_manager.broadcast("cron_triggered", {"job_id": job_id})
+
+        return result
 
     async def get_cron_runs(self, job_id: str, limit: int = 20) -> List[dict]:
         """Get run history."""
         return await self.gateway.cron_runs(job_id, limit)
+
