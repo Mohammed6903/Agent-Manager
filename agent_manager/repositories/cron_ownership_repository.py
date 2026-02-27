@@ -88,3 +88,7 @@ class CronOwnershipRepository:
             }
             for e in entries
         ]
+
+def get_cron_ownership_repository(db: Session) -> CronOwnershipRepository:
+    """Dependency injection provider or direct factory for CronOwnershipRepository."""
+    return CronOwnershipRepository(db)

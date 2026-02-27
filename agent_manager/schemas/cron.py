@@ -44,3 +44,17 @@ class CronResponse(BaseModel):
     total_runs: Optional[int] = None
     success_rate: Optional[float] = None
     avg_duration_ms: Optional[float] = None
+
+# Pipeline Run Management Schemas
+class InitPipelineRunRequest(BaseModel):
+    run_id: str
+
+class UpdatePipelineTaskRequest(BaseModel):
+    status: Literal["pending", "running", "success", "error"]
+    error: Optional[str] = None
+
+class CompletePipelineRunRequest(BaseModel):
+    summary: Optional[str] = None
+    model: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None

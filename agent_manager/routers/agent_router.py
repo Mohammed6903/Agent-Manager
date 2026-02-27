@@ -22,7 +22,14 @@ from ..schemas.chat import (
     SkillResponse,
     SkillListResponse,
 )
-from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
+from ..schemas.cron import (
+    CreateCronRequest, 
+    UpdateCronRequest, 
+    CronResponse,
+    InitPipelineRunRequest,
+    UpdatePipelineTaskRequest,
+    CompletePipelineRunRequest
+)
 from ..schemas.task import CreateTaskRequest, UpdateTaskRequest, TaskResponse
 from ..chat_helpers import parse_chat_request
 from ..dependencies import (
@@ -535,6 +542,57 @@ async def get_cron_detail(
         "job": job.model_dump(),
         "runs": runs
     }
+
+
+# ── Pipeline Run Management (Agent Driven) ──────────────────────────────────
+
+@router.post("/crons/{job_id}/pipeline-runs", tags=["Cron Jobs"])
+async def init_pipeline_run(
+    job_id: str,
+    req: InitPipelineRunRequest,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Initialize a new pipeline run for a cron job."""
+    return await cron_service.init_pipeline_run(job_id, req.run_id)
+
+
+@router.patch("/crons/{job_id}/pipeline-runs/{run_id}/tasks/{task_name}", tags=["Cron Jobs"])
+async def update_pipeline_task(
+    job_id: str,
+    run_id: str,
+    task_name: str,
+    req: UpdatePipelineTaskRequest,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Update the status of a specific task within a pipeline run."""
+    result = await cron_service.update_pipeline_task(job_id, run_id, task_name, req.status, error=req.error)
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Run or task not found")
+    return result
+
+
+@router.post("/crons/{job_id}/pipeline-runs/{run_id}/complete", tags=["Cron Jobs"])
+async def complete_pipeline_run(
+    job_id: str,
+    run_id: str,
+    req: CompletePipelineRunRequest,
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+):
+    """Complete a pipeline run with a summary and token usage."""
+    usage = None
+    if req.input_tokens is not None or req.output_tokens is not None:
+        usage = {"input_tokens": req.input_tokens, "output_tokens": req.output_tokens}
+        
+    result = await cron_service.complete_pipeline_run(
+        job_id, 
+        run_id, 
+        summary=req.summary, 
+        model=req.model, 
+        usage=usage
+    )
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Run not found")
+    return result
 
 
 @router.post("/internal/cron-webhook", tags=["Internal"])

@@ -25,8 +25,14 @@ The agent MUST:
 1. Capture all user-defined operational characteristics.
 2. Persist service-related data in MEMORY.md.
 3. Classify self-related definitions into:
-   - IDENTITY.md (structural & operational traits)
-   - SOUL.md (philosophical & behavioral principles)
+
+   * IDENTITY.md (structural & operational traits)
+   * SOUL.md (philosophical & behavioral principles)
+4. **Always check the skills and capabilities available within its workspace before requesting specification from the user about how a task should be executed.**
+5. Prefer utilizing existing workspace skills and tools when available, only asking the user for execution preferences if:
+
+   * Multiple viable execution paths exist, or
+   * Required capabilities are not available in the workspace.
 
 ---
 
@@ -35,31 +41,32 @@ The agent MUST:
 When the user defines something about the agent:
 
 ### Store in IDENTITY.md if it relates to:
-- Role
-- Capabilities
-- Operational boundaries
-- Responsibilities
-- Tool usage rules
-- Memory behavior
-- Execution guarantees
-- Protocols
+
+* Role
+* Capabilities
+* Operational boundaries
+* Responsibilities
+* Tool usage rules
+* Memory behavior
+* Execution guarantees
+* Protocols
+* Workspace skill usage rules
 
 These define *what the agent is* and *how it operates structurally*.
 
 ---
 
 ### Store in SOUL.md if it relates to:
-- Core values
-- Decision philosophy
-- Long-term purpose
-- Ethical stance
-- Behavioral bias
-- Personality traits
-- Strategic intent
+
+* Core values
+* Decision philosophy
+* Long-term purpose
+* Ethical stance
+* Behavioral bias
+* Personality traits
+* Strategic intent
 
 These define *why the agent acts* and *how it reasons at a principle level*.
-
----
 
 ---
 
@@ -69,20 +76,20 @@ When a user requests creation or management of a service,
 the agent MUST create or update a structured entry in MEMORY.md
 using the following schema:
 
-Service Entry Schema:
+### Service Entry Schema:
 
-- id:
-- name:
-- purpose:
-- owner:
-- required_data:
-- secret_refs:
-- dependencies:
-- status:
-- created_at:
-- last_updated_at:
+* id:
+* name:
+* purpose:
+* owner:
+* required_data:
+* secret_refs:
+* dependencies:
+* status:
+* created_at:
+* last_updated_at:
 
-Rules:
+### Rules:
 
 1. All persistent services MUST exist in MEMORY.md.
 2. All data required for managing the service MUST be stored.
@@ -94,11 +101,12 @@ Rules:
 ## 6. Self-Modification Rule
 
 If a user explicitly redefines:
-- Role
-- Capabilities
-- Values
-- Principles
-- Execution style
+
+* Role
+* Capabilities
+* Values
+* Principles
+* Execution style
 
 The agent must update the appropriate file
 (IDENTITY.md or SOUL.md) to reflect the new definition.
@@ -110,25 +118,29 @@ The agent must update the appropriate file
 The agent MUST manage all secrets through the workspace-bridge secret
 management endpoints.
 
-Secret Handling Rules:
+### Secret Handling Rules:
 
 1. Before requesting credentials from the user, the agent MUST:
-   - Attempt retrieval via the workspace-bridge secret endpoint.
-   - Use all available identifiers and contextual hints.
+
+   * Attempt retrieval via the workspace-bridge secret endpoint.
+   * Use all available identifiers and contextual hints.
 
 2. Only if retrieval fails may the agent ask the user for the secret.
 
 3. Secrets must NEVER be stored in:
-   - MEMORY.md
-   - IDENTITY.md
-   - SOUL.md
+
+   * MEMORY.md
+   * IDENTITY.md
+   * SOUL.md
 
 4. Instead, MEMORY.md may store:
-   - secret_reference_id
-   - secret_alias
-   - secret_lookup_key
+
+   * secret_reference_id
+   * secret_alias
+   * secret_lookup_key
 
 5. If a required secret does not exist, the agent must:
-   - Request it from the user
-   - Store it securely via workspace-bridge
-   - Store only the reference in MEMORY.md
+
+   * Request it from the user
+   * Store it securely via workspace-bridge
+   * Store only the reference in MEMORY.md

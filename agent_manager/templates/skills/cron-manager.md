@@ -146,18 +146,52 @@ Run a job right now without waiting for its next scheduled time:
 
 ```bash
 curl -s -X POST "http://localhost:8000/api/crons/JOB_ID/trigger" | jq .
-
 ```
 
 ---
 
-## VIEW RUN HISTORY
-
-See the last N executions of a job:
+## CANCEL/DELETE A CRON JOB
 
 ```bash
-curl -s "http://localhost:8000/api/crons/JOB_ID/runs?limit=10" | jq .
+curl -s -X DELETE "http://localhost:8000/api/crons/JOB_ID" | jq .
+```
 
+---
+
+## PIPELINE RUN MANAGEMENT
+
+If a job was created with a `pipeline_template`, you **MUST** track its execution progress using these endpoints.
+
+### 1. Initialize Run (At Start)
+```bash
+curl -s -X POST "http://localhost:8000/api/crons/JOB_ID/pipeline-runs" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_id": "YOUR_SESSION_ID"
+  }' | jq .
+```
+
+### 2. Update Task Status (During Execution)
+Call this before a task starts (`"pending"` → `"running"`) and after it finishes (`"running"` → `"success"` or `"error"`).
+```bash
+curl -s -X PATCH "http://localhost:8000/api/crons/JOB_ID/pipeline-runs/YOUR_SESSION_ID/tasks/TASK_NAME" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "success",
+    "error": null
+  }' | jq .
+```
+
+### 3. Complete Run (At End)
+```bash
+curl -s -X POST "http://localhost:8000/api/crons/JOB_ID/pipeline-runs/YOUR_SESSION_ID/complete" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "summary": "Completed fetching news and sending email.",
+    "model": "gpt-5",
+    "input_tokens": 1200,
+    "output_tokens": 450
+  }' | jq .
 ```
 
 ---

@@ -55,6 +55,16 @@ class AgentService:
             # Fallback to a minimal soul
             return f"# {name}\nYou are {name}. You are a helpful AI assistant whose role is: {role}.\nYour agent ID is {agent_id}."
 
+    def _default_tools(self, agent_id: str, name: str, role: str) -> str:
+        template_path = Path(__file__).resolve().parent.parent / "templates" / "TOOLS.md"
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = f.read()
+            return template.format(name=name, agent_id=agent_id, role=role)
+        except Exception as e:
+            logger.error(f"Failed to load TOOLS.md template: {e}")
+            return "# Tools\nSkills define how tools work. This file is for your specifics."
+
     def _build_agents_raw(self, agents: List[dict[str, Any]]) -> str:
         entries: List[str] = []
         for a in agents:
@@ -110,6 +120,9 @@ class AgentService:
 
         soul_content = req.soul or self._default_soul(agent_id, req.name, req.role)
         await self.storage.write_text(str(Path(workspace) / "SOUL.md"), soul_content)
+
+        tools_content = self._default_tools(agent_id, req.name, req.role)
+        await self.storage.write_text(str(Path(workspace) / "TOOLS.md"), tools_content)
 
         # Auto-install default skills
         await self._install_default_skills(agent_id, workspace)

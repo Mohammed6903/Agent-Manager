@@ -1042,111 +1042,174 @@
         // ── Run History Modal ──────────────────────────────────────────────
         async function openRunHistory(jobId) {
             const cron = allCrons[jobId];
-            document.getElementById('modalTitle').textContent = '📜 Run History — ' + (cron ? cron.name : jobId);
-            document.getElementById('modalBody').innerHTML = '<div class="runs-loading">Loading run history...</div>';
+            document.getElementById('modalTitle').textContent = '📜 ' + (cron ? cron.name : jobId);
+            document.getElementById('modalBody').innerHTML = '<div class="runs-loading">Loading job details...</div>';
             document.getElementById('modalOverlay').classList.add('active');
-
-            if (cron) {
-                document.getElementById('modalBody').innerHTML =
-                    '<div class="modal-job-info">' +
-                    '<div class="modal-chip">🤖 ' + esc(cron.agent_id) + '</div>' +
-                    '<div class="modal-chip">⏱ ' + esc(formatSchedule(cron.schedule)) + '</div>' +
-                    '<div class="modal-chip">' + (cron.enabled ? '🟢 Active' : '🔴 Disabled') + '</div>' +
-                    (cron.user_id ? '<div class="modal-chip">👤 ' + esc(cron.user_id) + '</div>' : '') +
-                    '</div>' +
-                    '<div id="runsContainer"><div class="runs-loading">Loading run history...</div></div>';
-            }
 
             try {
                 const res = await fetch(api() + '/api/crons/' + jobId + '/detail');
                 const data = await res.json();
-                let entries = [];
-                if (data && data.runs) {
-                    entries = data.runs;
-                } else if (Array.isArray(data)) {
-                    entries = data;
-                } else if (data.entries) {
-                    entries = data.entries;
-                } else if (data.raw) {
-                    try { const parsed = JSON.parse(data.raw); entries = parsed.entries || parsed.runs || (Array.isArray(parsed) ? parsed : []); } catch { }
+                const job = data.job || cron || {};
+                let entries = data.runs || [];
+
+                let html = '';
+
+                // ── Job Stats Header ──
+                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:8px; margin-bottom:16px;">';
+
+                // Schedule
+                const schedText = job.schedule_human || formatSchedule(job.schedule);
+                html += '<div style="background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.2); border-radius:10px; padding:10px 12px;">';
+                html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Schedule</div>';
+                html += '<div style="font-size:14px; font-weight:700; color:var(--accent-amber);">⏱ ' + esc(schedText) + '</div>';
+                html += '</div>';
+
+                // Status
+                html += '<div style="background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:10px 12px;">';
+                html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Status</div>';
+                html += '<div style="font-size:14px; font-weight:700; color:' + (job.enabled ? 'var(--accent-emerald)' : 'var(--accent-rose)') + ';">' + (job.enabled ? '🟢 Active' : '🔴 Disabled') + '</div>';
+                html += '</div>';
+
+                // Total Runs
+                const totalRuns = job.total_runs != null ? job.total_runs : entries.length;
+                html += '<div style="background:rgba(129,140,248,0.08); border:1px solid rgba(129,140,248,0.2); border-radius:10px; padding:10px 12px;">';
+                html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Total Runs</div>';
+                html += '<div style="font-size:20px; font-weight:800; color:var(--accent-indigo);">' + totalRuns + '</div>';
+                html += '</div>';
+
+                // Success Rate
+                if (entries.length > 0) {
+                    let successCount = 0;
+                    entries.forEach(function (e) { if (e.status === 'ok' || e.status === 'success') successCount++; });
+                    const rate = job.success_rate != null ? job.success_rate : (successCount / entries.length);
+                    const rateColor = rate >= 0.8 ? 'var(--accent-emerald)' : (rate >= 0.5 ? 'var(--accent-amber)' : 'var(--accent-rose)');
+                    html += '<div style="background:rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.2); border-radius:10px; padding:10px 12px;">';
+                    html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Success Rate</div>';
+                    html += '<div style="font-size:20px; font-weight:800; color:' + rateColor + ';">' + Math.round(rate * 100) + '%</div>';
+                    html += '</div>';
                 }
 
-                const container = document.getElementById('runsContainer') || document.getElementById('modalBody');
+                // Avg Duration
+                if (entries.length > 0) {
+                    let totalDur = 0, durCount = 0;
+                    entries.forEach(function (e) { const d = e.duration_ms || e.durationMs; if (d) { totalDur += d; durCount++; } });
+                    if (durCount > 0) {
+                        const avg = job.avg_duration_ms || (totalDur / durCount);
+                        html += '<div style="background:rgba(96,165,250,0.08); border:1px solid rgba(96,165,250,0.2); border-radius:10px; padding:10px 12px;">';
+                        html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Avg Duration</div>';
+                        html += '<div style="font-size:20px; font-weight:800; color:var(--accent-blue);">' + (avg > 60000 ? (avg / 60000).toFixed(1) + 'm' : (avg / 1000).toFixed(1) + 's') + '</div>';
+                        html += '</div>';
+                    }
+                }
+
+                // Agent & Owner
+                html += '<div style="background:rgba(167,139,250,0.08); border:1px solid rgba(167,139,250,0.2); border-radius:10px; padding:10px 12px;">';
+                html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Agent</div>';
+                html += '<div style="font-size:13px; font-weight:600; color:var(--accent-violet);">🤖 ' + esc(job.agent_id) + '</div>';
+                if (job.user_id) html += '<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">👤 ' + esc(job.user_id) + '</div>';
+                html += '</div>';
+
+                html += '</div>';
+
+                // ── Pipeline Template ──
+                if (job.pipeline_template && job.pipeline_template.tasks && job.pipeline_template.tasks.length > 0) {
+                    html += '<div style="margin-bottom:16px;">';
+                    html += '<div style="font-size:11px; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">📋 Pipeline Template</div>';
+                    job.pipeline_template.tasks.forEach(function (t, i) {
+                        html += '<div style="padding:8px 12px; background:rgba(34,211,238,0.04); border:1px solid rgba(34,211,238,0.12); border-radius:8px; margin-bottom:6px; font-size:11px;">';
+                        html += '<div style="display:flex; align-items:center; gap:6px;">';
+                        html += '<span style="color:var(--accent-cyan); font-weight:700; font-size:10px;">#' + (i + 1) + '</span>';
+                        html += '<strong style="color:var(--text-primary);">' + esc(t.name) + '</strong>';
+                        html += '</div>';
+                        if (t.description) html += '<div style="color:var(--text-secondary); margin-top:3px; font-size:10px;">' + esc(t.description) + '</div>';
+                        if ((t.integrations && t.integrations.length > 0) || (t.context_sources && t.context_sources.length > 0)) {
+                            html += '<div style="margin-top:5px; display:flex; gap:4px; flex-wrap:wrap;">';
+                            (t.integrations || []).forEach(function (ig) { html += '<span style="padding:2px 6px; background:rgba(129,140,248,0.15); color:var(--accent-indigo); border-radius:4px; font-size:9px;">🔌 ' + esc(ig.name) + '</span>'; });
+                            (t.context_sources || []).forEach(function (cs) { html += '<span style="padding:2px 6px; background:rgba(96,165,250,0.15); color:var(--accent-blue); border-radius:4px; font-size:9px;">📚 ' + esc(cs.name) + '</span>'; });
+                            html += '</div>';
+                        }
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+
+                // ── Run History ──
+                html += '<div style="font-size:11px; font-weight:700; color:var(--accent-amber); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">📜 Execution History (' + entries.length + ' runs)</div>';
+
                 if (entries.length === 0) {
-                    container.innerHTML = '<div class="runs-empty">No run history found for this job.</div>';
-                    return;
+                    html += '<div class="runs-empty">No run history found for this job yet.</div>';
+                } else {
+                    entries.sort(function (a, b) { return (b.ts || b.finished_at || b.runAtMs || 0) - (a.ts || a.finished_at || a.runAtMs || 0); });
+                    entries.forEach(function (entry) { html += renderRunEntry(entry); });
                 }
 
-                // Sort newest first
-                entries.sort((a, b) => (b.ts || b.runAtMs || 0) - (a.ts || a.runAtMs || 0));
-                container.innerHTML = entries.map(renderRunEntry).join('');
+                document.getElementById('modalBody').innerHTML = html;
             } catch (e) {
-                const container = document.getElementById('runsContainer') || document.getElementById('modalBody');
-                container.innerHTML = '<div class="runs-empty">Failed to load run history: ' + esc(e.message) + '</div>';
+                document.getElementById('modalBody').innerHTML = '<div class="runs-empty">Failed to load: ' + esc(e.message) + '</div>';
             }
         }
 
         function renderRunEntry(entry) {
-            const isOk = entry.status === 'ok' || entry.status === 'success';
-            const bgClass = isOk ? 'status-ok-bg' : 'status-error-bg';
-            const badgeClass = isOk ? 'run-status-ok' : 'run-status-error';
-            const ts = entry.runAtMs || entry.ts;
-            const dur = entry.durationMs;
+            var status = entry.status || 'unknown';
+            var isOk = status === 'ok' || status === 'success';
+            var bgClass = isOk ? 'status-ok-bg' : 'status-error-bg';
+            var badgeClass = isOk ? 'run-status-ok' : 'run-status-error';
+            var ts = entry.ts || entry.finished_at || entry.runAtMs || entry.started_at;
+            var dur = entry.durationMs || entry.duration_ms;
 
-            let html = '<div class="run-entry ' + bgClass + '">';
+            var html = '<div class="run-entry ' + bgClass + '">';
+
+            // Header
             html += '<div class="run-header">';
-            html += '<span class="run-status-badge ' + badgeClass + '">' + (entry.status || 'unknown').toUpperCase() + '</span>';
+            html += '<span class="run-status-badge ' + badgeClass + '">' + status.toUpperCase() + '</span>';
             html += '<span style="font-size:11px;color:var(--text-muted)">' + (ts ? new Date(ts).toLocaleString() : '—') + '</span>';
             html += '</div>';
 
+            // Meta
             html += '<div class="run-meta">';
             if (dur) html += '<span>⏱ ' + (dur > 60000 ? (dur / 60000).toFixed(1) + ' min' : (dur / 1000).toFixed(1) + 's') + '</span>';
             if (entry.model) html += '<span>🧠 ' + esc(entry.model) + '</span>';
             if (entry.provider) html += '<span>☁️ ' + esc(entry.provider) + '</span>';
-            if (entry.usage) {
-                const u = entry.usage;
-                html += '<span>📊 ' + (u.total_tokens || ((u.input_tokens || 0) + (u.output_tokens || 0))).toLocaleString() + ' tokens</span>';
+            var usage = entry.usage;
+            var inTok = (usage && usage.input_tokens) || entry.input_tokens;
+            var outTok = (usage && usage.output_tokens) || entry.output_tokens;
+            if (inTok || outTok) {
+                var total = (inTok || 0) + (outTok || 0);
+                html += '<span>📊 ' + total.toLocaleString() + ' tokens</span>';
             }
             if (entry.action) html += '<span>📌 ' + esc(entry.action) + '</span>';
             html += '</div>';
 
-            if (entry.tasks && entry.tasks.length > 0) {
+            // Pipeline tasks
+            var tasks = entry.tasks;
+            if (tasks && tasks.length > 0) {
                 html += '<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">';
-                entry.tasks.forEach(task => {
-                    const tOk = task.status === 'success';
-                    const tIcon = tOk ? '✅' : (task.status === 'error' ? '❌' : '⏳');
-                    const tColor = tOk ? 'var(--accent-emerald)' : (task.status === 'error' ? 'var(--accent-rose)' : 'var(--accent-amber)');
-                    const tooltip = task.description ? ` title="${esc(task.description).replace(/"/g, '&quot;')}"` : '';
-                    html += `<div style="padding:6px 10px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:6px; font-size:11px;"${tooltip}>`;
-                    html += `<div style="display:flex; justify-content:space-between; align-items:center;">`;
-                    html += `<strong style="color:var(--text-primary)">${tIcon} ${esc(task.name || 'Unnamed task')}</strong>`;
-                    html += `<span style="color:${tColor}; font-weight:600; text-transform:uppercase; font-size:9px; letter-spacing:0.5px;">${esc(task.status)}</span>`;
-                    html += `</div>`;
-                    if (task.error) {
-                        html += `<div style="margin-top:4px; color:var(--accent-rose); font-size:10px;">${esc(task.error)}</div>`;
-                    }
-                    if ((task.integrations && task.integrations.length > 0) || (task.context_sources && task.context_sources.length > 0)) {
-                        html += `<div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">`;
-                        (task.integrations || []).forEach(i => html += `<span style="padding:2px 6px; background:rgba(129,140,248,0.15); color:var(--accent-indigo); border-radius:4px; font-size:9px;">🔌 ${esc(i.name)}</span>`);
-                        (task.context_sources || []).forEach(c => html += `<span style="padding:2px 6px; background:rgba(96,165,250,0.15); color:var(--accent-blue); border-radius:4px; font-size:9px;">📚 ${esc(c.name)}</span>`);
-                        html += `</div>`;
-                    }
-                    html += `</div>`;
+                html += '<div style="font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Pipeline Tasks</div>';
+                tasks.forEach(function (task) {
+                    var tOk = task.status === 'success';
+                    var tIcon = tOk ? '✅' : (task.status === 'error' ? '❌' : '⏳');
+                    var tColor = tOk ? 'var(--accent-emerald)' : (task.status === 'error' ? 'var(--accent-rose)' : 'var(--accent-amber)');
+                    html += '<div style="padding:6px 10px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:6px; font-size:11px;">';
+                    html += '<div style="display:flex; justify-content:space-between; align-items:center;">';
+                    html += '<strong style="color:var(--text-primary)">' + tIcon + ' ' + esc(task.name || 'Unnamed') + '</strong>';
+                    html += '<span style="color:' + tColor + '; font-weight:600; text-transform:uppercase; font-size:9px; letter-spacing:0.5px;">' + esc(task.status) + '</span>';
+                    html += '</div>';
+                    if (task.description) html += '<div style="margin-top:3px; color:var(--text-secondary); font-size:10px;">' + esc(task.description) + '</div>';
+                    if (task.error) html += '<div style="margin-top:4px; color:var(--accent-rose); font-size:10px;">❌ ' + esc(task.error) + '</div>';
+                    html += '</div>';
                 });
-
-                if ((entry.global_integrations && entry.global_integrations.length > 0) || (entry.global_context_sources && entry.global_context_sources.length > 0)) {
-                    html += `<div style="margin-top:8px; font-size:10px; color:var(--text-muted); display:flex; gap:6px; flex-wrap:wrap; align-items:center;">`;
-                    html += `<span>Global Usage:</span>`;
-                    (entry.global_integrations || []).forEach(i => html += `<span style="color:var(--text-secondary)">🔌 ${esc(i.name)}</span>`);
-                    (entry.global_context_sources || []).forEach(c => html += `<span style="color:var(--text-secondary)">📚 ${esc(c.name)}</span>`);
-                    html += `</div>`;
-                }
-
                 html += '</div>';
-            } else if (entry.summary) {
-                html += '<div class="run-summary"><strong>✅ Response:</strong>\n' + esc(entry.summary) + '</div>';
             }
-            if (entry.error && (!entry.tasks || entry.tasks.length === 0)) {
+
+            // Summary
+            var summary = entry.summary || entry.raw_summary;
+            if (summary) {
+                var maxLen = 500;
+                var displaySummary = summary.length > maxLen ? summary.substring(0, maxLen) + '…' : summary;
+                html += '<div class="run-summary"><strong>✅ Response:</strong>\n' + esc(displaySummary) + '</div>';
+            }
+            // Error
+            if (entry.error) {
                 html += '<div class="run-error"><strong>❌ Error:</strong>\n' + esc(entry.error) + '</div>';
             }
 

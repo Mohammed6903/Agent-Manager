@@ -89,3 +89,52 @@ class CronPipelineRepository:
             }
             
         return result
+
+    def get_run(self, run_id: str) -> Optional[CronPipelineRun]:
+        return self.db.query(CronPipelineRun).filter(CronPipelineRun.id == run_id).first()
+
+    def update_task_status(self, run_id: str, task_name: str, status: str, error: Optional[str] = None) -> Optional[CronPipelineRun]:
+        """Update a single task's status within a pipeline run."""
+        run = self.get_run(run_id)
+        if not run or not run.tasks:
+            return None
+        tasks = list(run.tasks)  # copy mutable
+        found = False
+        for task in tasks:
+            if task.get("name") == task_name:
+                task["status"] = status
+                if error:
+                    task["error"] = error
+                elif "error" in task and status == "success":
+                    del task["error"]
+                found = True
+                break
+        if not found:
+            return None
+        run.tasks = tasks
+        # Force SQLAlchemy to detect the JSON change
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(run, "tasks")
+        self.db.commit()
+        self.db.refresh(run)
+        return run
+
+    def complete_run(self, run_id: str, updates: dict) -> Optional[CronPipelineRun]:
+        """Finalize a pipeline run with summary, model, usage, and compute pipeline_status."""
+        run = self.get_run(run_id)
+        if not run:
+            return None
+        for k, v in updates.items():
+            setattr(run, k, v)
+        # Compute pipeline_status from tasks
+        if run.tasks:
+            statuses = [t.get("status", "pending") for t in run.tasks]
+            if all(s == "success" for s in statuses):
+                run.status = "success"
+            elif all(s == "error" for s in statuses):
+                run.status = "error"
+            elif any(s == "success" for s in statuses):
+                run.status = "partial"
+        self.db.commit()
+        self.db.refresh(run)
+        return run
