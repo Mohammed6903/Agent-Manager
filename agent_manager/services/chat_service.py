@@ -190,7 +190,9 @@ class ChatService:
                             try:
                                 args = json.loads(tc["function"]["arguments"])
                                 result = await execute_create_garage_post(
-                                    db, req.agent_id, args.get("content", "")
+                                    req.agent_id,
+                                    args.get("content", ""),
+                                    args.get("channelIds") or None,
                                 )
                             except Exception as exc:
                                 result = f"Tool execution error: {exc}"

@@ -25,6 +25,7 @@ router = APIRouter()
 class CreateGaragePostRequest(BaseModel):
     agent_id: str
     content: str
+    channelIds: list[str] | None = None  # Optional override from tool call
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────────────
@@ -48,7 +49,8 @@ async def create_garage_post(
 
     token = creds.get("token", "")
     org_id = creds.get("orgId", "")
-    channel_ids = creds.get("channelIds", [])
+    # Use channelIds from tool call if provided, else fall back to stored credentials
+    channel_ids = body.channelIds if body.channelIds else creds.get("channelIds", [])
 
     # channelIds is decrypted as a string (because encrypt does str(v)).
     # It might be in various formats:
