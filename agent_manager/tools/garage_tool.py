@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
-
 import httpx
 
 from ..config import settings
 
 logger = logging.getLogger("agent_manager.tools.garage_tool")
+
 
 GARAGE_TOOLS = [
     {
@@ -54,28 +54,12 @@ async def load_garage_credentials(agent_id: str) -> dict | None:
 
 
 async def execute_create_garage_post(agent_id: str, content: str) -> str:
-    """Execute the create_garage_post tool. Returns a human-readable result string."""
-    creds = await load_garage_credentials(agent_id)
-    if not creds:
-        return "Error: Garage Feed skill is not connected for this agent."
-
-    token = creds.get("token", "")
-    org_id = creds.get("orgId", "")
-    channel_ids = creds.get("channelIds", [])
-
-    if not token or not org_id:
-        return "Error: Garage Feed credentials are incomplete. Please reconnect the skill."
-
+    """Execute the create_garage_post tool via the agent-manager's /api/garage/posts endpoint."""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{settings.GARAGE_API_URL}/feed/posts",
-                params={"orgId": org_id},
-                json={"content": content, "channelIds": channel_ids},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
+                f"{settings.SERVER_URL}/api/garage/posts",
+                json={"agent_id": agent_id, "content": content},
             )
             if resp.status_code in (200, 201):
                 return "Post published successfully on the Garage feed!"
