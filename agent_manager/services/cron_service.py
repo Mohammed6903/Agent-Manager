@@ -114,6 +114,16 @@ pipeline_status rules:
             if not job_id:
                 raise HTTPException(status_code=500, detail="Failed to get jobId from OpenClaw")
 
+            # Patch webhook delivery via gateway RPC (CLI cron add has no webhook flag)
+            if req.delivery_mode == "webhook":
+                webhook_url = getattr(settings, "WEBHOOK_BASE_URL", settings.SERVER_URL)
+                await self.gateway.cron_update(job_id, {
+                    "delivery": {
+                        "mode": "webhook",
+                        "to": f"{webhook_url.rstrip('/')}/api/internal/cron-webhook"
+                    }
+                })
+
             # Store ownership (sync DB call)
             self.ownership.set(job_id, req.user_id, req.session_id, req.agent_id)
 
@@ -262,6 +272,13 @@ pipeline_status rules:
         return result
 
     async def get_cron_runs(self, job_id: str, limit: int = 20) -> List[dict]:
-        """Get run history from CronPipelineRun database."""
-        return self.pipelines.list_by_cron(job_id, limit)
-
+        """Get run history — DB first, fall back to gateway."""
+        db_runs = self.pipelines.list_by_cron(job_id, limit)
+        if db_runs:
+            return db_runs
+        # Fall back to OpenClaw gateway for jobs not using webhook delivery
+        try:
+            return await self.gateway.cron_runs(job_id, limit)
+        except Exception as e:
+            logger.warning(f"Gateway cron_runs fallback failed for {job_id}: {e}")
+            return []

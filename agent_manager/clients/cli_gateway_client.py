@@ -3,6 +3,8 @@ import logging
 from typing import Any, List
 from .gateway_client import GatewayClient
 from ..openclaw import run_openclaw
+from fastapi import HTTPException
+import asyncio
 
 logger = logging.getLogger("agent_manager.clients.cli_gateway_client")
 
@@ -86,6 +88,11 @@ class CLIGatewayClient(GatewayClient):
 
         return await run_openclaw(args)
 
+    async def cron_update(self, job_id: str, patch: dict) -> dict:
+        """Patch a cron job via gateway RPC (supports delivery.mode=webhook which CLI cannot set)."""
+        params = json.dumps({"jobId": job_id, "patch": patch})
+        return await run_openclaw(["gateway", "call", "cron.update", "--params", params, "--json"])
+
     async def cron_edit(self, job_id: str, updates: dict) -> dict:
         args = ["cron", "edit", job_id]
 
@@ -117,7 +124,15 @@ class CLIGatewayClient(GatewayClient):
         return await run_openclaw(["cron", "rm", job_id, "--json"])
 
     async def cron_run(self, job_id: str) -> dict:
-        return await run_openclaw(["cron", "run", job_id])
+        """Fire the job in background — result comes via webhook."""
+        async def _run():
+            try:
+                await run_openclaw(["cron", "run", job_id])
+            except HTTPException as e:
+                logger.error(f"cron_run {job_id} failed: {e.detail}")
+        
+        asyncio.create_task(_run())
+        return {"status": "triggered", "jobId": job_id}
 
     async def cron_runs(self, job_id: str, limit: int = 20) -> List[dict]:
         data = await run_openclaw([

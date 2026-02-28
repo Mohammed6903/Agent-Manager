@@ -12,6 +12,7 @@ from agent_manager.config import settings
 from agent_manager.routers.agent_router import router as agent_router
 from agent_manager.routers.gmail_router import router as gmail_router
 from agent_manager.routers.garage_router import router as garage_router
+from agent_manager.routers.context_router import router as context_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
@@ -102,6 +103,13 @@ app.include_router(
 app.include_router(
     garage_router,
     prefix="/api/garage",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Context endpoints: /api/contexts
+app.include_router(
+    context_router,
+    prefix="/api/contexts",
     responses={404: {"description": "Resource not found"}},
 )
 

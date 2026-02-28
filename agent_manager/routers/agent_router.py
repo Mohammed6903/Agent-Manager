@@ -547,6 +547,8 @@ async def cron_webhook_receiver(
     job_id = payload.get("jobId")
     if not job_id:
         return {"status": "ignored"}
+    
+    logger.info(f"WEBHOOK PAYLOAD: {json.dumps(payload, indent=2)}")
         
     status_raw = payload.get("status", "")
     summary = payload.get("summary", "")
@@ -571,15 +573,17 @@ async def cron_webhook_receiver(
             
     from ..repositories.cron_pipeline_repository import CronPipelineRepository
     repo = CronPipelineRepository(db)
+
+    finished_at = payload.get("runAtMs", 0) + payload.get("durationMs", 0) or None
     
-    run_id = payload.get("sessionKey") or payload.get("sessionId") or f"run-{payload.get('ts')}"
+    run_id = f"{payload.get('sessionKey') or payload.get('sessionId') or job_id}-{finished_at}"
     
     run_data = {
         "id": run_id,
         "cron_id": job_id,
         "status": pipeline_status,
         "started_at": payload.get("runAtMs"),
-        "finished_at": payload.get("ts"),
+        "finished_at": finished_at,
         "duration_ms": payload.get("durationMs"),
         "tasks": tasks,
         "global_integrations": global_int,

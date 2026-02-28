@@ -33,6 +33,10 @@ class GatewayClient(ABC):
         pass
 
     @abstractmethod
+    async def cron_update(self, job_id: str, patch: dict) -> dict:
+        pass
+
+    @abstractmethod
     async def cron_edit(self, job_id: str, updates: dict) -> dict:
         pass
 

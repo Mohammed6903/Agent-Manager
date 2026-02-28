@@ -21,7 +21,7 @@ from ..schemas.chat import ChatRequest, NewSessionResponse
 logger = logging.getLogger("agent_manager.services.chat_service")
 
 # Timeout for non-streaming requests (sync completions).
-_HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+_HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=3000.0, write=10.0, pool=10.0)
 
 # For streaming: no read timeout — reasoning models may think silently for
 # several minutes before emitting the first token.
@@ -114,6 +114,44 @@ class ChatService:
 
         messages.append({"role": "user", "content": user_content})
         return messages
+    
+    def _raise_for_status(self, status_code: int, body: str, agent_id: str) -> None:
+        """Raise appropriate HTTPException based on gateway status code."""
+        if status_code == 429:
+            # Try to extract retry-after from body if gateway forwards it
+            retry_after = None
+            try:
+                data = json.loads(body)
+                retry_after = (
+                    data.get("retry_after")
+                    or data.get("error", {}).get("retry_after")
+                )
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+            detail = {
+                "error": "rate_limit_exceeded",
+                "message": "OpenClaw Gateway rate limit reached. Please slow down.",
+                "agent_id": agent_id,
+                "gateway_response": body[:500],
+            }
+            if retry_after:
+                detail["retry_after_seconds"] = retry_after
+
+            logger.warning("Rate limit hit for agent %s: %s", agent_id, body[:200])
+            raise HTTPException(status_code=429, detail=detail)
+
+        if status_code != 200:
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "error": "gateway_upstream_error",
+                    "message": f"OpenClaw Gateway returned HTTP {status_code}",
+                    "gateway_url": f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
+                    "agent_id": agent_id,
+                    "gateway_response": body[:500],
+                },
+            )
 
     @staticmethod
     def _sse_bytes(content: str) -> bytes:
@@ -220,10 +258,7 @@ class ChatService:
                             ) as resp:
                                 if resp.status_code != 200:
                                     err = await resp.aread()
-                                    raise HTTPException(
-                                        status_code=resp.status_code,
-                                        detail=err.decode()[:500],
-                                    )
+                                    self._raise_for_status(resp.status_code, err.decode(), req.agent_id)
                                 async for chunk in resp.aiter_bytes():
                                     yield chunk
                         except httpx.ConnectError as exc:
@@ -257,16 +292,17 @@ class ChatService:
                         logger.error(
                             "Gateway returned %s: %s", resp.status_code, error_body.decode()[:500]
                         )
-                        raise HTTPException(
-                            status_code=resp.status_code,
-                            detail={
-                                "error": "gateway_upstream_error",
-                                "message": f"OpenClaw Gateway returned HTTP {resp.status_code}",
-                                "gateway_url": f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
-                                "agent_id": req.agent_id,
-                                "gateway_response": error_body.decode()[:500],
-                            },
-                        )
+                        self._raise_for_status(resp.status_code, error_body.decode(), req.agent_id)
+                        # raise HTTPException(
+                        #     status_code=resp.status_code,
+                        #     detail={
+                        #         "error": "gateway_upstream_error",
+                        #         "message": f"OpenClaw Gateway returned HTTP {resp.status_code}",
+                        #         "gateway_url": f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
+                        #         "agent_id": req.agent_id,
+                        #         "gateway_response": error_body.decode()[:500],
+                        #     },
+                        # )
                     async for chunk in resp.aiter_bytes():
                         yield chunk
             except httpx.ConnectError as exc:
@@ -332,16 +368,7 @@ class ChatService:
                     headers=headers,
                 )
                 if resp.status_code != 200:
-                    raise HTTPException(
-                        status_code=resp.status_code,
-                        detail={
-                            "error": "gateway_upstream_error",
-                            "message": f"OpenClaw Gateway returned HTTP {resp.status_code}",
-                            "gateway_url": f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
-                            "agent_id": req.agent_id,
-                            "gateway_response": resp.text[:500],
-                        },
-                    )
+                    self._raise_for_status(resp.status_code, resp.text, req.agent_id)
                 data = resp.json()
                 content = ""
                 if "choices" in data and data["choices"]:
