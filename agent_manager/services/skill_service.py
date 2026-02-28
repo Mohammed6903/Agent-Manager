@@ -156,6 +156,23 @@ class SkillService:
         logger.info("Skill '%s' updated", slug)
         return SkillResponse(name=slug, path=skill_md, status="updated")
 
+    async def sync_skill(self, skill_name: str) -> SkillResponse:
+        """Overwrite the SKILL.md content for an existing skill with its default template."""
+        slug = _to_slug(skill_name)
+        skill_md = self._skill_md_path(slug)
+
+        if not await self.storage.exists(skill_md):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Skill '{slug}' not found. Use POST to create it first.",
+            )
+
+        content = self._load_default_template(slug)
+        await self.storage.write_text(skill_md, content)
+
+        logger.info("Skill '%s' synced with default template", slug)
+        return SkillResponse(name=slug, path=skill_md, status="synced")
+
     async def delete_skill(self, skill_name: str) -> dict:
         """Remove a skill's directory and all its contents."""
         slug = _to_slug(skill_name)
@@ -239,6 +256,23 @@ class SkillService:
 
         logger.info("Skill '%s' updated for agent '%s'", slug, agent_id)
         return SkillResponse(name=slug, path=skill_md, status="updated")
+
+    async def sync_agent_skill(self, agent_id: str, skill_name: str) -> SkillResponse:
+        """Overwrite the SKILL.md content for an agent-specific skill with its default template."""
+        slug = _to_slug(skill_name)
+        skill_md = self._agent_skill_md_path(agent_id, slug)
+
+        if not await self.storage.exists(skill_md):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Skill '{slug}' not found for agent '{agent_id}'. Use POST to create it first.",
+            )
+
+        content = self._load_default_template(slug)
+        await self.storage.write_text(skill_md, content)
+
+        logger.info("Skill '%s' synced with default template for agent '%s'", slug, agent_id)
+        return SkillResponse(name=slug, path=skill_md, status="synced")
 
     async def delete_agent_skill(self, agent_id: str, skill_name: str) -> dict:
         """Remove an agent-specific skill directory."""

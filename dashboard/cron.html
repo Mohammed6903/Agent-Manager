@@ -998,7 +998,7 @@
         }
 
         function renderCard(c) {
-            const sched = formatSchedule(c.schedule);
+            const sched = c.schedule_human || formatSchedule(c.schedule);
             const lastRun = c.last_run_at ? timeAgo(c.last_run_at) : 'Never';
             const nextRun = c.next_run_at ? timeAgo(c.next_run_at) : '—';
             const statusCls = c.last_run_status === 'ok' ? 'status-ok' : (c.last_run_status ? 'status-fail' : '');
@@ -1020,6 +1020,15 @@
                 '<div class="run-chip"><span class="label">Next:</span> ' + nextRun + '</div>' +
                 (c.last_run_status ? '<div class="run-chip"><span class="label">Status:</span> <span class="' + statusCls + '">' + esc(c.last_run_status) + '</span></div>' : '') +
                 '</div>' +
+                ((c.total_runs !== undefined && c.total_runs !== null) ?
+                    '<div class="run-info" style="margin-top:2px; border-top: 1px solid rgba(255,255,255,0.03); padding-top:6px;">' +
+                    '<div class="run-chip" title="Total runs"><span class="label">Runs:</span> ' + c.total_runs + '</div>' +
+                    (c.total_runs > 0 ?
+                        '<div class="run-chip" title="Success rate"><span class="label">Success:</span> ' + Math.round((c.success_rate || 0) * 100) + '%</div>' +
+                        '<div class="run-chip" title="Avg duration"><span class="label">Avg time:</span> ' + (c.avg_duration_ms > 60000 ? (c.avg_duration_ms / 60000).toFixed(1) + 'm' : (c.avg_duration_ms / 1000).toFixed(1) + 's') + '</div>'
+                        : '') +
+                    '</div>'
+                    : '') +
                 (c.user_id ? '<div class="card-owner">👤 ' + esc(c.user_id) + '</div>' : '<div class="card-owner">👤 No owner (CLI-created)</div>') +
                 '<div class="card-actions">' +
                 '<button class="btn btn-blue btn-sm" onclick="event.stopPropagation();openRunHistory(\'' + c.job_id + '\')">📜 History</button>' +
@@ -1049,15 +1058,16 @@
             }
 
             try {
-                const res = await fetch(api() + '/api/crons/' + jobId + '/runs?limit=20');
+                const res = await fetch(api() + '/api/crons/' + jobId + '/detail');
                 const data = await res.json();
-                // data might be an array  or { entries: [...] } or { raw: "..." }
                 let entries = [];
-                if (Array.isArray(data)) entries = data;
-                else if (data.entries) entries = data.entries;
-                else if (data.runs) entries = data.runs;
-                else if (data.raw) {
-                    // Try to parse the raw text
+                if (data && data.runs) {
+                    entries = data.runs;
+                } else if (Array.isArray(data)) {
+                    entries = data;
+                } else if (data.entries) {
+                    entries = data.entries;
+                } else if (data.raw) {
                     try { const parsed = JSON.parse(data.raw); entries = parsed.entries || parsed.runs || (Array.isArray(parsed) ? parsed : []); } catch { }
                 }
 
@@ -1100,10 +1110,43 @@
             if (entry.action) html += '<span>📌 ' + esc(entry.action) + '</span>';
             html += '</div>';
 
-            if (entry.summary) {
+            if (entry.tasks && entry.tasks.length > 0) {
+                html += '<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">';
+                entry.tasks.forEach(task => {
+                    const tOk = task.status === 'success';
+                    const tIcon = tOk ? '✅' : (task.status === 'error' ? '❌' : '⏳');
+                    const tColor = tOk ? 'var(--accent-emerald)' : (task.status === 'error' ? 'var(--accent-rose)' : 'var(--accent-amber)');
+                    const tooltip = task.description ? ` title="${esc(task.description).replace(/"/g, '&quot;')}"` : '';
+                    html += `<div style="padding:6px 10px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:6px; font-size:11px;"${tooltip}>`;
+                    html += `<div style="display:flex; justify-content:space-between; align-items:center;">`;
+                    html += `<strong style="color:var(--text-primary)">${tIcon} ${esc(task.name || 'Unnamed task')}</strong>`;
+                    html += `<span style="color:${tColor}; font-weight:600; text-transform:uppercase; font-size:9px; letter-spacing:0.5px;">${esc(task.status)}</span>`;
+                    html += `</div>`;
+                    if (task.error) {
+                        html += `<div style="margin-top:4px; color:var(--accent-rose); font-size:10px;">${esc(task.error)}</div>`;
+                    }
+                    if ((task.integrations && task.integrations.length > 0) || (task.context_sources && task.context_sources.length > 0)) {
+                        html += `<div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">`;
+                        (task.integrations || []).forEach(i => html += `<span style="padding:2px 6px; background:rgba(129,140,248,0.15); color:var(--accent-indigo); border-radius:4px; font-size:9px;">🔌 ${esc(i.name)}</span>`);
+                        (task.context_sources || []).forEach(c => html += `<span style="padding:2px 6px; background:rgba(96,165,250,0.15); color:var(--accent-blue); border-radius:4px; font-size:9px;">📚 ${esc(c.name)}</span>`);
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                });
+
+                if ((entry.global_integrations && entry.global_integrations.length > 0) || (entry.global_context_sources && entry.global_context_sources.length > 0)) {
+                    html += `<div style="margin-top:8px; font-size:10px; color:var(--text-muted); display:flex; gap:6px; flex-wrap:wrap; align-items:center;">`;
+                    html += `<span>Global Usage:</span>`;
+                    (entry.global_integrations || []).forEach(i => html += `<span style="color:var(--text-secondary)">🔌 ${esc(i.name)}</span>`);
+                    (entry.global_context_sources || []).forEach(c => html += `<span style="color:var(--text-secondary)">📚 ${esc(c.name)}</span>`);
+                    html += `</div>`;
+                }
+
+                html += '</div>';
+            } else if (entry.summary) {
                 html += '<div class="run-summary"><strong>✅ Response:</strong>\n' + esc(entry.summary) + '</div>';
             }
-            if (entry.error) {
+            if (entry.error && (!entry.tasks || entry.tasks.length === 0)) {
                 html += '<div class="run-error"><strong>❌ Error:</strong>\n' + esc(entry.error) + '</div>';
             }
 

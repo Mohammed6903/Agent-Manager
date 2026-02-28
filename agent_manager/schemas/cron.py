@@ -12,6 +12,8 @@ class CreateCronRequest(BaseModel):
     delivery_mode: Literal["webhook", "none"] = "webhook"
     enabled: bool = True
     delete_after_run: bool = False
+    pipeline_template: Optional[dict] = None
+    schedule_human: Optional[str] = None
     # Ownership fields
     user_id: str
     session_id: str
@@ -36,3 +38,9 @@ class CronResponse(BaseModel):
     last_run_at: Optional[int] = None
     next_run_at: Optional[int] = None
     last_run_status: Optional[str] = None
+    description: Optional[str] = None
+    schedule_human: Optional[str] = None
+    pipeline_template: Optional[dict] = None
+    total_runs: Optional[int] = None
+    success_rate: Optional[float] = None
+    avg_duration_ms: Optional[float] = None
