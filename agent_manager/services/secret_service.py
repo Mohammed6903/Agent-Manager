@@ -22,6 +22,12 @@ class SecretService:
         return {k: decrypt(str(v)) for k, v in data.items()}
 
     @staticmethod
+    def _encrypt_secret_data(data: dict[str, str]) -> dict[str, Any]:
+        """Encrypt every value in the dict with Fernet."""
+        from ..security import encrypt
+        return {k: encrypt(v) for k, v in data.items()}
+
+    @staticmethod
     def get_secret(db: Session, agent_id: str, service_name: str) -> dict | None:
         """Return decrypted secret_data for the given agent + service, or None."""
         secret = (
@@ -43,3 +49,31 @@ class SecretService:
                 service_name, agent_id, exc,
             )
             return None
+
+    @staticmethod
+    def set_secret(db: Session, agent_id: str, service_name: str, secret_data: dict[str, str]) -> AgentSecret:
+        """Encrypt and store secret_data for the given agent + service (creates or updates)."""
+        encrypted_data = SecretService._encrypt_secret_data(secret_data)
+        
+        secret = (
+            db.query(AgentSecret)
+            .filter(
+                AgentSecret.agent_id == agent_id,
+                AgentSecret.service_name == service_name,
+            )
+            .first()
+        )
+        
+        if secret:
+            secret.secret_data = encrypted_data
+        else:
+            secret = AgentSecret(
+                agent_id=agent_id,
+                service_name=service_name,
+                secret_data=encrypted_data
+            )
+            db.add(secret)
+            
+        db.commit()
+        db.refresh(secret)
+        return secret
