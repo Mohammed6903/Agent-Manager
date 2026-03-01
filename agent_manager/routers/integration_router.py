@@ -76,7 +76,7 @@ def assign_integration_to_agent(
 ):
     """Assign a global integration to an agent."""
     svc.assign_integration(integration_id, req)
-    return Response(status_code=200)
+    return Response(status_code=200, content=f"Integration {integration_id} assigned to agent {req.agent_id}")
 
 @router.get("/agent/{agent_id}", response_model=AgentIntegrationListResponse)
 def get_agent_integrations(
