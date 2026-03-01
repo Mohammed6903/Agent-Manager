@@ -14,6 +14,7 @@ from agent_manager.routers.gmail_router import router as gmail_router
 from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
+from agent_manager.routers.cron_template_router import router as cron_template_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
@@ -118,6 +119,13 @@ app.include_router(
 app.include_router(
     integration_router,
     prefix="/api/integrations",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Cron Template endpoints: /api/cron-templates
+app.include_router(
+    cron_template_router,
+    prefix="/api/cron-templates",
     responses={404: {"description": "Resource not found"}},
 )
 
