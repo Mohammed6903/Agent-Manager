@@ -87,6 +87,12 @@ async def health(
     return resp
 
 
+@router.get("/heartbeat", tags=["Health"])
+async def heartbeat():
+    """Simple connectivity check for integrations and health monitoring."""
+    return {"status": "ok"}
+
+
 # ── Agent CRUD ──────────────────────────────────────────────────────────────────
 
 @router.post("/agents", tags=["Agents"], status_code=201)

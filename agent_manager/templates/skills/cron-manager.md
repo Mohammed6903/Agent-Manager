@@ -86,7 +86,7 @@ The `description` field of each task must be operational — it must contain the
 | `main` | ✅ Yes — full access to all configured tools | Job needs Gmail, Notion, or ANY external integration |
 | `isolated` | ❌ No — blank slate, no tools | Job is purely self-contained, no external APIs |
 
-**Always set `session_target: "main"` when your pipeline uses any external integration.**
+**Always set `session_target: "isolated"` by default.** Only set `session_target: "main"` if the user explicitly requests integrations.
 When using `main`, the payload kind is automatically set to `systemEvent` by the server.
 
 ---
@@ -154,7 +154,7 @@ curl -s -X POST "http://localhost:8000/api/crons" \
     "schedule_kind": "every",
     "schedule_expr": "5m",
     "schedule_human": "Every 5 minutes",
-    "session_target": "main",
+    "session_target": "isolated",
     "payload_message": "FULL DETAILED OPERATIONAL PROMPT — see Payload Message Guidance below",
     "pipeline_template": {
       "tasks": [
@@ -187,7 +187,7 @@ curl -s -X POST "http://localhost:8000/api/crons" \
 | `schedule_expr` | ✅ | Duration string (e.g. `3m`, `1h`, `1d`), cron expr, or ISO timestamp |
 | `schedule_tz` | ❌ | IANA timezone (only for `cron` kind, e.g. `Asia/Kolkata`) |
 | `schedule_human` | ❌ | Human readable schedule string (e.g. "Every Monday at 9AM IST") |
-| `session_target` | ❌ | `main` (has integrations) or `isolated` (no tools). Default: `main` |
+| `session_target` | ❌ | `main` (has integrations) or `isolated` (no tools). Default: `isolated` |
 | `payload_message` | ✅ | Full operational prompt — must include exact API calls, success criteria, error handling |
 | `pipeline_template` | ✅ **MANDATORY** | Structured task definitions with exact API details per task |
 | `delivery_mode` | ❌ | `webhook` (default) or `none` |
@@ -268,7 +268,7 @@ At the very end of your response, after completing all steps, output the pipelin
 
 ## PIPELINE TEMPLATE — CANONICAL EXAMPLES
 
-### Integration pipeline (Notion + Gmail) — `session_target: "main"`
+### Integration pipeline (Notion + Gmail) — `session_target: "main"` (requires explicit user request)
 
 ```json
 {
@@ -415,7 +415,7 @@ curl -s "http://localhost:8000/api/crons/JOB_ID/runs?limit=10" | jq .
 - **`pipeline_template` is mandatory** — every job must have one, no exceptions
 - **Task descriptions must be operational** — include exact URL, method, body shape, and success field. Not "update Notion" but the full PATCH call with headers and response validation
 - **`payload_message` must be self-contained** — the executing agent has no prior context. Every API call, header, body shape, and success criterion must be spelled out explicitly
-- **`session_target: "main"` for all integration jobs** — isolated sessions have no tools, no credentials, no integrations
+- **`session_target: "isolated"` by default** — only use `session_target: "main"` if the user explicitly requests integrations. Main sessions have full access to all configured tools and credentials
 - **Workspace-bridge is a credential store, not a proxy** — fetch keys from it, then call official APIs directly
 - **Validate real-world effects** — never mark success unless the API response confirms the action was performed
 - **Trigger returns immediately** — result comes via webhook when the job finishes, regardless of how long it takes
