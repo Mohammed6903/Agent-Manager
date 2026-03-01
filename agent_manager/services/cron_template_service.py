@@ -89,8 +89,84 @@ class CronTemplateService:
         if missing_vars:
             raise HTTPException(status_code=400, detail=f"Missing required variables: {', '.join(missing_vars)}")
 
-        # 2. Substitute in payload
-        payload_message = self._replace_variables(template.payload_message, final_values)
+        # 2. Construct doc blocks and Validate Agent Assignments
+        import os
+        from ..repositories.integration_repository import IntegrationRepository
+        int_repo = IntegrationRepository(self.db)
+        
+        assigned_integrations = int_repo.get_agent_integrations(req.agent_id)
+        assigned_int_ids = {intg.id for intg in assigned_integrations}
+
+        docs = []
+        
+        # 1. Integration Docs & Proxy instructions (UTMOST PRIORITY)
+        if template.integrations:
+            docs.append("## 1. ASSIGNED INTEGRATIONS (UTMOST PRIORITY)\n"
+                        "You MUST prioritize the following integrations for network requests. "
+                        "Do not manually manage raw secrets or keys for these services unless absolutely necessary.")
+            for t_int in template.integrations:
+                if t_int.integration_id not in assigned_int_ids:
+                    int_record_missing = int_repo.get_global_integration(t_int.integration_id)
+                    int_name = int_record_missing.name if int_record_missing else str(t_int.integration_id)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"This {req.agent_id} does not have {int_name} integration assigned to it, assign it first."
+                    )
+                
+                int_record = next((i for i in assigned_integrations if i.id == t_int.integration_id), None)
+                if not int_record:
+                    continue
+                
+                endpoints_arr = int_record.endpoints if isinstance(int_record.endpoints, list) else []
+                endpoints_str = "\n".join([f"- {ep.get('method')} {ep.get('path')}: {ep.get('description')}" for ep in endpoints_arr])
+                
+                auth_str = str(int_record.auth_scheme) if int_record.auth_scheme else "None"
+                usage_str = int_record.usage_instructions if int_record.usage_instructions else "No usage instructions."
+                
+                doc = f"### {int_record.name}\nBase URL: {int_record.base_url}\nAuth: {auth_str}\nUsage: {usage_str}\nAvailable endpoints:\n{endpoints_str}\n"
+                docs.append(doc)
+
+            docs.append("### HOW TO USE INTEGRATIONS (PROXY ENDPOINT)\n"
+                        "To interact with these integrations, DO NOT handle credentials directly. Use the OpenClaw proxy endpoint:\n"
+                        "**POST /api/integrations/{integration_id}/proxy**\n"
+                        "**Body:** `{\"agent_id\": \"your-agent-id\", \"method\": \"HTTP_METHOD\", \"path\": \"/endpoint/path\", \"body\": {}}`\n"
+                        "The backend will automatically inject the authenticated headers.")
+
+        pwd = os.path.dirname(os.path.abspath(__file__))
+
+        # 2. Other secrets (Secondary priority)
+        docs.append("## 2. OTHER SECRETS & EMAILS (SECONDARY)\n"
+                    "If you need to interact with a service that is NOT listed in your Assigned Integrations above, "
+                    "you may need to manually fetch credentials or send emails using strictly authorized manual channels. "
+                    "This is secondary and fallback behavior.")
+
+        # 3. Garage Tool
+        gt_path = os.path.join(pwd, "..", "templates", "skills", "garage-tool.md")
+        if os.path.exists(gt_path):
+            with open(gt_path, 'r') as f:
+                gt_content = f.read().split('---', 2)[-1].strip()
+                docs.append(f"## 3. Garage Feed Tool\n{gt_content}")
+        
+        # 4. Workspace bridge
+        wb_path = os.path.join(pwd, "..", "templates", "skills", "workspace-bridge.md")
+        if os.path.exists(wb_path):
+            with open(wb_path, 'r') as f:
+                wb_content = f.read().split('---', 2)[-1].strip()
+                docs.append(f"## 4. Workspace Bridge\n{wb_content}")
+                
+        # 5. Context manager
+        cm_path = os.path.join(pwd, "..", "templates", "skills", "context-manager.md")
+        if os.path.exists(cm_path):
+            with open(cm_path, 'r') as f:
+                cm_content = f.read().split('---', 2)[-1].strip()
+                docs.append(f"## 5. Context Manager\n{cm_content}")
+        
+        docs.append(f"\n**IMPORTANT: You are executing this job as agent ID: {req.agent_id}. Always use this agent_id when fetching context or calling proxy endpoints.**\n")
+
+        prefix_docs = "\n\n".join(docs)
+
+        # 6. Substitute in payload
+        payload_message = prefix_docs + "\n\n" + self._replace_variables(template.payload_message, final_values)
         
         # 3. Substitute in pipeline
         pipeline_template = template.pipeline_template

@@ -16,6 +16,7 @@ from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
 from agent_manager.routers.cron_template_router import router as cron_template_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
+from agent_manager.dependencies import get_storage, get_gateway
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,16 @@ async def lifespan(app: FastAPI):
         settings.OPENCLAW_GATEWAY_URL,
         settings.OPENCLAW_STATE_DIR,
     )
+
+    # Bootstrap shared workspace files (SOUL.md, AGENTS.md)
+    try:
+        from agent_manager.services.agent_service import AgentService
+        svc = AgentService(get_storage(), get_gateway())
+        await svc.ensure_shared_files()
+        logger.info("Shared workspace files ensured")
+    except Exception as exc:
+        logger.warning("Failed to bootstrap shared files: %s", exc)
+
     yield
     # Log shutdown
     logger.info("OpenClaw API shutting down")

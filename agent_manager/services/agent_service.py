@@ -16,6 +16,11 @@ from ..clients.gateway_client import GatewayClient
 
 logger = logging.getLogger("agent_manager.services.agent_service")
 
+# ── Shared-file constants ───────────────────────────────────────────────────────
+
+SHARED_DIR = Path(settings.OPENCLAW_STATE_DIR) / "shared"
+SHARED_FILES = ("SOUL.md", "AGENTS.md")
+
 class AgentService:
     def __init__(self, storage: StorageRepository, gateway: GatewayClient):
         self.storage = storage
@@ -26,6 +31,13 @@ class AgentService:
 
     def _agent_dir(self, agent_id: str) -> str:
         return str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id / "agent")
+
+    # ── Shared directory helpers ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _shared_path(filename: str) -> str:
+        """Return the absolute path to a file inside the shared directory."""
+        return str(SHARED_DIR / filename)
 
     def _default_identity(self, agent_id: str, name: str, role: str) -> str:
         """
@@ -41,19 +53,29 @@ class AgentService:
             # Fallback to a minimal identity
             return f"Name: {name}\nAgent ID: {agent_id}\nType: {role}"
 
-    def _default_soul(self, agent_id: str, name: str, role: str) -> str:
+    def _default_soul(self) -> str:
         """
-        Load the default soul template and fill in placeholders.
+        Load the default soul template (no per-agent placeholders).
         """
         template_path = Path(__file__).parent / "../templates/SOUL.md"
         try:
             with open(template_path, "r", encoding="utf-8") as f:
-                template = f.read()
-            return template.format(name=name, agent_id=agent_id, role=role)
+                return f.read()
         except Exception as e:
             logger.error(f"Failed to load SOUL.md template: {e}")
-            # Fallback to a minimal soul
-            return f"# {name}\nYou are {name}. You are a helpful AI assistant whose role is: {role}.\nYour agent ID is {agent_id}."
+            return "# Soul\nYou are a helpful AI assistant."
+        
+    def _default_agents_md(self) -> str | None:
+        """
+        Load the default agents.md template (no per-agent placeholders).
+        """
+        template_path = Path(__file__).parent / "../templates/AGENTS.md"
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            logger.error(f"Failed to load AGENTS.md template: {e}")
+            return None
 
     def _build_agents_raw(self, agents: List[dict[str, Any]]) -> str:
         entries: List[str] = []
@@ -68,29 +90,89 @@ class AgentService:
         joined = ", ".join(entries)
         return f"{{ agents: {{ list: [{joined}] }} }}"
 
-    # Skills that every new agent gets automatically
-    DEFAULT_SKILLS = ["task-manager", "workspace-bridge", "cron-manager", "context-manager"]
+    # ── Shared-file lifecycle ────────────────────────────────────────────────────
 
-    async def _install_default_skills(self, agent_id: str, workspace: str):
-        """Copy default skills from templates into the agent's workspace."""
-        templates_dir = Path(__file__).resolve().parent.parent / "templates" / "skills"
-        skills_dir = Path(workspace) / "skills"
+    async def ensure_shared_files(self) -> None:
+        """Bootstrap the shared directory with default templates.
 
-        for skill_name in self.DEFAULT_SKILLS:
-            src = templates_dir / f"{skill_name}.md"
-            if not src.exists():
-                logger.warning("Default skill template '%s' not found at %s", skill_name, src)
-                continue
+        Safe to call on every startup — only writes files that do not already
+        exist.
+        """
+        await self.storage.ensure_dir(str(SHARED_DIR))
 
-            dest_dir = skills_dir / skill_name
-            dest_file = dest_dir / "SKILL.md"
-            try:
-                await self.storage.ensure_dir(str(dest_dir))
-                content = src.read_text(encoding="utf-8")
-                await self.storage.write_text(str(dest_file), content)
-                logger.info("Auto-installed skill '%s' for agent '%s'", skill_name, agent_id)
-            except Exception as e:
-                logger.error("Failed to install default skill '%s' for '%s': %s", skill_name, agent_id, e)
+        soul_path = self._shared_path("SOUL.md")
+        if not await self.storage.exists(soul_path):
+            await self.storage.write_text(soul_path, self._default_soul())
+            logger.info("Bootstrapped shared SOUL.md at %s", soul_path)
+
+        agents_path = self._shared_path("AGENTS.md")
+        agents_md_content = self._default_agents_md()
+        if not await self.storage.exists(agents_path) and agents_md_content:
+            await self.storage.write_text(agents_path, agents_md_content)
+            logger.info("Bootstrapped shared AGENTS.md at %s", agents_path)
+
+    async def migrate_symlinks(self) -> dict[str, Any]:
+        """One-time (idempotent) migration: convert regular SOUL.md / AGENTS.md
+        files in every agent workspace into symlinks pointing to the shared
+        copies.
+
+        Returns a summary dict describing what was done.
+        """
+        results: dict[str, list[str]] = {"symlinked": [], "already_symlink": [], "errors": []}
+
+        try:
+            agents = await self.gateway.list_agents()
+        except Exception as exc:
+            logger.warning("migrate_symlinks: could not list agents — %s", exc)
+            return {"error": str(exc)}
+
+        for agent in agents:
+            workspace = agent.get("workspace") or self._workspace(agent["id"])
+            for filename in SHARED_FILES:
+                link_path = str(Path(workspace) / filename)
+                target_path = self._shared_path(filename)
+
+                try:
+                    if await self.storage.is_symlink(link_path):
+                        results["already_symlink"].append(f"{agent['id']}/{filename}")
+                        continue
+
+                    if not await self.storage.exists(target_path):
+                        results["errors"].append(
+                            f"{agent['id']}/{filename}: shared file missing"
+                        )
+                        continue
+
+                    # Remove the regular file and replace with a symlink
+                    await self.storage.create_symlink(link_path, target_path)
+                    results["symlinked"].append(f"{agent['id']}/{filename}")
+                    logger.info(
+                        "Migrated %s/%s → symlink to %s", agent["id"], filename, target_path
+                    )
+                except Exception as exc:
+                    msg = f"{agent['id']}/{filename}: {exc}"
+                    results["errors"].append(msg)
+                    logger.error("migrate_symlinks error: %s", msg)
+
+        return results
+
+    async def _symlink_or_write(
+        self, workspace: str, filename: str, fallback_content: str
+    ) -> None:
+        """Create a symlink to the shared copy of *filename* if it exists,
+        otherwise fall back to writing *fallback_content* as a regular file.
+        """
+        link_path = str(Path(workspace) / filename)
+        target_path = self._shared_path(filename)
+
+        if await self.storage.exists(target_path):
+            await self.storage.create_symlink(link_path, target_path)
+            logger.info("Symlinked %s → %s", link_path, target_path)
+        else:
+            await self.storage.write_text(link_path, fallback_content)
+            logger.info("Wrote %s (shared copy not found, using fallback)", link_path)
+
+    # ── Agent CRUD ──────────────────────────────────────────────────────────────
 
     async def create_agent(self, req: CreateAgentRequest) -> AgentResponse:
         agent_id = req.agent_id
@@ -105,14 +187,19 @@ class AgentService:
         await self.storage.ensure_dir(workspace)
         await self.storage.ensure_dir(agent_dir)
 
+        # IDENTITY.md is always agent-specific — never symlinked
         identity_content = req.identity or self._default_identity(agent_id, req.name, req.role)
         await self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content)
 
-        soul_content = req.soul or self._default_soul(agent_id, req.name, req.role)
-        await self.storage.write_text(str(Path(workspace) / "SOUL.md"), soul_content)
+        # SOUL.md → symlink to shared copy (fallback: write from template)
+        if req.soul:
+            # Explicit soul provided by the caller — write it directly
+            await self.storage.write_text(str(Path(workspace) / "SOUL.md"), req.soul)
+        else:
+            await self._symlink_or_write(workspace, "SOUL.md", self._default_soul())
 
-        # Auto-install default skills
-        await self._install_default_skills(agent_id, workspace)
+        # AGENTS.md → symlink to shared copy (fallback: write default)
+        await self._symlink_or_write(workspace, "AGENTS.md", _DEFAULT_AGENTS_MD)
 
         config_data = await self.gateway.get_config()
         config_hash = config_data.get("hash")
@@ -221,3 +308,38 @@ class AgentService:
 
         logger.info("Agent '%s' deleted", agent_id)
         return {"status": "deleted", "agent_id": agent_id}
+
+    # ── Shared-file admin helpers ────────────────────────────────────────────────
+
+    async def update_shared_file(self, filename: str, content: str) -> dict[str, Any]:
+        """Write *content* to the shared copy of *filename* and return how many
+        agent workspaces will see the change (i.e. have a symlink pointing to
+        it).
+        """
+        if filename not in SHARED_FILES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {', '.join(SHARED_FILES)} can be updated via this endpoint.",
+            )
+        target_path = self._shared_path(filename)
+        await self.storage.write_text(target_path, content)
+        affected = await self._count_symlinked_agents(filename)
+        logger.info("Updated shared %s — %d agent(s) affected", filename, affected)
+        return {"filename": filename, "affected_agents": affected}
+
+    async def _count_symlinked_agents(self, filename: str) -> int:
+        """Count how many existing agent workspaces have a symlink for *filename*."""
+        count = 0
+        try:
+            agents = await self.gateway.list_agents()
+        except Exception:
+            return 0
+        for agent in agents:
+            workspace = agent.get("workspace") or self._workspace(agent["id"])
+            link_path = str(Path(workspace) / filename)
+            try:
+                if await self.storage.is_symlink(link_path):
+                    count += 1
+            except Exception:
+                pass
+        return count

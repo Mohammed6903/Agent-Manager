@@ -15,7 +15,7 @@ class CronTemplateCreate(BaseModel):
     category: Optional[str] = None
     is_public: bool = False
     
-    required_integrations: List[str] = Field(default_factory=list)
+    required_integrations: List[uuid.UUID] = Field(default_factory=list)
     variables: List[TemplateVariable] = Field(default_factory=list)
     
     schedule_kind: Literal["at", "every", "cron"]
@@ -35,7 +35,7 @@ class CronTemplateUpdate(BaseModel):
     category: Optional[str] = None
     is_public: Optional[bool] = None
     
-    required_integrations: Optional[List[str]] = None
+    required_integrations: Optional[List[uuid.UUID]] = None
     variables: Optional[List[TemplateVariable]] = None
     
     schedule_kind: Optional[Literal["at", "every", "cron"]] = None
@@ -58,7 +58,7 @@ class CronTemplateResponse(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     
-    required_integrations: List[str]
+    required_integrations: List[uuid.UUID]
     variables: List[TemplateVariable]
     
     schedule_kind: str

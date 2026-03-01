@@ -26,3 +26,11 @@ class StorageRepository(ABC):
     @abstractmethod
     async def delete_dir(self, path: str) -> None:
         pass
+
+    @abstractmethod
+    async def is_symlink(self, path: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def create_symlink(self, link_path: str, target_path: str) -> None:
+        pass

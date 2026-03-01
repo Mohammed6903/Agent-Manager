@@ -34,3 +34,26 @@ class FileSystemStorage(StorageRepository):
     async def delete_dir(self, path: str) -> None:
         if await self.exists(path):
             await asyncio.to_thread(shutil.rmtree, path)
+
+    async def is_symlink(self, path: str) -> bool:
+        """Check whether *path* is a symbolic link."""
+        return await asyncio.to_thread(Path(path).is_symlink)
+
+    async def create_symlink(self, link_path: str, target_path: str) -> None:
+        """Create a symbolic link at *link_path* pointing to *target_path*.
+
+        Parent directories of *link_path* are created automatically.
+        If a symlink already exists at *link_path* it is left untouched.
+        """
+        lp = Path(link_path)
+        await self.ensure_dir(str(lp.parent))
+
+        def _link():
+            if lp.is_symlink():
+                return  # never overwrite an existing symlink
+            # Remove a stale regular file so the symlink can be created
+            if lp.exists():
+                lp.unlink()
+            lp.symlink_to(target_path)
+
+        await asyncio.to_thread(_link)

@@ -22,12 +22,32 @@ def request(method: str, path: str, params: Dict[str, Any] = None, json: Dict[st
         return response.status_code, None
         
 def run_tests():
+    # 0. Create an integration
+    int_payload = {
+        "name": f"notion_test_{uuid.uuid4().hex[:6]}",
+        "type": "notion",
+        "base_url": "https://api.notion.com/v1",
+        "auth_fields": [],
+        "endpoints": [
+            {"method": "GET", "path": "/users", "description": "List all users"}
+        ],
+        "usage_instructions": "This is a test usage."
+    }
+    status, data = request("POST", "/api/integrations", json=int_payload)
+    if status == 201 or status == 200:
+        int_id = data["id"]
+    else:
+        status, data = request("GET", "/api/integrations")
+        int_id = data[0]["id"]
+        
+    print(f"Using Global Integration ID: {int_id}")
+
     # 1. Create a template
     payload = {
         "name": "Daily Notion Report",
         "description": "Sends a daily report to a notion database",
         "is_public": False,
-        "required_integrations": ["notion"],
+        "required_integrations": [int_id],
         "variables": [
              {"key": "database_id", "label": "Notion DB ID", "required": True},
              {"key": "time_of_day", "label": "Time (e.g. 09:00)", "required": True, "default": "09:00"}
@@ -45,6 +65,7 @@ def run_tests():
                     "integrations": ["notion"],
                     "context_sources": []
                 }
+
             ],
             "global_integrations": ["notion"],
             "global_context_sources": []
@@ -93,19 +114,32 @@ def run_tests():
     status, data = request("POST", f"/api/cron-templates/{template_id}/instantiate", json=inst_payload)
     assert status == 400
     
-    # 9. Instantiate template (successful)
+    # 8.5 Instantiate template (agent missing integrations)
     inst_payload["variable_values"] = {"database_id": "abc123xyz"}
+    status, data = request("POST", f"/api/cron-templates/{template_id}/instantiate", json=inst_payload)
+    assert status == 400
+    assert "Integration assigned" in data["detail"] or "integration assigned to it" in data["detail"]
+
+    # 8.6 Assign integration to agent
+    status, _ = request("POST", f"/api/integrations/{int_id}/assign", json={
+        "agent_id": "test_agent_1",
+        "credentials": {}
+    })
+    assert status == 200
+
+    # 9. Instantiate template (successful)
     status, data = request("POST", f"/api/cron-templates/{template_id}/instantiate", json=inst_payload)
     assert status == 201
     job_id = data["job_id"]
     print(f"Instantiated Cron Job ID: {job_id}")
     
-    # 10. Verify actual cron job was created with substitutions
-    #     pipeline_template is embedded into payload_message as LLM instructions,
     #     not returned as a separate field — verify substitution via payload_message.
     status, data = request("GET", f"/api/crons/{job_id}")
     assert status == 200
-    assert data["payload_message"].startswith("Fetch issues and append to Notion DB: abc123xyz")
+    assert "Fetch issues and append to Notion DB: abc123xyz" in data["payload_message"]
+    assert "### notion_test_" in data["payload_message"]
+    assert "## 1. ASSIGNED INTEGRATIONS (UTMOST PRIORITY)" in data["payload_message"]
+    assert "## 4. Workspace Bridge" in data["payload_message"]
     assert "action=notion.Database.query db=abc123xyz" in data["payload_message"]
     
     # 11. Delete template as non-owner (Forbidden)

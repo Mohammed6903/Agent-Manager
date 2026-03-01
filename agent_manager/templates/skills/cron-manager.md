@@ -189,7 +189,7 @@ curl -s -X POST "http://localhost:8000/api/crons" \
 | `schedule_human` | ❌ | Human readable schedule string (e.g. "Every Monday at 9AM IST") |
 | `session_target` | ❌ | `main` (has integrations) or `isolated` (no tools). Default: `isolated` |
 | `payload_message` | ✅ | Full operational prompt — must include exact API calls, success criteria, error handling |
-| `pipeline_template` | ✅ **MANDATORY** | Structured task definitions with exact API details per task |
+| `pipeline_template` | ✅ **MANDATORY** | Structured task definitions with exact API details per task. **NOTE:** The `integrations` arrays (task/global) must ONLY contain string names (e.g. "notion", "gmail"), not objects. |
 | `delivery_mode` | ❌ | `webhook` (default) or `none` |
 | `enabled` | ❌ | `true` (default) or `false` |
 | `delete_after_run` | ❌ | `true` to auto-delete after first run (for `at` jobs) |

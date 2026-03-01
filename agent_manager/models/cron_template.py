@@ -1,9 +1,17 @@
 """Cron Template SQLAlchemy models."""
 
-from sqlalchemy import Column, String, DateTime, Boolean, JSON, Text, func
+from sqlalchemy import Column, String, DateTime, Boolean, JSON, Text, func, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 import uuid
 
 from ..database import Base
+
+
+class CronTemplateIntegration(Base):
+    __tablename__ = "cron_template_integrations"
+    template_id = Column(String, ForeignKey("cron_templates.id", ondelete="CASCADE"), primary_key=True)
+    integration_id = Column(UUID(as_uuid=True), ForeignKey("global_integrations.id", ondelete="CASCADE"), primary_key=True)
 
 
 class CronTemplate(Base):
@@ -19,9 +27,15 @@ class CronTemplate(Base):
     category = Column(String)
     
     # Requirements
-    required_integrations = Column(JSON, default=list) # e.g. ["gmail", "notion"]
     variables = Column(JSON, default=list)             # e.g. [{"key": "notion_page_id", "label": "Notion Page ID", "required": true, "default": null}]
     
+    # Relationships
+    integrations = relationship("CronTemplateIntegration", cascade="all, delete-orphan")
+
+    @property
+    def required_integrations(self):
+        return [i.integration_id for i in self.integrations]
+
     # Cron Schedule & Config Blueprint
     schedule_kind = Column(String, nullable=False)      # "at", "every", "cron"
     schedule_expr = Column(String, nullable=False)
@@ -38,3 +52,4 @@ class CronTemplate(Base):
     # Timestamps
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+

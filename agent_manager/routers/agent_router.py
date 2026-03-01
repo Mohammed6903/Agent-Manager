@@ -140,6 +140,39 @@ async def delete_agent(
     return await agent_service.delete_agent(agent_id)
 
 
+# ── Admin — shared workspace files ─────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel
+
+class _UpdateSharedFileRequest(_BaseModel):
+    filename: str
+    content: str
+
+
+@router.post("/admin/agents/update-shared-file", tags=["Admin"])
+async def update_shared_file(
+    req: _UpdateSharedFileRequest,
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
+):
+    """Write new content to a shared workspace file (AGENTS.md or SOUL.md).
+
+    Returns the number of agent workspaces that will see the update on their
+    next session (those whose workspace symlink points to the shared file).
+    """
+    return await agent_service.update_shared_file(req.filename, req.content)
+
+
+@router.post("/admin/agents/migrate-symlinks", tags=["Admin"])
+async def migrate_symlinks(
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
+):
+    """Convert regular SOUL.md / AGENTS.md files in every agent workspace into
+    symlinks pointing to the shared copies.  Idempotent — safe to run multiple
+    times.
+    """
+    return await agent_service.migrate_symlinks()
+
+
 # ── Chat ────────────────────────────────────────────────────────────────────────
 
 _CHAT_OPENAPI_EXTRA: dict = {
