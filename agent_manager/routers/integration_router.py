@@ -14,6 +14,7 @@ from ..schemas.integration import (
     AgentAssignedIntegrationDetail,
     IntegrationLogListResponse,
     IntegrationProxyRequest,
+    IntegrationProxyGraphQLRequest,
 )
 from ..services.integration_service import IntegrationService
 
@@ -92,6 +93,7 @@ def get_agent_integrations(
             integration_id=intg.id,
             name=intg.name,
             type=intg.type,
+            api_type=intg.api_type,
             base_url=intg.base_url,
             auth_scheme=intg.auth_scheme,
             auth_fields=[f for f in intg.auth_fields],
@@ -119,7 +121,7 @@ async def proxy_integration_request(
     req: IntegrationProxyRequest,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """(Skill Endpoint) Makes a request to the third-party API securely on behalf of the agent."""
+    """(Skill Endpoint) Makes a REST request to the third-party API securely on behalf of the agent."""
     import httpx
     try:
         resp = await svc.async_proxy_request(integration_id, req)
@@ -134,6 +136,26 @@ async def proxy_integration_request(
             content=resp.content,
             status_code=resp.status_code,
             media_type=resp.headers.get("content-type", "application/json")
+        )
+    except httpx.RequestError as e:
+        return Response(status_code=502, content=f"Gateway error: {str(e)}")
+
+
+@router.post("/{integration_id}/proxy/graphql")
+async def proxy_graphql_request(
+    integration_id: uuid.UUID,
+    req: IntegrationProxyGraphQLRequest,
+    svc: IntegrationService = Depends(get_integration_service),
+):
+    """(Skill Endpoint) Makes a GraphQL request to the third-party API securely on behalf of the agent."""
+    import httpx
+    try:
+        resp = await svc.async_proxy_graphql(integration_id, req)
+
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
         )
     except httpx.RequestError as e:
         return Response(status_code=502, content=f"Gateway error: {str(e)}")

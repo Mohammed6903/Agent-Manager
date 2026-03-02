@@ -1,3 +1,5 @@
+import json
+import logging
 import uuid
 from typing import List
 
@@ -7,9 +9,13 @@ import httpx
 
 from .secret_service import SecretService
 from .integration_client import IntegrationClient
+from .graphql_client import GraphQLClient
+from .transformer import IntegrationTransformer
 from ..repositories.integration_repository import IntegrationRepository
 from ..models.integration import GlobalIntegration, AgentIntegration, IntegrationLog
-from ..schemas.integration import GlobalIntegrationCreate, GlobalIntegrationUpdate, AgentIntegrationAssignRequest, IntegrationProxyRequest
+from ..schemas.integration import GlobalIntegrationCreate, GlobalIntegrationUpdate, AgentIntegrationAssignRequest, IntegrationProxyRequest, IntegrationProxyGraphQLRequest
+
+logger = logging.getLogger("agent_manager.services.integration_service")
 
 class IntegrationService:
     def __init__(self, db: Session):
@@ -141,8 +147,14 @@ class IntegrationService:
         return headers, params
 
     async def async_proxy_request(self, integration_id: uuid.UUID, req: IntegrationProxyRequest) -> httpx.Response:
-        """Called by the agent to make a request to the third-party API securely."""
+        """Called by the agent to make a REST request to the third-party API securely."""
         integration = self.get_global_integration(integration_id)
+
+        if integration.api_type == "graphql":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Integration '{integration.name}' is a GraphQL integration. Use the /proxy/graphql endpoint instead.",
+            )
         
         # 1. Fetch Credentials
         creds = SecretService.get_secret(self.db, req.agent_id, str(integration.id))
@@ -152,11 +164,27 @@ class IntegrationService:
         headers = dict(req.headers or {})
         params  = dict(req.params or {})
 
-        # All auth injection is data-driven \u2014 no integration-specific code ever needed
+        # All auth injection is data-driven — no integration-specific code ever needed
         headers, params = self._inject_auth(integration.auth_scheme, creds, headers, params)
 
         # 3. Create client and dispatch
         url = f"{integration.base_url.rstrip('/')}/{req.path.lstrip('/')}"
+        outgoing_body = req.body if req.body else None
+
+        # Apply request transformers (field mapping, normalization, etc.)
+        if outgoing_body and integration.request_transformers:
+            outgoing_body = IntegrationTransformer.transform(
+                outgoing_body,
+                integration.request_transformers,
+            )
+
+        logger.info(
+            "PROXY REQUEST: %s %s | body keys: %s | full body: %s",
+            req.method, url,
+            list(outgoing_body.keys()) if outgoing_body else "None",
+            json.dumps(outgoing_body, indent=2) if outgoing_body else "None",
+        )
+
         async with IntegrationClient(
             db=self.db,
             agent_id=req.agent_id,
@@ -164,13 +192,86 @@ class IntegrationService:
             base_url=integration.base_url,
             endpoints=integration.endpoints
         ) as client:
-            return await client.request(
+            response = await client.request(
                  method=req.method,
                  url=url,
                  headers=headers,
                  params=params,
-                 json=req.body if req.body else None
+                 json=outgoing_body
             )
+
+            # Apply response transformers if configured
+            if integration.response_transformers:
+                try:
+                    resp_json = response.json()
+                    resp_json = IntegrationTransformer.transform(
+                        resp_json,
+                        integration.response_transformers,
+                    )
+                    # Return a new response with transformed body
+                    return httpx.Response(
+                        status_code=response.status_code,
+                        headers=response.headers,
+                        content=json.dumps(resp_json),
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    pass  # response is not JSON, return as-is
+
+            return response
+
+    async def async_proxy_graphql(self, integration_id: uuid.UUID, req: IntegrationProxyGraphQLRequest) -> httpx.Response:
+        """Called by the agent to make a GraphQL request to the third-party API securely."""
+        integration = self.get_global_integration(integration_id)
+
+        if integration.api_type != "graphql":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Integration '{integration.name}' is a REST integration. Use the /proxy endpoint instead.",
+            )
+
+        # 1. Fetch Credentials
+        creds = SecretService.get_secret(self.db, req.agent_id, str(integration.id))
+        if not creds:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Agent {req.agent_id} is not assigned to integration {integration.name} or missing credentials.",
+            )
+
+        headers = dict(req.headers or {})
+        params: dict = {}
+
+        # Auth injection — same data-driven approach as REST
+        headers, params = self._inject_auth(integration.auth_scheme, creds, headers, params)
+
+        async with GraphQLClient(
+            db=self.db,
+            agent_id=req.agent_id,
+            integration_id=str(integration.id),
+            base_url=integration.base_url,
+            endpoints=integration.endpoints,
+        ) as gql:
+            return await gql.execute(
+                query=req.query,
+                variables=req.variables,
+                operation_name=req.operation_name,
+                headers=headers,
+            )
+
+    def get_graphql_client(self, agent_id: str, integration_id: uuid.UUID) -> GraphQLClient:
+        """Used by other internal services needing a GraphQL wrapper."""
+        integration = self.get_global_integration(integration_id)
+        if integration.api_type != "graphql":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Integration '{integration.name}' is not a GraphQL integration.",
+            )
+        return GraphQLClient(
+            db=self.db,
+            agent_id=agent_id,
+            integration_id=str(integration.id),
+            base_url=integration.base_url,
+            endpoints=integration.endpoints,
+        )
 
     def get_integration_client(self, agent_id: str, integration_id: uuid.UUID) -> IntegrationClient:
         # Used by other internal services needing the wrapper

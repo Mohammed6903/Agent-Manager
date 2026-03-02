@@ -13,6 +13,7 @@ class GlobalIntegration(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, unique=True, index=True, nullable=False)
     type = Column(String, nullable=False)  # e.g., "slack", "notion"
+    api_type = Column(String, nullable=False, default="rest")  # "rest" or "graphql"
     status = Column(
         SAEnum("active", "inactive", "error", name="integration_status"),
         nullable=False,
@@ -22,6 +23,8 @@ class GlobalIntegration(Base):
     auth_scheme = Column(JSONB, nullable=False, server_default='{}')
     auth_fields = Column(JSONB, nullable=False, default=list) # e.g. [{"name": "bot_token", "label": "Bot Token", "required": true}]
     endpoints = Column(JSONB, nullable=False, default=list) # e.g. [{"method": "POST", "path": "/chat.postMessage", "description": "Send a message"}]
+    request_transformers = Column(JSONB, nullable=False, default=list)  # field mapping rules for normalizing outgoing requests
+    response_transformers = Column(JSONB, nullable=False, default=list)  # field mapping rules for normalizing responses
     usage_instructions = Column(Text, nullable=False)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
