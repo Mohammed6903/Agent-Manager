@@ -306,6 +306,20 @@ class ChatService:
                                         if '"delta"' in decoded and '"content"' in decoded:
                                             received_content = True
                                         yield chunk
+                                # Stream ended — check if we got nothing at all
+                                if not received_content:
+                                    logger.warning(
+                                        "Empty stream (no content chunks) for agent %s — likely masked rate limit",
+                                        req.agent_id,
+                                    )
+                                    error_chunk = {
+                                        "error": "rate_limit_exceeded",
+                                        "message": "LLM provider rate limit likely hit (empty stream response).",
+                                        "agent_id": req.agent_id,
+                                        "hint": "Gateway returned an empty stream with no content.",
+                                    }
+                                    yield f"data: {json.dumps(error_chunk)}\n\n".encode()
+                                    return
                         except httpx.ConnectError as exc:
                             raise HTTPException(status_code=502, detail=str(exc))
                     return
@@ -359,6 +373,20 @@ class ChatService:
                             if '"delta"' in decoded and '"content"' in decoded:
                                 received_content = True
                             yield chunk
+                    # Stream ended — check if we got nothing at all
+                    if not received_content:
+                        logger.warning(
+                            "Empty stream (no content chunks) for agent %s — likely masked rate limit",
+                            req.agent_id,
+                        )
+                        error_chunk = {
+                            "error": "rate_limit_exceeded",
+                            "message": "LLM provider rate limit likely hit (empty stream response).",
+                            "agent_id": req.agent_id,
+                            "hint": "Gateway returned an empty stream with no content.",
+                        }
+                        yield f"data: {json.dumps(error_chunk)}\n\n".encode()
+                        return
             except httpx.ConnectError as exc:
                 logger.error("Cannot connect to OpenClaw Gateway: %s", exc)
                 raise HTTPException(
