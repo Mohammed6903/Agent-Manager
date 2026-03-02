@@ -38,51 +38,51 @@ class CronService:
             template_json = json.dumps(req.pipeline_template, indent=2)
             payload_msg = f"""{req.payload_message}
 
----
-## PIPELINE EXECUTION FRAMEWORK
+        ---
+        ## PIPELINE EXECUTION FRAMEWORK
 
-You are executing a structured scheduled pipeline. Follow all rules exactly.
+        You are executing a structured scheduled pipeline. Follow all rules exactly.
 
-### PIPELINE DEFINITION
-```json
-{template_json}
-```
+        ### PIPELINE DEFINITION
+        ```json
+        {template_json}
+        ```
 
-### EXECUTION RULES
-1. Execute tasks in the exact order listed. Do not skip or reorder.
-2. Before starting each task, update its status to "running".
-3. Immediately after each task completes successfully, update its status to "success".
-4. If a task fails, set status to "error" and populate the "error" field with a concise description. Then continue to the next task — do not abort the pipeline.
-5. Never add an "error" field to a task that succeeded.
-6. integrations and context_sources on each task reflect what that specific task actually used. They may differ from the template if a task used fewer integrations than planned.
-7. global_integrations and global_context_sources in your final output must be the union of all task integrations and context_sources actually used.
+        ### EXECUTION RULES
+        1. Execute tasks in the exact order listed. Do not skip or reorder.
+        2. Before starting each task, update its status to "running".
+        3. Immediately after each task completes successfully, update its status to "success".
+        4. If a task fails, set status to "error" and populate the "error" field with a concise description. Then continue to the next task — do not abort the pipeline.
+        5. Never add an "error" field to a task that succeeded.
+        6. integrations and context_sources on each task reflect what that specific task actually used. They may differ from the template if a task used fewer integrations than planned.
+        7. global_integrations and global_context_sources in your final output must be the union of all task integrations and context_sources actually used.
 
-### REQUIRED FINAL OUTPUT
-At the very end of your response, after all task execution, output this exact block and nothing after it:
+        ### REQUIRED FINAL OUTPUT
+        At the very end of your response, after all task execution, output this exact block and nothing after it:
 
-```pipeline_result
-{{
-  "tasks": [
-    {{
-      "name": "<task name>",
-      "status": "success" | "error",
-      "error": "<only if status=error>",
-      "integrations": [],
-      "context_sources": []
-    }}
-  ],
-  "global_integrations": [],
-  "global_context_sources": [],
-  "pipeline_status": "success" | "partial" | "error",
-  "summary": "<A concise human-readable message for the user summarising any problems, warnings, or noteworthy outcomes from this run. If everything succeeded with no issues, set to null.>"
-}}
-```
+        ```pipeline_result
+        {{
+        "tasks": [
+            {{
+            "name": "<task name>",
+            "status": "success" | "error",
+            "error": "<only if status=error>",
+            "integrations": [],
+            "context_sources": []
+            }}
+        ],
+        "global_integrations": [],
+        "global_context_sources": [],
+        "pipeline_status": "success" | "partial" | "error",
+        "summary": "<A concise human-readable message for the user summarising any problems, warnings, or noteworthy outcomes from this run. If everything succeeded with no issues, set to null.>"
+        }}
+        ```
 
-pipeline_status rules:
-- "success" — all tasks succeeded
-- "partial" — at least one task succeeded and at least one failed
-- "error" — every task failed
----"""
+        pipeline_status rules:
+        - "success" — all tasks succeeded
+        - "partial" — at least one task succeeded and at least one failed
+        - "error" — every task failed
+        ---"""
 
         payload = {
             "kind": "agentTurn" if req.session_target == "isolated" else "systemEvent",

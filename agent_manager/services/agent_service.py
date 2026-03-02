@@ -198,8 +198,12 @@ class AgentService:
         else:
             await self._symlink_or_write(workspace, "SOUL.md", self._default_soul())
 
-        # AGENTS.md → symlink to shared copy (fallback: write default)
-        await self._symlink_or_write(workspace, "AGENTS.md", _DEFAULT_AGENTS_MD)
+        agents_md_content = self._default_agents_md()
+
+        if not agents_md_content:
+            raise HTTPException(status_code=500, detail="Could not generate default AGENTS.md")
+
+        await self._symlink_or_write(workspace, "AGENTS.md", agents_md_content)
 
         config_data = await self.gateway.get_config()
         config_hash = config_data.get("hash")

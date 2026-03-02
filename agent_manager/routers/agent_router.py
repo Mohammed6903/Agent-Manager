@@ -610,7 +610,11 @@ async def cron_webhook_receiver(
             pipeline_status = parsed.get("pipeline_status", base_status)
             run_summary = parsed.get("summary")
         except json.JSONDecodeError:
-            pass
+            pipeline_status = "parse_error"  # visible in UI
+            run_summary = f"Failed to parse pipeline_result block. Raw: {summary[:500]}"
+    else:
+        pipeline_status = "parse_error"
+        run_summary = f"No pipeline_result block found. Raw: {summary[:500]}"
             
     from ..repositories.cron_pipeline_repository import CronPipelineRepository
     repo = CronPipelineRepository(db)
