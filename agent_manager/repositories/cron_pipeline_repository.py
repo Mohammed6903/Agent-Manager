@@ -49,6 +49,7 @@ class CronPipelineRepository:
                 "global_integrations": r.global_integrations,
                 "global_context_sources": r.global_context_sources,
                 "raw_summary": r.raw_summary,
+                "summary": r.summary,
                 "model": r.model,
                 "input_tokens": r.input_tokens,
                 "output_tokens": r.output_tokens,
@@ -56,6 +57,30 @@ class CronPipelineRepository:
             }
             for r in runs
         ]
+
+    def get_latest_summaries(self, cron_ids: List[str]) -> Dict[str, Optional[str]]:
+        """Return the summary from the most recent run for each cron_id."""
+        if not cron_ids:
+            return {}
+
+        from sqlalchemy import distinct
+        # Sub-query: latest started_at per cron
+        sub = (
+            self.db.query(
+                CronPipelineRun.cron_id,
+                func.max(CronPipelineRun.started_at).label("max_started")
+            )
+            .filter(CronPipelineRun.cron_id.in_(cron_ids))
+            .group_by(CronPipelineRun.cron_id)
+            .subquery()
+        )
+        rows = (
+            self.db.query(CronPipelineRun.cron_id, CronPipelineRun.summary)
+            .join(sub, (CronPipelineRun.cron_id == sub.c.cron_id)
+                       & (CronPipelineRun.started_at == sub.c.max_started))
+            .all()
+        )
+        return {r.cron_id: r.summary for r in rows}
 
     def aggregate_stats(self, cron_ids: List[str]) -> Dict[str, dict]:
         if not cron_ids:

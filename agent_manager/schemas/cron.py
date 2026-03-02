@@ -41,6 +41,7 @@ class CronResponse(BaseModel):
     description: Optional[str] = None
     schedule_human: Optional[str] = None
     pipeline_template: Optional[dict] = None
+    last_run_summary: Optional[str] = None
     total_runs: Optional[int] = None
     success_rate: Optional[float] = None
     avg_duration_ms: Optional[float] = None

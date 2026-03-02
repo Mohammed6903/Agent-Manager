@@ -28,6 +28,7 @@ class CronPipelineRun(Base):
     global_integrations = Column(JSON, default=list)
     global_context_sources = Column(JSON, default=list)
     raw_summary = Column(Text)                      # full agent response
+    summary = Column(Text, nullable=True)             # agent-generated problem summary for the user
     model = Column(String, nullable=True)
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)

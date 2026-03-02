@@ -141,6 +141,33 @@ class ChatService:
             logger.warning("Rate limit hit for agent %s: %s", agent_id, body[:200])
             raise HTTPException(status_code=429, detail=detail)
 
+        if status_code == 500:
+            # OpenClaw masks upstream 429s as 500 "internal error"
+            is_masked_rate_limit = False
+            try:
+                data = json.loads(body)
+                msg = (data.get("error", {}).get("message") or "").lower()
+                if msg in ("internal error", "internal_error", ""):
+                    is_masked_rate_limit = True
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+            if is_masked_rate_limit:
+                logger.warning(
+                    "Suspected masked rate limit (500 internal error) for agent %s: %s",
+                    agent_id, body[:200],
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "rate_limit_exceeded",
+                        "message": "LLM provider rate limit likely hit (gateway returned 500 internal error).",
+                        "agent_id": agent_id,
+                        "gateway_response": body[:500],
+                        "hint": "OpenClaw is masking the upstream 429 as a 500.",
+                    },
+                )
+
         if status_code != 200:
             raise HTTPException(
                 status_code=status_code,
@@ -259,8 +286,26 @@ class ChatService:
                                 if resp.status_code != 200:
                                     err = await resp.aread()
                                     self._raise_for_status(resp.status_code, err.decode(), req.agent_id)
+                                received_content = False
                                 async for chunk in resp.aiter_bytes():
-                                    yield chunk
+                                    if chunk:
+                                        decoded = chunk.decode(errors="ignore")
+                                        if "data: [DONE]" in decoded and not received_content:
+                                            logger.warning(
+                                                "Empty stream (premature DONE) for agent %s — likely masked rate limit",
+                                                req.agent_id,
+                                            )
+                                            error_chunk = {
+                                                "error": "rate_limit_exceeded",
+                                                "message": "LLM provider rate limit likely hit (empty stream response).",
+                                                "agent_id": req.agent_id,
+                                                "hint": "Gateway returned [DONE] immediately with no content.",
+                                            }
+                                            yield f"data: {json.dumps(error_chunk)}\n\n".encode()
+                                            return
+                                        if '"delta"' in decoded and '"content"' in decoded:
+                                            received_content = True
+                                        yield chunk
                         except httpx.ConnectError as exc:
                             raise HTTPException(status_code=502, detail=str(exc))
                     return
@@ -293,18 +338,27 @@ class ChatService:
                             "Gateway returned %s: %s", resp.status_code, error_body.decode()[:500]
                         )
                         self._raise_for_status(resp.status_code, error_body.decode(), req.agent_id)
-                        # raise HTTPException(
-                        #     status_code=resp.status_code,
-                        #     detail={
-                        #         "error": "gateway_upstream_error",
-                        #         "message": f"OpenClaw Gateway returned HTTP {resp.status_code}",
-                        #         "gateway_url": f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
-                        #         "agent_id": req.agent_id,
-                        #         "gateway_response": error_body.decode()[:500],
-                        #     },
-                        # )
+
+                    received_content = False
                     async for chunk in resp.aiter_bytes():
-                        yield chunk
+                        if chunk:
+                            decoded = chunk.decode(errors="ignore")
+                            if "data: [DONE]" in decoded and not received_content:
+                                logger.warning(
+                                    "Empty stream (premature DONE) for agent %s — likely masked rate limit",
+                                    req.agent_id,
+                                )
+                                error_chunk = {
+                                    "error": "rate_limit_exceeded",
+                                    "message": "LLM provider rate limit likely hit (empty stream response).",
+                                    "agent_id": req.agent_id,
+                                    "hint": "Gateway returned [DONE] immediately with no content.",
+                                }
+                                yield f"data: {json.dumps(error_chunk)}\n\n".encode()
+                                return
+                            if '"delta"' in decoded and '"content"' in decoded:
+                                received_content = True
+                            yield chunk
             except httpx.ConnectError as exc:
                 logger.error("Cannot connect to OpenClaw Gateway: %s", exc)
                 raise HTTPException(

@@ -598,6 +598,7 @@ async def cron_webhook_receiver(
     global_int = []
     global_ctx = []
     pipeline_status = base_status
+    run_summary = None
     
     match = re.search(r"```pipeline_result\n(.*?)\n```", summary, re.DOTALL)
     if match:
@@ -607,6 +608,7 @@ async def cron_webhook_receiver(
             global_int = parsed.get("global_integrations", [])
             global_ctx = parsed.get("global_context_sources", [])
             pipeline_status = parsed.get("pipeline_status", base_status)
+            run_summary = parsed.get("summary")
         except json.JSONDecodeError:
             pass
             
@@ -628,6 +630,7 @@ async def cron_webhook_receiver(
         "global_integrations": global_int,
         "global_context_sources": global_ctx,
         "raw_summary": summary,
+        "summary": run_summary,
         "model": payload.get("model"),
         "input_tokens": payload.get("usage", {}).get("input_tokens"),
         "output_tokens": payload.get("usage", {}).get("output_tokens"),

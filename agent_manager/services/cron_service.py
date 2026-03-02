@@ -73,7 +73,8 @@ At the very end of your response, after all task execution, output this exact bl
   ],
   "global_integrations": [],
   "global_context_sources": [],
-  "pipeline_status": "success" | "partial" | "error"
+  "pipeline_status": "success" | "partial" | "error",
+  "summary": "<A concise human-readable message for the user summarising any problems, warnings, or noteworthy outcomes from this run. If everything succeeded with no issues, set to null.>"
 }}
 ```
 
@@ -159,6 +160,7 @@ pipeline_status rules:
         
         cron_ids = [job.get("id") or job.get("jobId") for job in jobs if (job.get("id") or job.get("jobId"))]
         stats_map = self.pipelines.aggregate_stats(cron_ids)
+        summary_map = self.pipelines.get_latest_summaries(cron_ids)
 
         enriched = []
         for job in jobs:
@@ -179,6 +181,7 @@ pipeline_status rules:
 
             last_run_at, next_run_at, last_run_status = self._extract_state(job)
             stats = stats_map.get(job_id, {})
+            last_summary = summary_map.get(job_id)
 
             enriched.append(CronResponse(
                 job_id=job_id,
@@ -193,6 +196,7 @@ pipeline_status rules:
                 last_run_at=last_run_at,
                 next_run_at=next_run_at,
                 last_run_status=last_run_status,
+                last_run_summary=last_summary,
                 total_runs=stats.get("total_runs"),
                 success_rate=stats.get("success_rate"),
                 avg_duration_ms=stats.get("avg_duration_ms")
@@ -209,6 +213,7 @@ pipeline_status rules:
         owner = self.ownership.get(job_id)
         last_run_at, next_run_at, last_run_status = self._extract_state(job)
         stats = self.pipelines.aggregate_stats([job_id]).get(job_id, {})
+        last_summary = self.pipelines.get_latest_summaries([job_id]).get(job_id)
 
         return CronResponse(
             job_id=job_id,
@@ -223,6 +228,7 @@ pipeline_status rules:
             last_run_at=last_run_at,
             next_run_at=next_run_at,
             last_run_status=last_run_status,
+            last_run_summary=last_summary,
             total_runs=stats.get("total_runs"),
             success_rate=stats.get("success_rate"),
             avg_duration_ms=stats.get("avg_duration_ms")
