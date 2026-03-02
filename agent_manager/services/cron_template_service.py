@@ -112,8 +112,11 @@ class CronTemplateService:
         if template.integrations:
             docs.append(
                 "## INTEGRATIONS — USE PROXY ONLY\n"
-                "You MUST call every external API through the proxy endpoint below. "
-                "NEVER call a base URL directly — the proxy injects authentication automatically.\n"
+                "You MUST call every external API through the integration proxy. "
+                "NEVER call an external base URL directly. NEVER manage auth tokens yourself. "
+                "The proxy injects authentication automatically.\n"
+                "IMPORTANT: When calling the proxy with curl, always use Content-Type: application/json "
+                "and pass valid JSON in the -d flag. Do NOT use shell variables inside JSON strings."
             )
 
             for t_int in template.integrations:
@@ -132,22 +135,31 @@ class CronTemplateService:
                 int_id_str = str(int_record.id)
                 endpoints_arr = int_record.endpoints if isinstance(int_record.endpoints, list) else []
                 endpoints_str = "\n".join(
-                    [f"  - `{ep.get('method')}` `{ep.get('path')}` — {ep.get('description', '')}" for ep in endpoints_arr]
+                    [f"  - {ep.get('method')} {ep.get('path')} — {ep.get('description', '')}" for ep in endpoints_arr]
                 )
 
                 usage_str = int_record.usage_instructions.strip() if int_record.usage_instructions else ""
-                usage_block = f"\nNotes: {usage_str}" if usage_str else ""
+                usage_block = f"\nUsage notes: {usage_str}" if usage_str else ""
 
                 proxy_url = f"{server_url}/api/integrations/{int_id_str}/proxy"
 
+                # Build a concrete curl example for the first endpoint (or a generic one)
+                example_method = "POST"
+                example_path = "/example"
+                if endpoints_arr:
+                    example_method = endpoints_arr[0].get("method", "POST")
+                    example_path = endpoints_arr[0].get("path", "/example")
+
                 doc = (
                     f"### {int_record.name}\n"
-                    f"Integration ID: `{int_id_str}`\n"
-                    f"Proxy URL: `POST {proxy_url}`\n"
-                    f"Request body:\n"
-                    f"```json\n"
-                    f'{{"agent_id": "{req.agent_id}", "method": "<METHOD>", "path": "<ENDPOINT_PATH>", "body": {{}}}}\n'
-                    f"```\n"
+                    f"Integration ID: {int_id_str}\n"
+                    f"Proxy URL: POST {proxy_url}\n\n"
+                    f"curl example (adapt method, path, and body for each call):\n"
+                    f"curl -X POST {proxy_url} "
+                    f"-H 'Content-Type: application/json' "
+                    f"""-d '{{"agent_id": "{req.agent_id}", "method": "{example_method}", "path": "{example_path}", "body": {{}}}}'"""
+                    f"\n\n"
+                    f"Required JSON fields: agent_id (string), method (string), path (string), body (object)\n"
                     f"Available endpoints:\n{endpoints_str}"
                     f"{usage_block}\n"
                 )

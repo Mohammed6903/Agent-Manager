@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     OPENCLAW_GATEWAY_TOKEN: str = ""
     OPENCLAW_STATE_DIR: str = "/root/.openclaw"
     SERVER_HOST: str = "0.0.0.0"
-    SERVER_PORT: int = 8001
-    SERVER_URL: str = "http://localhost:8001"
+    SERVER_PORT: int = 8000
+    SERVER_URL: str = "http://localhost:8000"
     ROOT_PATH: str = "/"  # Set when behind a reverse proxy with a path prefix
     MAX_UPLOAD_SIZE_MB: int = 5  # Target max size after compression (in MB)
     MAX_RAW_UPLOAD_SIZE_MB: int = 20  # Maximum raw upload size before compression (in MB)
