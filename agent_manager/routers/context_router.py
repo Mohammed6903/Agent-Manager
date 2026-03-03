@@ -87,14 +87,14 @@ def unassign_context_from_agent(
     return Response(status_code=204)
 
 
-# -- Agent Skills --
+# -- Agent Contexts --
 
 @router.get("/agent/{agent_id}", response_model=ContextListResponse)
 def get_agent_contexts(
     agent_id: str,
     svc: ContextService = Depends(get_context_service),
 ):
-    """(Skill Endpoint) List contexts assigned to the agent."""
+    """List contexts assigned to the agent."""
     contexts = svc.get_available_contexts_for_agent(agent_id)
     return ContextListResponse(contexts=contexts)
 
@@ -104,7 +104,7 @@ def get_context_content(
     agent_id: str,
     svc: ContextService = Depends(get_context_service),
 ):
-    """(Skill Endpoint) Fetch the content of an assigned context."""
+    """Fetch the content of an assigned context."""
     content = svc.get_context_content_for_agent(agent_id, context_id)
     context = svc.get_global_context_by_id(context_id)
     return ContextContentResponse(id=context.id, name=context.name, content=content)

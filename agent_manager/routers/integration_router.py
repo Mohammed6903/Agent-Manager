@@ -84,7 +84,7 @@ def get_agent_integrations(
     agent_id: str,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """(Skill Endpoint) List integrations assigned to the agent."""
+    """List integrations assigned to the agent."""
     integrations = svc.get_agent_integrations(agent_id)
     # Filter the response to only include info relevant to the agent (auth_fields + instructions)
     filtered = []
@@ -121,7 +121,7 @@ async def proxy_integration_request(
     req: IntegrationProxyRequest,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """(Skill Endpoint) Makes a REST request to the third-party API securely on behalf of the agent."""
+    """Makes a REST request to the third-party API securely on behalf of the agent."""
     import httpx
     try:
         resp = await svc.async_proxy_request(integration_id, req)
@@ -147,7 +147,7 @@ async def proxy_graphql_request(
     req: IntegrationProxyGraphQLRequest,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """(Skill Endpoint) Makes a GraphQL request to the third-party API securely on behalf of the agent."""
+    """Makes a GraphQL request to the third-party API securely on behalf of the agent."""
     import httpx
     try:
         resp = await svc.async_proxy_graphql(integration_id, req)

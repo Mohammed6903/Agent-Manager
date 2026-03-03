@@ -44,7 +44,7 @@ async def create_garage_post(
     if not creds:
         raise HTTPException(
             status_code=404,
-            detail="Garage Feed skill is not connected for this agent.",
+            detail="Garage Feed integration is not connected for this agent.",
         )
 
     token = creds.get("token", "")
@@ -78,7 +78,7 @@ async def create_garage_post(
     if not token or not org_id:
         raise HTTPException(
             status_code=422,
-            detail="Garage Feed credentials are incomplete (missing token or orgId). Please reconnect the skill.",
+            detail="Garage Feed credentials are incomplete (missing token or orgId). Please reconnect the integration.",
         )
 
     # Debug: log what we're sending (mask the token for security)

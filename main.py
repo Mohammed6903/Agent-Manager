@@ -58,7 +58,7 @@ app = FastAPI(
     title="OpenClaw API",
     description=(
         "Unified API for OpenClaw Agent Management AND Gmail Service.\n\n"
-        "- **Agents, Chat, Skills**: `/api/...`\n"
+        "- **Agents, Chat, Tasks**: `/api/...`\n"
         "- **Gmail, Calendar, Secrets**: `/api/gmail/...`"
     ),
     version="1.0.0",
@@ -98,7 +98,7 @@ async def _unhandled_exception(request: Request, exc: Exception):
 
 # ── Routers ─────────────────────────────────────────────────────────────────────
 
-# Agent Manager endpoints: /api/health, /api/agents, /api/chat, /api/skills, etc.
+# Agent Manager endpoints: /api/health, /api/agents, /api/chat, /api/tasks, etc.
 app.include_router(
     agent_router,
     prefix="/api",

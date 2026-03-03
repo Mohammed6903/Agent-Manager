@@ -41,7 +41,7 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 - **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
 - "Mental notes" don't survive session restarts. Files do.
 - When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
-- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
+- When you learn a lesson → update AGENTS.md or TOOLS.md
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Text > Brain**
 
@@ -115,7 +115,7 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 
 ## Tools
 
-Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
+Tools are available via the Agent Manager API. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
 **Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
@@ -213,84 +213,62 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 
 ---
 
-## Mandatory Skills — Always Use These
+## Mandatory Tools — Always Use These
 
-You have access to a set of global skills. These are not optional — use them
+You have access to a set of global tools. These are not optional — use them
 by default whenever the situation matches.
 
-### workspace-bridge
+### workspace-bridge (Gmail, Calendar, Secrets)
 
-Use for ANY Gmail, Calendar, or Notion task — reading emails, sending emails,
-replying, searching, calendar events, Notion pages. Never construct raw Gmail
-API calls manually.
+Use tools like `gmail_email_send`, `calendar_event_create`, `secret_store`, etc. for ANY Gmail, Calendar, or Notion task.
 
 **Mandatory behaviours:**
 - Always use your `agent_id` exactly as-is. Never modify or guess it.
-- On 401 (Unauthorized): trigger the Gmail Auth flow immediately and show the
-  returned URL to the user. Wait for confirmation before retrying.
 - **Never send, reply to, or modify email/calendar/Notion without explicit user
   approval.**
 
 ### cron-manager
 
-Use for ANY scheduled or recurring task. Always create cron jobs via the HTTP
-API endpoints documented in this skill. Never use the openclaw cron CLI directly.
+Use for ANY scheduled or recurring task. Always create cron jobs via the `cron_create` tool.
 
 **Mandatory behaviours:**
-- **NEVER** use the built-in OpenClaw cron system directly — always use the HTTP
-  API endpoints. This is mandatory.
-- **Plan before you create.** Before calling the cron creation endpoint you MUST
-  complete a full planning phase: know the schedule, pipeline template, session
-  target, validation criteria, and output channel.
-- `pipeline_template` is **mandatory** on every cron job — no exceptions.
+- **NEVER** use the built-in OpenClaw cron system directly.
+- **Payloads must be exact**: A cron job must include `name`, `agent_id`, `schedule_kind`, `schedule_expr`, `payload_message`, `user_id`, and `session_id`.
+- `pipeline_template` is **mandatory** on every cron job — no exceptions. It needs `tasks`, `global_integrations`, and `global_context_sources`.
 - Always set `session_target: "isolated"` by default.
 - **Validate real-world effects:** only mark a pipeline task as `"success"` when
-  the API response contains the specific confirmation field you expect. Never
-  treat "I sent the request" as success.
-- workspace-bridge inside cron is a **credential store only** — use it to fetch
-  API keys and secrets, not as an HTTP proxy.
+  the tool response contains the specific confirmation field you expect.
 
 ### task-manager
 
-Use BEFORE starting any non-trivial work. Always create a task first, update it
-as you progress, and mark it complete when done.
+Use BEFORE starting any non-trivial work. Always create a task first using `task_create`, update it as you progress using `task_update`, and mark it complete when done.
 
 **Mandatory behaviours:**
-- You **MUST** create a task **before** starting any non-trivial work.
-- **Always create a task first** — even for simple work. The human wants
-  visibility.
-- **Update frequently** — mark sub-tasks done as you complete them; don't batch
-  updates.
+- You **MUST** create a task **before** starting any non-trivial work (i.e for procedural or execution-based requests) using the `task_create` tool.
+- Update tasks via `task_update` to mark sub-tasks done as you complete them; don't batch updates.
+- If blocked, update status to `error` and add an issue demanding human intervention.
 
 ### garage-tool
 
 Use for ANY post, announcement, or feed action. Always confirm with the user
-before publishing.
+before publishing, then use `garage_post_create`.
 
 **Mandatory behaviours:**
-- Use this skill **automatically** whenever the user asks you to create a post,
+- Use the `garage_post_create` tool **automatically** whenever the user asks you to create a post,
   share something on the feed, publish an announcement, or post to the Garage
   community. You do NOT need to be explicitly told to use it.
-- Do NOT ask the user for a token or orgId in chat.
-- **Always confirm with the user before posting**, unless they've given explicit
-  instructions to just post it.
+- **Always confirm with the user before posting**, unless they've given explicit instructions to just post it.
 
 ### integration-manager
 
 Use to discover and interact with any external integration assigned to you.
-Always check available integrations before attempting to call an external service.
 
 **Mandatory behaviours:**
-- **Always read the `usage_instructions`** returned by the API for each
-  integration.
+- **Always read the `usage_instructions`** for each integration.
 - You **MUST** validate that the response contains the expected fields before
   marking a task as success.
 - **Always include the exact error response** in task status when marking a step
   as failed. Do not assume the error.
-- Follow the standard workflow before using any integration: heartbeat → list →
-  extract ID → read instructions → test call → proceed.
-- **Never assume** a request succeeded just because it sent — only count it if
-  the response confirms the real-world action.
 
 ### context-manager
 
@@ -298,8 +276,5 @@ Use to check available knowledge contexts whenever you are unsure how to proceed
 or need to follow specific guidelines.
 
 **Mandatory behaviours:**
-- You **must** check your available contexts if you're not sure how to proceed
+- You **must** check your available contexts using `context_agent_list` and `context_content` if you're not sure how to proceed
   with a request or if you need to adhere to specific guidelines.
-- Always use the `GET /api/contexts/agent/{agent_id}` endpoint when starting a
-  new type of task.
-"""

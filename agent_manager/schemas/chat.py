@@ -86,33 +86,3 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
 
 
-# ── Skills ──────────────────────────────────────────────────────────────────────
-
-
-class CreateSkillRequest(BaseModel):
-    """Create a new skill. `name` becomes the folder slug (kebab-case)."""
-    name: str
-    content: Optional[str] = None  # If omitted, a default template is used.
-
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, v: str) -> str:
-        slug = v.strip().lower().replace(" ", "-")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9\-]*", slug):
-            raise ValueError("Skill name must be kebab-case (e.g. 'workspace-bridge')")
-        return slug
-
-
-class UpdateSkillRequest(BaseModel):
-    """Update the SKILL.md content for an existing skill."""
-    content: str
-
-
-class SkillResponse(BaseModel):
-    name: str          # kebab-case slug
-    path: str          # absolute path to the SKILL.md file
-    status: str        # "created" | "updated" | "deleted" | "ok"
-
-
-class SkillListResponse(BaseModel):
-    skills: List[str]  # list of skill slugs

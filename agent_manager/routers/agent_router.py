@@ -17,23 +17,18 @@ from ..schemas.chat import (
     CreateAgentRequest,
     HealthResponse,
     UpdateAgentRequest,
-    CreateSkillRequest,
-    UpdateSkillRequest,
-    SkillResponse,
-    SkillListResponse,
 )
 from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
 from ..schemas.task import CreateTaskRequest, UpdateTaskRequest, TaskResponse
 from ..chat_helpers import parse_chat_request
 from ..dependencies import (
     get_agent_service, get_session_service, get_chat_service, get_gateway,
-    get_skill_service, get_cron_service, get_task_service,
+    get_cron_service, get_task_service,
 )
 from ..database import get_db
 from ..services.agent_service import AgentService
 from ..services.session_service import SessionService
 from ..services.chat_service import ChatService
-from ..services.skill_service import SkillService
 from ..services.cron_service import CronService
 from ..services.task_service import TaskService
 from ..clients.gateway_client import GatewayClient
@@ -318,164 +313,6 @@ async def clear_memory(
     """Clear an agent's persistent memory (MEMORY.md)."""
     return await session_service.clear_agent_memory(agent_id)
 
-
-# ── Skills ──────────────────────────────────────────────────────────────────────
-
-@router.post("/skills", tags=["Skills"], status_code=201, response_model=SkillResponse)
-async def create_skill(
-    req: CreateSkillRequest,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Create a new skill. name becomes the folder slug (kebab-case)."""
-    return await skill_service.create_skill(req)
-
-
-@router.get("/skills", tags=["Skills"], response_model=SkillListResponse)
-async def list_skills(
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """List all installed skill slugs."""
-    return await skill_service.list_skills()
-
-
-@router.get("/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
-async def get_skill(
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Get metadata for a specific skill."""
-    return await skill_service.get_skill(skill_name)
-
-
-@router.get("/skills/{skill_name}/content", tags=["Skills"])
-async def get_skill_content(
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Get the raw SKILL.md content for a specific skill."""
-    content = await skill_service.get_skill_content(skill_name)
-    return {"name": skill_name, "content": content}
-
-
-@router.patch("/skills/{skill_name}", tags=["Skills"], response_model=SkillResponse)
-async def update_skill(
-    skill_name: str,
-    req: UpdateSkillRequest,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Update the SKILL.md content for an existing skill."""
-    return await skill_service.update_skill(skill_name, req)
-
-
-@router.post("/skills/{skill_name}/sync", tags=["Skills"], response_model=SkillResponse)
-async def sync_skill(
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Sync an existing skill's SKILL.md content with its default template."""
-    return await skill_service.sync_skill(skill_name)
-
-
-@router.delete("/skills/{skill_name}", tags=["Skills"])
-async def delete_skill(
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Delete a skill and its directory."""
-    return await skill_service.delete_skill(skill_name)
-
-
-# ── Agent-scoped Skills ─────────────────────────────────────────────────────────
-
-@router.get("/agents/{agent_id}/skills/status", tags=["Agent Skills"])
-async def get_skills_status(
-    agent_id: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """List all global skills with an `installed` flag for this agent."""
-    skills = await skill_service.list_skills_with_status(agent_id)
-    return {"agent_id": agent_id, "skills": skills, "count": len(skills)}
-
-
-@router.post("/agents/{agent_id}/skills/install/{skill_name}", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
-async def install_global_skill(
-    agent_id: str,
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Install a globally-available skill into this agent's workspace by name."""
-    return await skill_service.install_global_skill(agent_id, skill_name)
-
-
-@router.post("/agents/{agent_id}/skills", tags=["Agent Skills"], status_code=201, response_model=SkillResponse)
-async def create_agent_skill(
-    agent_id: str,
-    req: CreateSkillRequest,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Create a custom skill directly in this agent's workspace."""
-    return await skill_service.create_agent_skill(agent_id, req)
-
-
-@router.get("/agents/{agent_id}/skills", tags=["Agent Skills"], response_model=SkillListResponse)
-async def list_agent_skills(
-    agent_id: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """List all skills installed for a specific agent."""
-    return await skill_service.list_agent_skills(agent_id)
-
-
-@router.get("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
-async def get_agent_skill(
-    agent_id: str,
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Get metadata for a specific agent skill."""
-    return await skill_service.get_agent_skill(agent_id, skill_name)
-
-
-@router.get("/agents/{agent_id}/skills/{skill_name}/content", tags=["Agent Skills"])
-async def get_agent_skill_content(
-    agent_id: str,
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Get the raw SKILL.md content for a specific agent skill."""
-    content = await skill_service.get_agent_skill_content(agent_id, skill_name)
-    return {"agent_id": agent_id, "name": skill_name, "content": content}
-
-
-@router.patch("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"], response_model=SkillResponse)
-async def update_agent_skill(
-    agent_id: str,
-    skill_name: str,
-    req: UpdateSkillRequest,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Update the SKILL.md content for an agent-specific skill."""
-    return await skill_service.update_agent_skill(agent_id, skill_name, req)
-
-
-@router.post("/agents/{agent_id}/skills/{skill_name}/sync", tags=["Agent Skills"], response_model=SkillResponse)
-async def sync_agent_skill(
-    agent_id: str,
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Sync an existing agent skill's SKILL.md content with its default template."""
-    return await skill_service.sync_agent_skill(agent_id, skill_name)
-
-
-@router.delete("/agents/{agent_id}/skills/{skill_name}", tags=["Agent Skills"])
-async def delete_agent_skill(
-    agent_id: str,
-    skill_name: str,
-    skill_service: Annotated[SkillService, Depends(get_skill_service)],
-):
-    """Remove a skill from a specific agent's workspace."""
-    return await skill_service.delete_agent_skill(agent_id, skill_name)
 
 
 # ── Cron Jobs ──────────────────────────────────────────────────────────────────

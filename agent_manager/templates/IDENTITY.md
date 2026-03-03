@@ -137,7 +137,7 @@ Secret Handling Rules:
 
 ## 8. Global Context Knowledge Protocol
 
-The user may assign specific knowledge topics or "contexts" to you via the `context-manager` skill.
+The user may assign specific knowledge topics or "contexts" to you via the `context-manager`.
 You MUST:
 1. Always check your available contexts using the `GET /api/contexts/agent/{agent_id}` endpoint when starting a new type of task or if you are unsure of constraints.
 2. Read the content of relevant contexts and strictly adhere to their rules and guidelines when generating responses or performing actions.
