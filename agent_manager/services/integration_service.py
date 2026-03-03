@@ -105,6 +105,9 @@ class IntegrationService:
         creds: dict,
         headers: dict,
         params: dict,
+        *,
+        method: str = "GET",
+        url: str = "",
     ) -> tuple[dict, dict]:
         """Inject credentials into headers/params based on auth_scheme. No hardcoding."""
         scheme_type = auth_scheme.get("type")
@@ -135,6 +138,11 @@ class IntegrationService:
                 encoded = base64.b64encode(f"{username}:{password}".encode()).decode()
                 headers["Authorization"] = f"Basic {encoded}"
 
+        elif scheme_type == "oauth1":
+            headers["Authorization"] = self._build_oauth1_header(
+                auth_scheme, creds, method, url, params,
+            )
+
         # Inject any extra headers with {field} interpolation from creds
         for header_name, template in auth_scheme.get("extra_headers", {}).items():
             value = template
@@ -145,6 +153,78 @@ class IntegrationService:
                 headers[header_name] = value
 
         return headers, params
+
+    @staticmethod
+    def _build_oauth1_header(
+        auth_scheme: dict,
+        creds: dict,
+        method: str,
+        url: str,
+        params: dict,
+    ) -> str:
+        """Build an OAuth 1.0a Authorization header (HMAC-SHA1).
+
+        The auth_scheme must declare which credential fields map to the four
+        OAuth 1.0a values via:
+            consumer_key_field, consumer_secret_field,
+            token_field, token_secret_field
+        """
+        import base64
+        import hashlib
+        import hmac
+        import time as _time
+        import urllib.parse
+
+        consumer_key = creds.get(auth_scheme.get("consumer_key_field", "api_key"), "")
+        consumer_secret = creds.get(auth_scheme.get("consumer_secret_field", "api_secret"), "")
+        token = creds.get(auth_scheme.get("token_field", "access_token"), "")
+        token_secret = creds.get(auth_scheme.get("token_secret_field", "access_secret"), "")
+
+        # Generate nonce and timestamp
+        nonce = uuid.uuid4().hex
+        timestamp = str(int(_time.time()))
+
+        oauth_params = {
+            "oauth_consumer_key": consumer_key,
+            "oauth_nonce": nonce,
+            "oauth_signature_method": "HMAC-SHA1",
+            "oauth_timestamp": timestamp,
+            "oauth_token": token,
+            "oauth_version": "1.0",
+        }
+
+        # Combine oauth params + query params for the signature base
+        all_params = {**oauth_params, **(params or {})}
+        sorted_params = "&".join(
+            f"{urllib.parse.quote(k, safe='')}={urllib.parse.quote(str(v), safe='')}"
+            for k, v in sorted(all_params.items())
+        )
+
+        # Strip query string from URL for the base string
+        base_url = url.split("?")[0]
+        signature_base = (
+            f"{method.upper()}"
+            f"&{urllib.parse.quote(base_url, safe='')}"
+            f"&{urllib.parse.quote(sorted_params, safe='')}"
+        )
+
+        signing_key = (
+            f"{urllib.parse.quote(consumer_secret, safe='')}"
+            f"&{urllib.parse.quote(token_secret, safe='')}"
+        )
+
+        signature = base64.b64encode(
+            hmac.new(signing_key.encode(), signature_base.encode(), hashlib.sha1).digest()
+        ).decode()
+
+        oauth_params["oauth_signature"] = signature
+
+        # Build header value
+        header_parts = ", ".join(
+            f'{k}="{urllib.parse.quote(str(v), safe="")}"'
+            for k, v in sorted(oauth_params.items())
+        )
+        return f"OAuth {header_parts}"
 
     async def async_proxy_request(self, integration_id: uuid.UUID, req: IntegrationProxyRequest) -> httpx.Response:
         """Called by the agent to make a REST request to the third-party API securely."""
@@ -164,11 +244,14 @@ class IntegrationService:
         headers = dict(req.headers or {})
         params  = dict(req.params or {})
 
-        # All auth injection is data-driven — no integration-specific code ever needed
-        headers, params = self._inject_auth(integration.auth_scheme, creds, headers, params)
-
         # 3. Create client and dispatch
         url = f"{integration.base_url.rstrip('/')}/{req.path.lstrip('/')}"
+
+        # All auth injection is data-driven — no integration-specific code ever needed
+        headers, params = self._inject_auth(
+            integration.auth_scheme, creds, headers, params,
+            method=req.method, url=url,
+        )
         outgoing_body = req.body if req.body else None
 
         # Apply request transformers (field mapping, normalization, etc.)
@@ -241,7 +324,11 @@ class IntegrationService:
         params: dict = {}
 
         # Auth injection — same data-driven approach as REST
-        headers, params = self._inject_auth(integration.auth_scheme, creds, headers, params)
+        gql_url = integration.base_url
+        headers, params = self._inject_auth(
+            integration.auth_scheme, creds, headers, params,
+            method="POST", url=gql_url,
+        )
 
         async with GraphQLClient(
             db=self.db,
