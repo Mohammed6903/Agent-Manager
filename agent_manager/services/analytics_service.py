@@ -62,7 +62,7 @@ class AnalyticsService:
         now = datetime.now(timezone.utc)
 
         tasks = self._task_analytics(agent_id, now)
-        jobs = self._job_analytics(agent_id)
+        jobs = await self._job_analytics(agent_id)
         tokens = self._token_analytics(agent_id, now)
         work_time = self._work_time_analytics(agent_id, now)
         uptime = await self._uptime_analytics(agent_id, now)
@@ -127,7 +127,7 @@ class AnalyticsService:
 
     # ── Jobs ─────────────────────────────────────────────────────────────────
 
-    def _job_analytics(self, agent_id: str) -> JobAnalytics:
+    async def _job_analytics(self, agent_id: str) -> JobAnalytics:
         # All cron_ids owned by this agent
         cron_ids = (
             self.db.query(CronOwnership.cron_id)
@@ -158,8 +158,16 @@ class AnalyticsService:
             .all()
         )
 
+        # Fetch cron metadata from gateway to get names
+        cron_name_map: Dict[str, str] = {}
+        try:
+            all_crons = await self.gateway.cron_list()
+            cron_name_map = {cron.get("id"): cron.get("name", cron.get("id")) for cron in all_crons}
+        except Exception as e:
+            logger.warning(f"Failed to fetch cron list from gateway: {e}")
+
         jobs = [
-            JobEntry(name=r.cron_id[:20], runs=r.runs) for r in per_cron
+            JobEntry(name=cron_name_map.get(r.cron_id, r.cron_id[:20]), runs=r.runs) for r in per_cron
         ]
 
         return JobAnalytics(total_runs=total_runs_result, jobs=jobs)
