@@ -157,6 +157,18 @@ async def update_shared_file(
     return await agent_service.update_shared_file(req.filename, req.content)
 
 
+@router.post("/admin/agents/sync-templates", tags=["Admin"])
+async def sync_templates(
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
+):
+    """Overwrite shared AGENTS.md / SOUL.md with the latest source templates.
+
+    All symlinked agent workspaces will see the update on their next session.
+    Use this after deploying code with updated template files.
+    """
+    return await agent_service.sync_templates_to_shared()
+
+
 @router.post("/admin/agents/migrate-symlinks", tags=["Admin"])
 async def migrate_symlinks(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],

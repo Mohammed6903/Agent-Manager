@@ -43,9 +43,10 @@ async def lifespan(app: FastAPI):
         from agent_manager.services.agent_service import AgentService
         svc = AgentService(get_storage(), get_gateway())
         await svc.ensure_shared_files()
-        logger.info("Shared workspace files ensured")
+        result = await svc.sync_templates_to_shared()
+        logger.info("Shared workspace files synced from source templates: %s", result)
     except Exception as exc:
-        logger.warning("Failed to bootstrap shared files: %s", exc)
+        logger.warning("Failed to bootstrap/sync shared files: %s", exc)
 
     yield
     # Log shutdown

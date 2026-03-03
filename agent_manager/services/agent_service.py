@@ -111,6 +111,37 @@ class AgentService:
             await self.storage.write_text(agents_path, agents_md_content)
             logger.info("Bootstrapped shared AGENTS.md at %s", agents_path)
 
+    async def sync_templates_to_shared(self) -> dict[str, Any]:
+        """Overwrite shared files with the latest source templates.
+
+        Unlike ``ensure_shared_files`` (which skips existing files), this
+        always writes the current template content so that code changes are
+        propagated to every symlinked agent workspace.
+
+        Returns a summary of what was synced and how many agents are affected.
+        """
+        await self.storage.ensure_dir(str(SHARED_DIR))
+        results: list[dict[str, Any]] = []
+
+        template_loaders: dict[str, Any] = {
+            "SOUL.md": self._default_soul,
+            "AGENTS.md": self._default_agents_md,
+        }
+
+        for filename, loader in template_loaders.items():
+            content = loader()
+            if content is None:
+                results.append({"file": filename, "synced": False, "reason": "template not found"})
+                continue
+
+            target_path = self._shared_path(filename)
+            await self.storage.write_text(target_path, content)
+            affected = await self._count_symlinked_agents(filename)
+            results.append({"file": filename, "synced": True, "affected_agents": affected})
+            logger.info("Synced shared %s from source template — %d agent(s) affected", filename, affected)
+
+        return {"synced_files": results}
+
     async def migrate_symlinks(self) -> dict[str, Any]:
         """One-time (idempotent) migration: convert regular SOUL.md / AGENTS.md
         files in every agent workspace into symlinks pointing to the shared
