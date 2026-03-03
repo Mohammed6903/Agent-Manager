@@ -15,6 +15,7 @@ from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
 from agent_manager.routers.cron_template_router import router as cron_template_router
+from agent_manager.routers.analytics_router import router as analytics_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 from agent_manager.dependencies import get_storage, get_gateway
 
@@ -138,6 +139,13 @@ app.include_router(
 app.include_router(
     cron_template_router,
     prefix="/api/cron-templates",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Analytics endpoints: /api/analytics
+app.include_router(
+    analytics_router,
+    prefix="/api",
     responses={404: {"description": "Resource not found"}},
 )
 

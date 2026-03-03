@@ -14,6 +14,7 @@ from .services.session_service import SessionService
 from .services.chat_service import ChatService
 from .services.cron_service import CronService
 from .services.task_service import TaskService
+from .services.analytics_service import AnalyticsService
 
 # Singletons for storage and gateway client (can be swapped based on config)
 _storage = FileSystemStorage()
@@ -45,6 +46,13 @@ def get_cron_service(
     db: Session = Depends(get_db),
 ) -> CronService:
     return CronService(gateway, db)
+
+def get_analytics_service(
+    db: Session = Depends(get_db),
+    gateway: Annotated[GatewayClient, Depends(get_gateway)] = None,
+    storage: Annotated[StorageRepository, Depends(get_storage)] = None,
+) -> AnalyticsService:
+    return AnalyticsService(db, gateway, storage)
 
 def get_task_service(
     db: Session = Depends(get_db),

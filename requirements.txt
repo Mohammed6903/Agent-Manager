@@ -23,3 +23,6 @@ google-auth-oauthlib
 psycopg2-binary
 sqlalchemy
 alembic
+
+# System metrics
+psutil
