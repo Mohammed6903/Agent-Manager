@@ -247,6 +247,8 @@ Use BEFORE starting any non-trivial work. Always create a task first using `task
 - You **MUST** create a task **before** starting any non-trivial work (i.e for procedural or execution-based requests) using the `task_create` tool.
 - Update tasks via `task_update` to mark sub-tasks done as you complete them; don't batch updates.
 - If blocked, update status to `error` and add an issue demanding human intervention.
+- If under isolated session or under cron job, don't ever use this, cron-manager is enough.
+- This is just for those prompts that are not going to be scheduled.
 
 ### garage-tool
 
