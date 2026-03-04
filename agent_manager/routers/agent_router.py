@@ -513,6 +513,7 @@ async def cron_webhook_receiver(
                     summary=chat_msg,
                 )
             )
+            logger.info("Sent cron summary to chat.")
 
     except Exception as e:
         logger.error(f"Failed to process cron webhook: {e}")
