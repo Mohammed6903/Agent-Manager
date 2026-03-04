@@ -496,7 +496,24 @@ async def cron_webhook_receiver(
         from ..ws_manager import cron_ws_manager
         import asyncio
         asyncio.create_task(cron_ws_manager.broadcast("cron_run_finished", {"job_id": job_id, "run": run_data}))
-        
+
+        # Send summary to Garage chat (strip pipeline_result block)
+        from ..tools.garage_tool import send_cron_summary_to_chat
+        from ..repositories.cron_ownership_repository import CronOwnershipRepository as OwnerRepo
+        owner_repo = OwnerRepo(db)
+        owner = owner_repo.get(job_id)
+        if owner and run_summary:
+            clean_summary = re.sub(r"```pipeline_result\n.*?\n```", "", summary, flags=re.DOTALL).strip()
+            chat_msg = f"---\n🤖 **Scheduled Task Report**\n\n{clean_summary or run_summary}"
+            asyncio.create_task(
+                send_cron_summary_to_chat(
+                    user_id=owner["user_id"],
+                    session_id=owner["session_id"],
+                    agent_id=owner["agent_id"],
+                    summary=chat_msg,
+                )
+            )
+
     except Exception as e:
         logger.error(f"Failed to process cron webhook: {e}")
         

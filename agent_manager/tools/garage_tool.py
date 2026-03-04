@@ -38,6 +38,40 @@ GARAGE_TOOLS = [
 ]
 
 
+async def send_cron_summary_to_chat(
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    summary: str,
+) -> dict:
+    """Send a cron-run summary to the Garage chat via POST /api/chat/message."""
+    url = f"{settings.GARAGE_CHAT_INTERNAL_URL.rstrip('/')}/api/chat/message"
+    body = {
+        "userId": user_id,
+        "sessionId": session_id,
+        "agentId": agent_id,
+        "message": summary,
+        "type": "system",
+        "source": "cron-webhook",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                json=body,
+                headers={"Authorization": f"Bearer {settings.GARAGE_INTERNAL_API_KEY}"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info("Cron summary delivered to chat: messageId=%s", data.get("messageId"))
+                return data
+            logger.error("Chat delivery failed: HTTP %s — %s", resp.status_code, resp.text[:300])
+            return {"ok": False, "error": f"HTTP {resp.status_code}"}
+    except Exception as exc:
+        logger.error("Error sending cron summary to chat: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
 async def execute_create_garage_post(
     agent_id: str, content: str, channel_ids: list[str] | None = None
 ) -> str:

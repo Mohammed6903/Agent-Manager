@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 5  # Target max size after compression (in MB)
     MAX_RAW_UPLOAD_SIZE_MB: int = 20  # Maximum raw upload size before compression (in MB)
     GARAGE_API_URL: str = "http://localhost:4000"
+    GARAGE_CHAT_INTERNAL_URL: str = "http://localhost:3000"
+    GARAGE_INTERNAL_API_KEY: str = ""
 
     # ── Database ────────────────────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql://localhost/openclaw"
