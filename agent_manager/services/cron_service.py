@@ -171,12 +171,16 @@ class CronService:
 
             owner = ownership_map.get(job_id)
 
+            # Only show cron jobs that exist in the database
+            if not owner:
+                continue
+
             # Filter by ownership if requested
             if user_id:
-                if not owner or owner["user_id"] != user_id:
+                if owner["user_id"] != user_id:
                     continue
             if session_id:
-                if not owner or owner["session_id"] != session_id:
+                if owner["session_id"] != session_id:
                     continue
 
             last_run_at, next_run_at, last_run_status = self._extract_state(job)
