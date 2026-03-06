@@ -36,7 +36,7 @@ def callback(request: Request, db: Session = Depends(get_db)):
         integration_name = None
 
     try:
-        auth_service.exchange_code_and_store(db, agent_id, str(request.url))
+        auth_service.exchange_code_and_store(db, agent_id, str(request.url), raw_state=state)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

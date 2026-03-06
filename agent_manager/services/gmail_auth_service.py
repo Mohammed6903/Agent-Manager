@@ -69,11 +69,15 @@ def get_google_flow(scopes: list[str], state=None):
         state=state,
     )
 
-def exchange_code_and_store(db: Session, agent_id: str, authorization_response: str):
+def exchange_code_and_store(db: Session, agent_id: str, authorization_response: str, raw_state: str = None):
     """Exchange the authorization code for tokens.
     
     Uses the scopes from the callback URL (what Google actually granted)
     rather than re-querying the DB, which may not have the new integration yet.
+    
+    Args:
+        raw_state: The original state from the callback URL. Must match
+                   the state used when the auth URL was generated.
     """
     from urllib.parse import urlparse, parse_qs
     
@@ -89,7 +93,10 @@ def exchange_code_and_store(db: Session, agent_id: str, authorization_response: 
         # Fallback to DB-based scopes if not in URL
         scopes = get_required_scopes(agent_id, db)
     
-    flow = get_google_flow(scopes=scopes, state=agent_id)
+    # Use the raw_state (e.g. "agent_id|integration_name") so it matches
+    # what Google returns in the callback — prevents CSRF mismatch.
+    flow_state = raw_state if raw_state else agent_id
+    flow = get_google_flow(scopes=scopes, state=flow_state)
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
     store_credentials(db, agent_id, credentials)
