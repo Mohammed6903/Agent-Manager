@@ -1,83 +1,95 @@
 from typing import List, Dict, Any
-import uuid
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..schemas.integration import (
-    GlobalIntegrationCreate,
-    GlobalIntegrationUpdate,
-    GlobalIntegrationResponse,
+    IntegrationDefResponse,
     AgentIntegrationAssignRequest,
+    AgentIntegrationResponse,
     AgentIntegrationListResponse,
     AgentAssignedIntegrationDetail,
     IntegrationLogListResponse,
-    IntegrationProxyRequest,
-    IntegrationProxyGraphQLRequest,
 )
+from ..dependencies import get_db, get_agent_service
+from ..services.agent_service import AgentService
 from ..services.integration_service import IntegrationService
 
 router = APIRouter(tags=["Integration Management"])
 
-def get_integration_service(db: Session = Depends(get_db)) -> IntegrationService:
-    return IntegrationService(db)
+def get_integration_service(
+    db: Session = Depends(get_db),
+    agent_svc: AgentService = Depends(get_agent_service)
+) -> IntegrationService:
+    return IntegrationService(db, agent_svc)
 
-# -- Global CRUD --
+# -- Global Definitions --
 
-@router.post("", response_model=GlobalIntegrationResponse)
-def create_global_integration(
-    req: GlobalIntegrationCreate,
+@router.get("", response_model=List[IntegrationDefResponse])
+async def list_available_integrations(
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """Create a new global integration."""
-    return svc.create_global_integration(req)
+    """List all available hardcoded integrations."""
+    return await svc.list_available_integrations()
 
-@router.get("", response_model=List[GlobalIntegrationResponse])
-def list_global_integrations(
+@router.get("/{integration_name}", response_model=IntegrationDefResponse)
+async def get_integration_def(
+    integration_name: str,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """List all available global integrations."""
-    return svc.list_global_integrations()
-
-@router.get("/{integration_id}", response_model=GlobalIntegrationResponse)
-def get_global_integration(
-    integration_id: uuid.UUID,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Get a specific global integration."""
-    return svc.get_global_integration(integration_id)
-
-@router.patch("/{integration_id}", response_model=GlobalIntegrationResponse)
-def update_global_integration(
-    integration_id: uuid.UUID,
-    req: GlobalIntegrationUpdate,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Update a specific global integration."""
-    return svc.update_global_integration(integration_id, req)
-    
-@router.delete("/{integration_id}")
-def delete_global_integration(
-    integration_id: uuid.UUID,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Delete a specific global integration."""
-    svc.delete_global_integration(integration_id)
-    return Response(status_code=204)
+    """Get a specific integration definition."""
+    # Note: though get_integration_def is currently sync in service, 
+    # we make this async for consistency if it ever needs to fetch agents.
+    # For now, we can just return it.
+    return svc.get_integration_def(integration_name)
 
 
 # -- Agent Assignment & Usage --
 
-@router.post("/{integration_id}/assign")
+@router.post("/assign")
 def assign_integration_to_agent(
-    integration_id: uuid.UUID,
     req: AgentIntegrationAssignRequest,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """Assign a global integration to an agent."""
-    svc.assign_integration(integration_id, req)
-    return Response(status_code=200, content=f"Integration {integration_id} assigned to agent {req.agent_id}")
+    """Assign an integration to an agent by providing valid credentials."""
+    result = svc.assign_integration(req)
+    
+    if isinstance(result, str):
+        # result is an auth_url string for OAuth flows — return it as JSON
+        return {"status": "oauth_required", "auth_url": result, "integration_name": req.integration_name, "agent_id": req.agent_id}
+
+    return AgentIntegrationResponse.model_validate(result)
+
+@router.get("/oauth/callback/{provider}")
+async def generic_oauth_callback(
+    provider: str,
+    code: str,
+    state: str,
+    db: Session = Depends(get_db),
+):
+    from ..integrations.auth.oauth2_registry import get_oauth2_provider
+    try:
+        flow_provider = get_oauth2_provider(provider)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Unknown OAuth provider: {provider}")
+
+    agent_id = state  # state carries agent_id
+
+    try:
+        result = await flow_provider.handle_callback(
+            db=db,
+            agent_id=agent_id,
+            integration_name=provider,
+            code=code,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"OAuth callback failed: {str(e)}")
+
+    # Return simple success string for now
+    return result
 
 @router.get("/agent/{agent_id}", response_model=AgentIntegrationListResponse)
 def get_agent_integrations(
@@ -86,86 +98,40 @@ def get_agent_integrations(
 ):
     """List integrations assigned to the agent."""
     integrations = svc.get_agent_integrations(agent_id)
-    # Filter the response to only include info relevant to the agent (auth_fields + instructions)
     filtered = []
     for intg in integrations:
         filtered.append(AgentAssignedIntegrationDetail(
-            integration_id=intg.id,
-            name=intg.name,
-            type=intg.type,
-            api_type=intg.api_type,
-            base_url=intg.base_url,
-            auth_scheme=intg.auth_scheme,
-            auth_fields=[f for f in intg.auth_fields],
-            usage_instructions=intg.usage_instructions
+            id=intg["id"],
+            integration_name=intg["name"],
+            name=intg["name"],
+            display_name=intg.get("display_name", intg["name"]),
+            api_type=intg["api_type"],
+            base_url=intg["base_url"],
+            auth_scheme=intg["auth_scheme"],
+            auth_fields=intg["auth_fields"],
+            usage_instructions=intg["usage_instructions"]
         ))
     return AgentIntegrationListResponse(integrations=filtered)
 
-@router.get("/{integration_id}/credentials", response_model=Dict[str, Any])
+@router.get("/{integration_name}/credentials", response_model=Dict[str, Any])
 def get_integration_credentials(
-    integration_id: uuid.UUID,
+    integration_name: str,
     agent_id: str,
     svc: IntegrationService = Depends(get_integration_service),
 ):
     """Get decrypted credentials for an agent's integration assignment."""
-    credentials = svc.get_agent_credentials(agent_id, integration_id)
+    credentials = svc.get_agent_credentials(agent_id, integration_name)
     return {
-        "integration_id": str(integration_id),
+        "integration_name": integration_name,
         "agent_id": agent_id,
         "credentials": credentials,
     }
 
-@router.post("/{integration_id}/proxy")
-async def proxy_integration_request(
-    integration_id: uuid.UUID,
-    req: IntegrationProxyRequest,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Makes a REST request to the third-party API securely on behalf of the agent."""
-    import httpx
-    try:
-        resp = await svc.async_proxy_request(integration_id, req)
-        
-        # Pass the HTTP response back as JSON context
-        try:
-             json_data = resp.json()
-        except:
-             json_data = resp.text
-             
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type", "application/json")
-        )
-    except httpx.RequestError as e:
-        return Response(status_code=502, content=f"Gateway error: {str(e)}")
-
-
-@router.post("/{integration_id}/proxy/graphql")
-async def proxy_graphql_request(
-    integration_id: uuid.UUID,
-    req: IntegrationProxyGraphQLRequest,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Makes a GraphQL request to the third-party API securely on behalf of the agent."""
-    import httpx
-    try:
-        resp = await svc.async_proxy_graphql(integration_id, req)
-
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type", "application/json"),
-        )
-    except httpx.RequestError as e:
-        return Response(status_code=502, content=f"Gateway error: {str(e)}")
-
-
-@router.get("/{integration_id}/logs", response_model=IntegrationLogListResponse)
+@router.get("/{integration_name}/logs", response_model=IntegrationLogListResponse)
 def get_integration_logs(
-    integration_id: uuid.UUID,
+    integration_name: str,
     svc: IntegrationService = Depends(get_integration_service),
 ):
     """Get recent logs for an integration (used by Dashboard)."""
-    logs = svc.get_recent_logs(integration_id)
+    logs = svc.get_recent_logs(integration_name)
     return IntegrationLogListResponse(logs=logs)

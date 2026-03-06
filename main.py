@@ -10,7 +10,10 @@ from fastapi.responses import JSONResponse
 
 from agent_manager.config import settings
 from agent_manager.routers.agent_router import router as agent_router
+from agent_manager.routers.google_auth_router import router as google_auth_router
 from agent_manager.routers.gmail_router import router as gmail_router
+from agent_manager.routers.calendar_router import router as calendar_router
+from agent_manager.routers.secrets_router import router as secrets_router
 from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
@@ -59,9 +62,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenClaw API",
     description=(
-        "Unified API for OpenClaw Agent Management AND Gmail Service.\n\n"
-        "- **Agents, Chat, Tasks**: `/api/...`\n"
-        "- **Gmail, Calendar, Secrets**: `/api/gmail/...`"
+        "Unified API for OpenClaw Agent Management.\n\n"
+        "- **Integrations (Gmail, Calendar, etc)**: `/api/integrations/...`\n"
+        "- **Secrets**: `/api/secrets/...`"
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -107,10 +110,31 @@ app.include_router(
     responses={404: {"description": "Agent or resource not found"}},
 )
 
-# Gmail Service endpoints: /api/gmail/auth, /api/gmail/email, /api/gmail/calendar, etc.
+# Google Auth endpoints
+app.include_router(
+    google_auth_router,
+    prefix="/api/integrations/google/auth",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Gmail endpoints
 app.include_router(
     gmail_router,
-    prefix="/api/gmail",
+    prefix="/api/integrations/gmail",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Calendar endpoints
+app.include_router(
+    calendar_router,
+    prefix="/api/integrations/calendar",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Secrets endpoint
+app.include_router(
+    secrets_router,
+    prefix="/api/secrets",
     responses={404: {"description": "Resource not found"}},
 )
 

@@ -6,13 +6,10 @@ Reference guide for creating, managing, and using **Cron Templates** and **Globa
 
 ## Table of Contents
 
-1. [Global Integrations](#global-integrations)
+1. [Integrations](#integrations)
    - [Concept](#concept)
-   - [Create a Global Integration](#create-a-global-integration)
    - [Assign an Integration to an Agent](#assign-an-integration-to-an-agent)
-   - [REST vs GraphQL Integrations](#rest-vs-graphql-integrations)
    - [Auth Schemes](#auth-schemes)
-   - [Proxy Requests Through an Integration](#proxy-requests-through-an-integration)
    - [Manage Integrations](#manage-integrations)
 2. [Cron Templates](#cron-templates)
    - [Concept](#concept-1)
@@ -26,209 +23,26 @@ Reference guide for creating, managing, and using **Cron Templates** and **Globa
 
 ---
 
-## Global Integrations
+## Integrations
 
 ### Concept
 
-A **Global Integration** is a registry entry that describes a third-party API — its base URL, authentication shape, and available endpoints. It is defined once and can be assigned to many agents.
+An **Integration** is a registry entry that describes a third-party API — its base URL, authentication shape, and available endpoints. They are hardcoded in the backend.
 
-When an agent calls an external API it must do so **through the integration proxy**, which automatically injects the stored credentials. Agents never touch raw API keys.
-
-```
-Third-party API
-      ↑
- Proxy endpoint  ←  agent curl call
-      ↑
- GlobalIntegration  (URL, auth scheme, endpoints)
-      ↑
- AgentIntegration   (agent_id + encrypted credentials)
-```
-
----
-
-### Create a Global Integration
-
-`POST /api/integrations`
-
-#### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | string | ✓ | Unique display name (e.g. `"Slack"`) |
-| `type` | string | ✓ | Integration category (e.g. `"slack"`, `"notion"`, `"github"`) |
-| `api_type` | string | | `"rest"` (default) or `"graphql"` |
-| `status` | string | | `"active"` (default), `"inactive"`, or `"error"` |
-| `base_url` | string | ✓ | Root URL of the API (e.g. `"https://slack.com/api"`) |
-| `auth_scheme` | object | ✓ | Describes how auth headers are built (see [Auth Schemes](#auth-schemes)) |
-| `auth_fields` | array | ✓ | Credential fields the user must supply when assigning (see below) |
-| `endpoints` | array | ✓ | List of documented API endpoints |
-| `request_transformers` | array | | Field-mapping rules applied before forwarding a request |
-| `response_transformers` | array | | Field-mapping rules applied before returning a response |
-| `usage_instructions` | string | ✓ | Human/agent-readable description of how to call this API |
-
-#### `auth_fields` items
-
-```json
-{
-  "name": "bot_token",       // key used in credential payloads
-  "label": "Bot Token",      // human-readable label shown in UI
-  "required": true
-}
-```
-
-#### `endpoints` items
-
-```json
-{
-  "method": "POST",
-  "path": "/chat.postMessage",
-  "description": "Send a message to a channel"
-}
-```
-
-#### Example — Slack (REST, Bearer token)
-
-```json
-POST /api/integrations
-{
-  "name": "Slack",
-  "type": "slack",
-  "api_type": "rest",
-  "base_url": "https://slack.com/api",
-  "auth_scheme": {
-    "type": "bearer",
-    "header": "Authorization",
-    "prefix": "Bearer"
-  },
-  "auth_fields": [
-    { "name": "bot_token", "label": "Bot Token", "required": true }
-  ],
-  "endpoints": [
-    { "method": "POST", "path": "/chat.postMessage",  "description": "Send a message" },
-    { "method": "GET",  "path": "/conversations.list", "description": "List channels" }
-  ],
-  "usage_instructions": "Use POST /chat.postMessage with body {channel, text} to send messages. Use GET /conversations.list to enumerate channels."
-}
-```
-
-#### Example — GitHub (REST, Personal Access Token)
-
-```json
-POST /api/integrations
-{
-  "name": "GitHub",
-  "type": "github",
-  "api_type": "rest",
-  "base_url": "https://api.github.com",
-  "auth_scheme": {
-    "type": "bearer",
-    "header": "Authorization",
-    "prefix": "token"
-  },
-  "auth_fields": [
-    { "name": "personal_access_token", "label": "Personal Access Token", "required": true }
-  ],
-  "endpoints": [
-    { "method": "GET",  "path": "/user/repos",                   "description": "List repos" },
-    { "method": "POST", "path": "/repos/{owner}/{repo}/issues",  "description": "Create issue" }
-  ],
-  "usage_instructions": "Prepend /repos/{owner}/{repo} for repo-scoped calls. Pass owner and repo as path segments."
-}
-```
-
-#### Example — Linear (GraphQL)
-
-```json
-POST /api/integrations
-{
-  "name": "Linear",
-  "type": "linear",
-  "api_type": "graphql",
-  "base_url": "https://api.linear.app/graphql",
-  "auth_scheme": {
-    "type": "api_key",
-    "header": "Authorization"
-  },
-  "auth_fields": [
-    { "name": "api_key", "label": "API Key", "required": true }
-  ],
-  "endpoints": [
-    { "method": "POST", "path": "/graphql", "description": "GraphQL endpoint" }
-  ],
-  "usage_instructions": "Send GraphQL queries via POST /graphql with {query, variables}. Use the /proxy/graphql endpoint."
-}
-```
-
-#### Example — Twitter / X (REST, OAuth 1.0a)
-
-Twitter's API requires OAuth 1.0a signing, which uses four credentials to compute an HMAC-SHA1 signature per request. The proxy handles this automatically with the `oauth1` auth scheme.
-
-```json
-POST /api/integrations
-{
-  "name": "Twitter",
-  "type": "twitter",
-  "api_type": "rest",
-  "base_url": "https://api.x.com/2",
-  "auth_scheme": {
-    "type": "oauth1",
-    "consumer_key_field": "api_key",
-    "consumer_secret_field": "api_secret",
-    "token_field": "access_token",
-    "token_secret_field": "access_secret"
-  },
-  "auth_fields": [
-    { "name": "api_key",       "label": "API Key",              "required": true },
-    { "name": "api_secret",    "label": "API Secret",           "required": true },
-    { "name": "access_token",  "label": "Access Token",         "required": true },
-    { "name": "access_secret", "label": "Access Token Secret",  "required": true }
-  ],
-  "endpoints": [
-    { "method": "POST", "path": "/tweets",          "description": "Create a tweet" },
-    { "method": "GET",  "path": "/users/me",        "description": "Get authenticated user" },
-    { "method": "GET",  "path": "/tweets/search/recent", "description": "Search recent tweets" },
-    { "method": "DELETE", "path": "/tweets/:id",    "description": "Delete a tweet" }
-  ],
-  "usage_instructions": "POST /tweets with body { \"text\": \"Hello!\" } to tweet. GET /users/me for the authenticated user. OAuth signature is computed automatically by the proxy."
-}
-```
-
-Then assign it to an agent with all four credentials:
-
-```json
-POST /api/integrations/{twitter_integration_id}/assign
-{
-  "agent_id": "agent-xyz",
-  "credentials": {
-    "api_key":       "your-consumer-api-key",
-    "api_secret":    "your-consumer-api-secret",
-    "access_token":  "your-access-token",
-    "access_secret": "your-access-token-secret"
-  }
-}
-```
-
-The agent calls the proxy like any other REST integration. The proxy computes the OAuth 1.0a signature automatically from the four stored credentials, the HTTP method, and the URL:
-
-```bash
-curl -X POST https://<host>/api/integrations/<twitter_id>/proxy \
-  -H "Content-Type: application/json" \
-  -d '{ "agent_id": "agent-xyz", "method": "POST", "path": "/tweets", "body": { "text": "Hello from my agent!" } }'
-```
-
-The agent **never** sees the API keys or computes signatures — the proxy does it all.
+When an agent needs to use an external API, it is provided an `IntegrationClient` instance that automatically injects the stored credentials. 
 
 ---
 
 ### Assign an Integration to an Agent
 
-Once a global integration exists you assign it to a specific agent along with that agent's credentials.
+Once an integration is available in the hardcoded registry, you assign it to a specific agent along with that agent's credentials.
 
-`POST /api/integrations/{integration_id}/assign`
+`POST /api/integrations/assign`
 
 ```json
 {
   "agent_id": "my-agent-id",
+  "integration_name": "slack",
   "credentials": {
     "bot_token": "xoxb-..."
   }
@@ -238,16 +52,6 @@ Once a global integration exists you assign it to a specific agent along with th
 - `credentials` keys must match the `name` values declared in `auth_fields`.
 - All `required: true` fields must be present; optional fields can be omitted.
 - Credentials are encrypted and stored; they are never returned in plain text after this call.
-
----
-
-### REST vs GraphQL Integrations
-
-| | REST (`api_type: "rest"`) | GraphQL (`api_type: "graphql"`) |
-|---|---|---|
-| Proxy endpoint | `POST /api/integrations/{id}/proxy` | `POST /api/integrations/{id}/proxy/graphql` |
-| Request shape | `{ agent_id, method, path, body, headers, params }` | `{ agent_id, query, variables }` |
-| Auth injection | Header injected per `auth_scheme` | Header injected per `auth_scheme` |
 
 ---
 
@@ -338,233 +142,18 @@ Additionally, any scheme can include `"extra_headers"` for injecting arbitrary h
 
 ---
 
-### Request & Response Transformers
 
-Transformers are optional field-mapping rules stored on the integration that automatically reshape payloads **before** the request is forwarded to the third-party API (`request_transformers`) and **after** the response is received (`response_transformers`). This decouples the agent from API-specific quirks — the agent always sends/receives a clean, consistent shape.
-
-Both fields accept an **array of rule objects**. Rules are applied in order.
-
----
-
-#### Rule Types
-
-| `type` | What it does | Required fields |
-|---|---|---|
-| `map` | Move (and optionally transform) a value from `source` path to `target` path, deleting the original | `source`, `target` |
-| `add` | Add a field at `target` with a hard-coded `value` if the field doesn't already exist | `target`, `value` |
-| `extract` | Copy a nested value up to `target` (does **not** delete the source) | `source`, `target` |
-| `rename` | Rename a **top-level** key from `old_name` to `new_name` | `old_name`, `new_name` |
-| `delete` | Remove the field at `target` path | `target` |
-
-For `map` you can optionally add `"transform": "stringify"` or `"transform": "parse_json"` to coerce types during the move.
-
-Paths use **dot notation** for nested fields: `"author.id"` → `{ "author": { "id": ... } }`.
-
----
-
-#### Example — LinkedIn UGC Posts (request + response)
-
-LinkedIn's `ugcPosts` API uses a deeply nested body format that differs from how an agent would naturally express a post. Transformers normalise both sides.
-
-**Scenario:** The agent sends a flat body `{ "text": "Hello!", "visibility": "PUBLIC" }` but LinkedIn requires a nested structure. The API response also returns a deeply nested object that should be flattened for the agent.
-
-```json
-POST /api/integrations
-{
-  "name": "LinkedIn",
-  "type": "linkedin",
-  "api_type": "rest",
-  "base_url": "https://api.linkedin.com/v2",
-  "auth_scheme": { "type": "bearer", "header": "Authorization", "prefix": "Bearer" },
-  "auth_fields": [
-    { "name": "access_token", "label": "Access Token", "required": true },
-    { "name": "person_urn",   "label": "Person URN (urn:li:person:...)", "required": true }
-  ],
-  "endpoints": [
-    { "method": "POST", "path": "/ugcPosts", "description": "Create a post" }
-  ],
-  "request_transformers": [
-    {
-      "comment": "Wrap the agent's plain text into LinkedIn's specificContent structure",
-      "type": "map",
-      "source": "text",
-      "target": "specificContent.com.linkedin.ugc.ShareContent.shareCommentary.text"
-    },
-    {
-      "comment": "Move visibility string into LinkedIn's deeply nested visibility object",
-      "type": "map",
-      "source": "visibility",
-      "target": "visibility.com.linkedin.ugc.MemberNetworkVisibility"
-    },
-    {
-      "comment": "LinkedIn requires a mediaCategory field even for text-only posts",
-      "type": "add",
-      "target": "specificContent.com.linkedin.ugc.ShareContent.shareMediaCategory",
-      "value": "NONE"
-    },
-    {
-      "comment": "LinkedIn requires a lifecycleState field",
-      "type": "add",
-      "target": "lifecycleState",
-      "value": "PUBLISHED"
-    },
-    {
-      "comment": "LinkedIn requires a distribution block",
-      "type": "add",
-      "target": "distribution",
-      "value": {
-        "feedDistribution": "MAIN_FEED",
-        "targetEntities": [],
-        "thirdPartyDistributionChannels": []
-      }
-    }
-  ],
-  "response_transformers": [
-    {
-      "comment": "Extract the new post's ID from the deeply nested response to the top level",
-      "type": "extract",
-      "source": "value.id",
-      "target": "post_id"
-    },
-    {
-      "comment": "Remove the raw nested value block agents don't need",
-      "type": "delete",
-      "target": "value"
-    }
-  ],
-  "usage_instructions": "POST to /ugcPosts with { text, visibility }. visibility must be PUBLIC or CONNECTIONS."
-}
-```
-
-**Agent sends:**
-```json
-{ "text": "Hello LinkedIn!", "visibility": "PUBLIC" }
-```
-
-**What LinkedIn actually receives (after request transformers):**
-```json
-{
-  "lifecycleState": "PUBLISHED",
-  "distribution": {
-    "feedDistribution": "MAIN_FEED",
-    "targetEntities": [],
-    "thirdPartyDistributionChannels": []
-  },
-  "specificContent": {
-    "com.linkedin.ugc.ShareContent": {
-      "shareMediaCategory": "NONE",
-      "shareCommentary": { "text": "Hello LinkedIn!" }
-    }
-  },
-  "visibility": {
-    "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
-  }
-}
-```
-
-**LinkedIn's raw response:**
-```json
-{ "value": { "id": "urn:li:ugcPost:7654321" } }
-```
-
-**What the agent receives (after response transformers):**
-```json
-{ "post_id": "urn:li:ugcPost:7654321" }
-```
-
----
-
-#### Example — Renaming fields (Notion)
-
-Some APIs return fields with names that differ from what your agent expects. Use `rename` to standardise them without a nested path.
-
-```json
-"response_transformers": [
-  {
-    "comment": "Notion returns 'object' but agents expect 'type'",
-    "type": "rename",
-    "old_name": "object",
-    "new_name": "type"
-  },
-  {
-    "comment": "Flatten the page title out of Notion's nested title array",
-    "type": "extract",
-    "source": "properties.Name.title.0.plain_text",
-    "target": "title"
-  }
-]
-```
-
----
-
-#### Example — Type coercion with `map`
-
-Use the optional `transform` field to coerce a value's type while moving it:
-
-```json
-"request_transformers": [
-  {
-    "comment": "API expects the numeric ID as a string",
-    "type": "map",
-    "source": "issue_id",
-    "target": "issueId",
-    "transform": "stringify"
-  }
-]
-```
-
-Supported `transform` values:
-
-| Value | Effect |
-|---|---|
-| `"stringify"` | Converts the value to a string via `str()` |
-| `"parse_json"` | Parses a JSON string into a dict/array |
-| `null` / omit | No coercion — value is moved as-is |
-
----
-
-### Proxy Requests Through an Integration
-
-Agents call external APIs through the proxy so credentials are never exposed:
-
-#### REST
-
-```bash
-curl -X POST https://<host>/api/integrations/<integration_id>/proxy \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "my-agent-id",
-    "method": "POST",
-    "path": "/chat.postMessage",
-    "body": { "channel": "C1234567", "text": "Hello from the agent!" }
-  }'
-```
-
-#### GraphQL
-
-```bash
-curl -X POST https://<host>/api/integrations/<integration_id>/proxy/graphql \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "my-agent-id",
-    "query": "query { viewer { login } }",
-    "variables": {}
-  }'
-```
-
----
 
 ### Manage Integrations
 
 | Action | Method | Path |
 |---|---|---|
 | List all | `GET` | `/api/integrations` |
-| Get one | `GET` | `/api/integrations/{id}` |
-| Update | `PATCH` | `/api/integrations/{id}` |
-| Delete | `DELETE` | `/api/integrations/{id}` |
+| Get one | `GET` | `/api/integrations/{name}` |
+| Assign agent integration | `POST` | `/api/integrations/assign` |
 | Get agent's integrations | `GET` | `/api/integrations/agent/{agent_id}` |
-| Get decrypted credentials | `GET` | `/api/integrations/{id}/credentials?agent_id=...` |
-| View request logs | `GET` | `/api/integrations/{id}/logs` |
+| Get decrypted credentials | `GET` | `/api/integrations/{name}/credentials?agent_id=...` |
+| View request logs | `GET` | `/api/integrations/{name}/logs` |
 
 ---
 

@@ -5,7 +5,8 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
-from ..models.gmail import GmailAccount
+from ..models.gmail import GoogleAccount
+from ..models.integration import AgentIntegration
 from ..security import encrypt, decrypt
 from ..config import settings
 
@@ -16,30 +17,49 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/calendar.events",
+# Fallback scopes if an agent has no specific google integrations assigned yet
+DEFAULT_SCOPES = [
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile"
 ]
 
 # Get the directory of the current file
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # credentials file is in the parent (agent_manager/) directory
 CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(CURRENT_DIR), "credentials_for_local.json")
-# TODO: Make this configurable via environment variable
-REDIRECT_URI = f"{settings.SERVER_URL}/api/gmail/auth/callback"
 
-def get_google_flow(state=None):
+REDIRECT_URI = f"{settings.SERVER_URL}/api/integrations/google/auth/callback"
+
+def get_required_scopes(agent_id: str, db: Session) -> list[str]:
+    """Dynamically build requested scopes based on the agent's assigned Google integrations."""
+    agent_integrations = db.query(AgentIntegration).filter(AgentIntegration.agent_id == agent_id).all()
+    scopes = set()
+    
+    from ..integrations import INTEGRATION_REGISTRY
+    from ..integrations.google.base_google import BaseGoogleIntegration
+    
+    for record in agent_integrations:
+        integration_cls = INTEGRATION_REGISTRY.get(record.integration_name)
+        if integration_cls and issubclass(integration_cls, BaseGoogleIntegration):
+            # Union all scopes requested by all Google integrations
+            for scope in getattr(integration_cls, "scopes", []):
+                scopes.add(scope)
+                
+    if not scopes:
+        return DEFAULT_SCOPES
+    return list(scopes)
+
+def get_google_flow(scopes: list[str], state=None):
     return Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
-        scopes=SCOPES,
+        scopes=scopes,
         redirect_uri=REDIRECT_URI,
         state=state,
     )
 
 def exchange_code_and_store(db: Session, agent_id: str, authorization_response: str):
-    flow = get_google_flow(state=agent_id)
+    scopes = get_required_scopes(agent_id, db)
+    flow = get_google_flow(scopes=scopes, state=agent_id)
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
     store_credentials(db, agent_id, credentials)
@@ -48,7 +68,8 @@ def exchange_code_and_store(db: Session, agent_id: str, authorization_response: 
 
 def exchange_code_with_code(db: Session, agent_id: str, code: str):
     """Exchange a raw authorization code for tokens (headless flow)."""
-    flow = get_google_flow(state=agent_id)
+    scopes = get_required_scopes(agent_id, db)
+    flow = get_google_flow(scopes=scopes, state=agent_id)
     flow.fetch_token(code=code)
     credentials = flow.credentials
     store_credentials(db, agent_id, credentials)
@@ -66,9 +87,9 @@ def store_credentials(db: Session, agent_id: str, credentials):
     encrypted_access = encrypt(access_token)
     encrypted_refresh = encrypt(refresh_token) if refresh_token else None
 
-    account = db.query(GmailAccount).filter(GmailAccount.agent_id == agent_id).first()
+    account = db.query(GoogleAccount).filter(GoogleAccount.agent_id == agent_id).first()
     if not account:
-        account = GmailAccount(
+        account = GoogleAccount(
             agent_id=agent_id,
             access_token=encrypted_access,
             refresh_token=encrypted_refresh,
@@ -86,7 +107,7 @@ def store_credentials(db: Session, agent_id: str, credentials):
     return account
 
 def get_valid_credentials(db: Session, agent_id: str):
-    account = db.query(GmailAccount).filter(GmailAccount.agent_id == agent_id).first()
+    account = db.query(GoogleAccount).filter(GoogleAccount.agent_id == agent_id).first()
     if not account:
         logger.warning(f"No account found for agent_id={agent_id}")
         return None
@@ -106,13 +127,14 @@ def get_valid_credentials(db: Session, agent_id: str):
     if is_expired and refresh_token:
         # Token expired — build creds with refresh_token and refresh immediately
         logger.info(f"Access token expired for agent_id={agent_id}, refreshing...")
+        scopes = get_required_scopes(agent_id, db)
         creds = Credentials(
             token=access_token,
             refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=get_client_id_from_file(),
             client_secret=get_client_secret_from_file(),
-            scopes=SCOPES,
+            scopes=scopes,
         )
         try:
             creds.refresh(Request())
@@ -129,13 +151,14 @@ def get_valid_credentials(db: Session, agent_id: str):
 
     # Token still valid — do NOT pass expiry to avoid any timezone comparison
     # inside google-auth or googleapiclient transport layer.
+    scopes = get_required_scopes(agent_id, db)
     creds = Credentials(
         token=access_token,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=get_client_id_from_file(),
         client_secret=get_client_secret_from_file(),
-        scopes=SCOPES,
+        scopes=scopes,
     )
     return creds
 

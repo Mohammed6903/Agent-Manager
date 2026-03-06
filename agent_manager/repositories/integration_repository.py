@@ -4,101 +4,49 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models.integration import GlobalIntegration, AgentIntegration, IntegrationLog
+from ..models.integration import AgentIntegration, IntegrationLog
 
 
 class IntegrationRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    # -- Global Integration --
-
-    def create_global_integration(self, name: str, type: str, status: str, base_url: str, auth_scheme: dict, auth_fields: list, endpoints: list, usage_instructions: str) -> GlobalIntegration:
-        integration = GlobalIntegration(
-            name=name,
-            type=type,
-            status=status,
-            base_url=base_url,
-            auth_scheme=auth_scheme,
-            auth_fields=auth_fields,
-            endpoints=endpoints,
-            usage_instructions=usage_instructions
-        )
-        self.db.add(integration)
-        self.db.commit()
-        self.db.refresh(integration)
-        return integration
-
-    def update_global_integration(self, integration_id: uuid.UUID, **kwargs) -> Optional[GlobalIntegration]:
-        integration = self.get_global_integration(integration_id)
-        if not integration:
-            return None
-            
-        for key, value in kwargs.items():
-            if value is not None:
-                setattr(integration, key, value)
-                
-        self.db.commit()
-        self.db.refresh(integration)
-        return integration
-
-    def get_global_integration(self, integration_id: uuid.UUID) -> Optional[GlobalIntegration]:
-        return self.db.execute(select(GlobalIntegration).where(GlobalIntegration.id == integration_id)).scalar_one_or_none()
-
-    def get_global_integration_by_name(self, name: str) -> Optional[GlobalIntegration]:
-        return self.db.execute(select(GlobalIntegration).where(GlobalIntegration.name == name)).scalar_one_or_none()
-
-    def list_global_integrations(self) -> List[GlobalIntegration]:
-        return list(self.db.execute(select(GlobalIntegration)).scalars().all())
-
-    def delete_global_integration(self, integration_id: uuid.UUID) -> bool:
-        integration = self.get_global_integration(integration_id)
-        if integration:
-            self.db.delete(integration)
-            self.db.commit()
-            return True
-        return False
-
     # -- Agent Integration --
 
-    def assign_to_agent(self, agent_id: str, integration_id: uuid.UUID) -> AgentIntegration:
+    def assign_to_agent(self, agent_id: str, integration_name: str) -> AgentIntegration:
         existing = self.db.execute(
             select(AgentIntegration).where(
                 AgentIntegration.agent_id == agent_id,
-                AgentIntegration.integration_id == integration_id
+                AgentIntegration.integration_name == integration_name
             )
         ).scalar_one_or_none()
         
         if existing:
             return existing
             
-        mapping = AgentIntegration(agent_id=agent_id, integration_id=integration_id)
+        mapping = AgentIntegration(agent_id=agent_id, integration_name=integration_name)
         self.db.add(mapping)
         self.db.commit()
         self.db.refresh(mapping)
         return mapping
 
-    def get_assignment(self, agent_id: str, integration_id: uuid.UUID) -> Optional[AgentIntegration]:
+    def get_assignment(self, agent_id: str, integration_name: str) -> Optional[AgentIntegration]:
         return self.db.execute(
             select(AgentIntegration).where(
                 AgentIntegration.agent_id == agent_id,
-                AgentIntegration.integration_id == integration_id
+                AgentIntegration.integration_name == integration_name
             )
         ).scalar_one_or_none()
 
-    def get_agent_integrations(self, agent_id: str) -> List[GlobalIntegration]:
-        stmt = (
-            select(GlobalIntegration)
-            .join(AgentIntegration, AgentIntegration.integration_id == GlobalIntegration.id)
-            .where(AgentIntegration.agent_id == agent_id)
-        )
+    def get_agent_integrations(self, agent_id: str) -> List[AgentIntegration]:
+        stmt = select(AgentIntegration).where(AgentIntegration.agent_id == agent_id)
         return list(self.db.execute(stmt).scalars().all())
 
-    def unassign_from_agent(self, agent_id: str, integration_id: uuid.UUID) -> bool:
+    def unassign_from_agent(self, agent_id: str, integration_name: str) -> bool:
         mapping = self.db.execute(
             select(AgentIntegration).where(
                 AgentIntegration.agent_id == agent_id,
-                AgentIntegration.integration_id == integration_id
+                AgentIntegration.integration_name == integration_name
             )
         ).scalar_one_or_none()
         
@@ -108,13 +56,31 @@ class IntegrationRepository:
             return True
         return False
 
-    # -- Logs --
+    def get_all_assignments(self) -> List[AgentIntegration]:
+        """Return every agent-integration assignment row."""
+        return list(self.db.execute(select(AgentIntegration)).scalars().all())
 
-    def get_recent_logs(self, integration_id: uuid.UUID, limit: int = 20) -> List[IntegrationLog]:
+    def create_log(self, integration_name: str, agent_id: str, method: str, endpoint: str, status_code: int, duration_ms: int, request_id: Optional[str] = None, error_message: Optional[str] = None) -> IntegrationLog:
+        log = IntegrationLog(
+            integration_name=integration_name,
+            agent_id=agent_id,
+            method=method,
+            endpoint=endpoint,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            request_id=request_id,
+            error_message=error_message
+        )
+        self.db.add(log)
+        self.db.commit()
+        self.db.refresh(log)
+        return log
+
+    def get_recent_logs(self, integration_name: str, limit: int = 20) -> List[IntegrationLog]:
         return list(
             self.db.execute(
                 select(IntegrationLog)
-                .where(IntegrationLog.integration_id == integration_id)
+                .where(IntegrationLog.integration_name == integration_name)
                 .order_by(IntegrationLog.created_at.desc())
                 .limit(limit)
             ).scalars().all()

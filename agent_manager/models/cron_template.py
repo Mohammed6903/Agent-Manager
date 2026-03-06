@@ -11,7 +11,7 @@ from ..database import Base
 class CronTemplateIntegration(Base):
     __tablename__ = "cron_template_integrations"
     template_id = Column(String, ForeignKey("cron_templates.id", ondelete="CASCADE"), primary_key=True)
-    integration_id = Column(UUID(as_uuid=True), ForeignKey("global_integrations.id", ondelete="CASCADE"), primary_key=True)
+    integration_name = Column(String, primary_key=True)
 
 
 class CronTemplate(Base):
@@ -34,7 +34,7 @@ class CronTemplate(Base):
 
     @property
     def required_integrations(self):
-        return [i.integration_id for i in self.integrations]
+        return [i.integration_name for i in self.integrations]
 
     # Cron Schedule & Config Blueprint
     schedule_kind = Column(String, nullable=False)      # "at", "every", "cron"

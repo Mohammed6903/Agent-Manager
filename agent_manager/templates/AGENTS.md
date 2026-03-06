@@ -218,15 +218,6 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 You have access to a set of global tools. These are not optional — use them
 by default whenever the situation matches.
 
-### workspace-bridge (Gmail, Calendar, Secrets)
-
-Use tools like `gmail_email_send`, `calendar_event_create`, `secret_store`, etc. for ANY Gmail, Calendar, or Notion task.
-
-**Mandatory behaviours:**
-- Always use your `agent_id` exactly as-is. Never modify or guess it.
-- **Never send, reply to, or modify email/calendar/Notion without explicit user
-  approval.**
-
 ### cron-manager
 
 Use for ANY scheduled or recurring task. Always create cron jobs via the `cron_create` tool.

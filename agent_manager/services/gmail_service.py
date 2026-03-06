@@ -8,6 +8,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional, List, Dict, Any
 
+from ..integrations.sdk_logger import log_integration_call
+
 
 def get_service(db: Session, agent_id: str):
     creds = get_valid_credentials(db, agent_id)
@@ -108,6 +110,7 @@ def _parse_message_summary(message: dict):
 
 # ── Core functions ───────────────────────────────────────────────────────────
 
+@log_integration_call("gmail", "GET", "/users/me/messages")
 def list_messages(
     db: Session,
     agent_id: str,
@@ -149,6 +152,7 @@ def list_messages(
     return results
 
 
+@log_integration_call("gmail", "GET", "/users/me/messages?q=search")
 def search_messages(
     db: Session,
     agent_id: str,
@@ -159,6 +163,7 @@ def search_messages(
     return list_messages(db, agent_id, max_results=max_results, query=query)
 
 
+@log_integration_call("gmail", "GET", "/users/me/messages/{id}")
 def get_message(db: Session, agent_id: str, message_id: str):
     """Get full message with complete body, headers, labels, and attachments."""
     service = get_service(db, agent_id)
@@ -174,6 +179,7 @@ def get_message(db: Session, agent_id: str, message_id: str):
     return _parse_message(msg)
 
 
+@log_integration_call("gmail", "GET", "/users/me/messages (batch)")
 def batch_get_messages(db: Session, agent_id: str, message_ids: List[str]):
     """Get multiple messages by ID in one logical call."""
     service = get_service(db, agent_id)
@@ -195,6 +201,7 @@ def batch_get_messages(db: Session, agent_id: str, message_ids: List[str]):
     return results
 
 
+@log_integration_call("gmail", "GET", "/users/me/threads/{id}")
 def get_thread(db: Session, agent_id: str, thread_id: str):
     """Get all messages in a thread, each with full metadata."""
     service = get_service(db, agent_id)
@@ -216,6 +223,7 @@ def get_thread(db: Session, agent_id: str, thread_id: str):
     }
 
 
+@log_integration_call("gmail", "POST", "/users/me/messages/send")
 def send_message(
     db: Session,
     agent_id: str,
@@ -250,6 +258,7 @@ def send_message(
     return result
 
 
+@log_integration_call("gmail", "POST", "/users/me/messages/send (reply)")
 def reply_to_message(
     db: Session,
     agent_id: str,
@@ -306,6 +315,7 @@ def reply_to_message(
     return result
 
 
+@log_integration_call("gmail", "POST", "/users/me/messages/modify")
 def modify_labels(
     db: Session,
     agent_id: str,
@@ -345,6 +355,7 @@ def modify_labels(
     return {"modified": results}
 
 
+@log_integration_call("gmail", "GET", "/users/me/messages/{id}/attachments/{id}")
 def get_attachment(db: Session, agent_id: str, message_id: str, attachment_id: str):
     """Download an attachment by ID and return its base64 data."""
     service = get_service(db, agent_id)

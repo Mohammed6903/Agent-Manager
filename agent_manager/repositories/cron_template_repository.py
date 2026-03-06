@@ -28,8 +28,8 @@ class CronTemplateRepository:
         )
         
         from ..models.cron_template import CronTemplateIntegration
-        for integration_id in data.required_integrations:
-            template.integrations.append(CronTemplateIntegration(integration_id=integration_id))
+        for integration_name in data.required_integrations:
+            template.integrations.append(CronTemplateIntegration(integration_name=integration_name))
 
         self.db.add(template)
         self.db.commit()
@@ -69,8 +69,8 @@ class CronTemplateRepository:
             if integrations_ids is not None:
                 template.integrations.clear()
                 from ..models.cron_template import CronTemplateIntegration
-                for int_id in integrations_ids:
-                    template.integrations.append(CronTemplateIntegration(integration_id=int_id))
+                for int_name in integrations_ids:
+                    template.integrations.append(CronTemplateIntegration(integration_name=int_name))
 
         for key, value in update_data.items():
             setattr(template, key, value)

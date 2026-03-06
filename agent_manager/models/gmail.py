@@ -6,8 +6,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from ..database import Base
 
 
-class GmailAccount(Base):
-    __tablename__ = "gmail_accounts"
+class GoogleAccount(Base):
+    __tablename__ = "google_accounts"
 
     agent_id = Column(String, primary_key=True, index=True)
     access_token = Column(String, nullable=False)

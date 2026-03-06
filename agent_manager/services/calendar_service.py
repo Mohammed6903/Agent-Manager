@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
 
+from ..integrations.sdk_logger import log_integration_call
+
 
 def get_service(db: Session, agent_id: str):
     creds = get_valid_credentials(db, agent_id)
@@ -14,6 +16,7 @@ def get_service(db: Session, agent_id: str):
     return build("calendar", "v3", credentials=creds)
 
 
+@log_integration_call("google_calendar", "GET", "/calendars/primary/events (list)")
 def list_events(db: Session, agent_id: str, max_results: int = 10, time_min: Optional[str] = None):
     """List upcoming calendar events."""
     service = get_service(db, agent_id)
@@ -45,6 +48,7 @@ def list_events(db: Session, agent_id: str, max_results: int = 10, time_min: Opt
     ]
 
 
+@log_integration_call("google_calendar", "GET", "/calendars/primary/events/{eventId}")
 def get_event(db: Session, agent_id: str, event_id: str):
     """Get a specific calendar event."""
     service = get_service(db, agent_id)
@@ -64,6 +68,7 @@ def get_event(db: Session, agent_id: str, event_id: str):
     }
 
 
+@log_integration_call("google_calendar", "POST", "/calendars/primary/events")
 def create_event(
     db: Session,
     agent_id: str,
@@ -100,6 +105,7 @@ def create_event(
     }
 
 
+@log_integration_call("google_calendar", "PATCH", "/calendars/primary/events/{eventId}")
 def update_event(
     db: Session,
     agent_id: str,
@@ -140,6 +146,7 @@ def update_event(
     }
 
 
+@log_integration_call("google_calendar", "DELETE", "/calendars/primary/events/{eventId}")
 def delete_event(db: Session, agent_id: str, event_id: str):
     """Delete a calendar event."""
     service = get_service(db, agent_id)

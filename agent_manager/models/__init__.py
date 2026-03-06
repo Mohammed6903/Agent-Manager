@@ -4,8 +4,8 @@ from .agent_task import AgentTask
 from .context import GlobalContext, AgentContext
 from .cron import CronOwnership, CronPipelineRun
 from .cron_template import CronTemplate
-from .gmail import GmailAccount, AgentSecret
-from .integration import GlobalIntegration, AgentIntegration, IntegrationLog
+from .gmail import GoogleAccount, AgentSecret
+from .integration import AgentIntegration, IntegrationLog
 
 __all__ = [
     "AgentTask",
@@ -15,7 +15,7 @@ __all__ = [
     "CronPipelineRun",
     "CronTemplate",
     "AgentSecret",
-    "GlobalIntegration",
     "AgentIntegration",
     "IntegrationLog",
+    "GoogleAccount",
 ]
