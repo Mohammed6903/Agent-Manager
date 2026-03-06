@@ -70,8 +70,7 @@ class IntegrationService:
         # Check auth flow
         from ..integrations.base import AuthFlowType
         if integration_cls.auth_flow != AuthFlowType.STATIC:
-            # Register assignment intent before redirecting
-            self.repo.assign_to_agent(req.agent_id, req.integration_name)
+            # Do NOT persist the assignment yet — wait for the OAuth callback to succeed.
 
             if integration_cls.oauth2_provider is None:
                 raise HTTPException(
@@ -100,6 +99,13 @@ class IntegrationService:
 
         # Create mapping in DB
         return self.repo.assign_to_agent(req.agent_id, req.integration_name)
+
+    def unassign_integration(self, agent_id: str, integration_name: str) -> bool:
+        """Remove an integration assignment from an agent."""
+        removed = self.repo.unassign_from_agent(agent_id, integration_name)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"Integration '{integration_name}' is not assigned to agent '{agent_id}'.")
+        return True
 
     def get_agent_integrations(self, agent_id: str) -> List[dict]:
         """List integrations assigned to the agent, returned as dictionaries."""

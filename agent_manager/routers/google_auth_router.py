@@ -32,6 +32,16 @@ def callback(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # OAuth succeeded — now persist all Google integration assignments for this agent
+    from ..repositories.integration_repository import IntegrationRepository
+    from ..integrations import INTEGRATION_REGISTRY
+    from ..integrations.google.base_google import BaseGoogleIntegration
+    repo = IntegrationRepository(db)
+    for name, cls in INTEGRATION_REGISTRY.items():
+        if issubclass(cls, BaseGoogleIntegration):
+            # Check if this agent has ever requested this google integration
+            repo.assign_to_agent(state, name)
+
     html_content = """
     <!DOCTYPE html>
     <html>

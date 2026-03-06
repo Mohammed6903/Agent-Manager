@@ -88,7 +88,11 @@ async def generic_oauth_callback(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"OAuth callback failed: {str(e)}")
 
-    # Return simple success string for now
+    # OAuth succeeded — now persist the assignment
+    from ..repositories.integration_repository import IntegrationRepository
+    repo = IntegrationRepository(db)
+    repo.assign_to_agent(agent_id, provider)
+
     return result
 
 @router.get("/agent/{agent_id}", response_model=AgentIntegrationListResponse)
@@ -135,3 +139,13 @@ def get_integration_logs(
     """Get recent logs for an integration (used by Dashboard)."""
     logs = svc.get_recent_logs(integration_name)
     return IntegrationLogListResponse(logs=logs)
+
+@router.delete("/unassign")
+def unassign_integration_from_agent(
+    agent_id: str,
+    integration_name: str,
+    svc: IntegrationService = Depends(get_integration_service),
+):
+    """Remove an integration assignment from an agent."""
+    svc.unassign_integration(agent_id, integration_name)
+    return {"status": "unassigned", "agent_id": agent_id, "integration_name": integration_name}
