@@ -19,7 +19,10 @@ class GoogleOAuth2Flow(OAuth2FlowProvider):
             else:
                 scopes = ["https://www.googleapis.com/auth/userinfo.email"]
 
-        flow = get_google_flow(scopes=scopes, state=agent_id)
+        # Encode both agent_id and integration_name in the state so the
+        # callback knows exactly which integration to assign.
+        composite_state = f"{agent_id}|{integration_name}"
+        flow = get_google_flow(scopes=scopes, state=composite_state)
         auth_url, _ = flow.authorization_url(
             access_type="offline", 
             include_granted_scopes="true", 

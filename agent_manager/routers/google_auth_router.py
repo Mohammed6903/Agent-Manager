@@ -27,20 +27,31 @@ def callback(request: Request, db: Session = Depends(get_db)):
     if not state:
         raise HTTPException(status_code=400, detail="State not found")
 
+    # State is encoded as "agent_id|integration_name" by GoogleOAuth2Flow
+    if "|" in state:
+        agent_id, integration_name = state.split("|", 1)
+    else:
+        # Fallback for legacy flows that only have agent_id
+        agent_id = state
+        integration_name = None
+
     try:
-        auth_service.exchange_code_and_store(db, state, str(request.url))
+        auth_service.exchange_code_and_store(db, agent_id, str(request.url))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # OAuth succeeded — now persist all Google integration assignments for this agent
+    # OAuth succeeded — assign only the specific requested integration
     from ..repositories.integration_repository import IntegrationRepository
-    from ..integrations import INTEGRATION_REGISTRY
-    from ..integrations.google.base_google import BaseGoogleIntegration
     repo = IntegrationRepository(db)
-    for name, cls in INTEGRATION_REGISTRY.items():
-        if issubclass(cls, BaseGoogleIntegration):
-            # Check if this agent has ever requested this google integration
-            repo.assign_to_agent(state, name)
+    if integration_name:
+        repo.assign_to_agent(agent_id, integration_name)
+    else:
+        # Legacy fallback: assign all Google integrations
+        from ..integrations import INTEGRATION_REGISTRY
+        from ..integrations.google.base_google import BaseGoogleIntegration
+        for name, cls in INTEGRATION_REGISTRY.items():
+            if issubclass(cls, BaseGoogleIntegration):
+                repo.assign_to_agent(agent_id, name)
 
     html_content = """
     <!DOCTYPE html>
@@ -110,7 +121,7 @@ def callback(request: Request, db: Session = Depends(get_db)):
             <div class="checkmark">✓</div>
             <h1>You are Authenticated!</h1>
             <p>Your Google account has been successfully connected.</p>
-            <div class="agent-id">Agent ID: """ + state + """</div>
+            <div class="agent-id">Agent ID: """ + agent_id + """</div>
             <p class="instruction">You can now close this window and access your account.</p>
         </div>
     </body>
