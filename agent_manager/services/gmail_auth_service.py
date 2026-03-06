@@ -30,8 +30,13 @@ CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(CURRENT_DIR), "credentials_fo
 
 REDIRECT_URI = f"{settings.SERVER_URL}/api/integrations/google/auth/callback"
 
-def get_required_scopes(agent_id: str, db: Session) -> list[str]:
-    """Dynamically build requested scopes based on the agent's assigned Google integrations."""
+def get_required_scopes(agent_id: str, db: Session, include_integration: str = None) -> list[str]:
+    """Dynamically build requested scopes based on the agent's assigned Google integrations.
+    
+    Args:
+        include_integration: If provided, also include the scopes of this integration
+                             even if it's not yet assigned to the agent in the DB.
+    """
     agent_integrations = db.query(AgentIntegration).filter(AgentIntegration.agent_id == agent_id).all()
     scopes = set()
     
@@ -43,6 +48,13 @@ def get_required_scopes(agent_id: str, db: Session) -> list[str]:
         if integration_cls and issubclass(integration_cls, BaseGoogleIntegration):
             # Union all scopes requested by all Google integrations
             for scope in getattr(integration_cls, "scopes", []):
+                scopes.add(scope)
+
+    # Also include the scopes of the integration being assigned right now
+    if include_integration:
+        target_cls = INTEGRATION_REGISTRY.get(include_integration)
+        if target_cls and issubclass(target_cls, BaseGoogleIntegration):
+            for scope in getattr(target_cls, "scopes", []):
                 scopes.add(scope)
                 
     if not scopes:

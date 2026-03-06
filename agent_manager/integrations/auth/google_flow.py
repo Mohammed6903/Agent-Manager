@@ -7,12 +7,18 @@ class GoogleOAuth2Flow(OAuth2FlowProvider):
     
     def get_auth_url(self, agent_id: str, integration_name: str, db: Session = None) -> str:
         if db:
-            scopes = get_required_scopes(agent_id, db)
+            # include_integration ensures the scopes of the integration being assigned
+            # are included even though it's not yet in the DB.
+            scopes = get_required_scopes(agent_id, db, include_integration=integration_name)
         else:
-            # Fallback (though db should always be provided by the svc)
             from ..google.base_google import BaseGoogleIntegration
-            scopes = getattr(BaseGoogleIntegration, "scopes", ["https://www.googleapis.com/auth/userinfo.email"])
-            
+            from .. import INTEGRATION_REGISTRY
+            target_cls = INTEGRATION_REGISTRY.get(integration_name)
+            if target_cls and issubclass(target_cls, BaseGoogleIntegration):
+                scopes = getattr(target_cls, "scopes", ["https://www.googleapis.com/auth/userinfo.email"])
+            else:
+                scopes = ["https://www.googleapis.com/auth/userinfo.email"]
+
         flow = get_google_flow(scopes=scopes, state=agent_id)
         auth_url, _ = flow.authorization_url(
             access_type="offline", 
