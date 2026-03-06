@@ -70,7 +70,25 @@ def get_google_flow(scopes: list[str], state=None):
     )
 
 def exchange_code_and_store(db: Session, agent_id: str, authorization_response: str):
-    scopes = get_required_scopes(agent_id, db)
+    """Exchange the authorization code for tokens.
+    
+    Uses the scopes from the callback URL (what Google actually granted)
+    rather than re-querying the DB, which may not have the new integration yet.
+    """
+    from urllib.parse import urlparse, parse_qs
+    
+    # Extract the actual granted scopes from Google's callback URL
+    parsed = urlparse(authorization_response)
+    qs = parse_qs(parsed.query)
+    callback_scopes = qs.get("scope", [])
+    
+    if callback_scopes:
+        # Google returns scopes as a space-separated string in a single list element
+        scopes = callback_scopes[0].split()
+    else:
+        # Fallback to DB-based scopes if not in URL
+        scopes = get_required_scopes(agent_id, db)
+    
     flow = get_google_flow(scopes=scopes, state=agent_id)
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
