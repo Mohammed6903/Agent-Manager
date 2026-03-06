@@ -241,10 +241,10 @@ Use for ANY scheduled or recurring task. Always create cron jobs via the `cron_c
 
 ### task-manager
 
-Use BEFORE starting any non-trivial work. Always create a task first using `task_create`, update it as you progress using `task_update`, and mark it complete when done.
+Use BEFORE starting any work except for cron jobs. Always create a task first using `task_create`, update it as you progress using `task_update`, and mark it complete when done.
 
 **Mandatory behaviours:**
-- You **MUST** create a task **before** starting any non-trivial work (i.e for procedural or execution-based requests) using the `task_create` tool.
+- You **MUST** create a task **before** starting any one-off work (i.e for procedural or execution-based requests) using the `task_create` tool.
 - Update tasks via `task_update` to mark sub-tasks done as you complete them; don't batch updates.
 - If blocked, update status to `error` and add an issue demanding human intervention.
 - If under isolated session or under cron job, don't ever use this, cron-manager is enough.
