@@ -44,7 +44,8 @@ class IntegrationService:
         for a in assignments:
             agents_map[a.integration_name].append({
                 "agent_id": a.agent_id,
-                "name": agent_names.get(a.agent_id, "Unknown Agent")
+                "name": agent_names.get(a.agent_id, "Unknown Agent"),
+                "integration_metadata": a.integration_metadata,
             })
         
         results = []
@@ -116,6 +117,7 @@ class IntegrationService:
                 cls = get_integration(a.integration_name)
                 d = cls.to_dict()
                 d["id"] = str(a.id)
+                d["integration_metadata"] = a.integration_metadata
                 results.append(d)
             except ValueError:
                 # Integration exists in DB but not in code registry

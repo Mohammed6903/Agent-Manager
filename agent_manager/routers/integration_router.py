@@ -113,7 +113,8 @@ def get_agent_integrations(
             base_url=intg["base_url"],
             auth_scheme=intg["auth_scheme"],
             auth_fields=intg["auth_fields"],
-            usage_instructions=intg["usage_instructions"]
+            usage_instructions=intg["usage_instructions"],
+            integration_metadata=intg.get("integration_metadata"),
         ))
     return AgentIntegrationListResponse(integrations=filtered)
 

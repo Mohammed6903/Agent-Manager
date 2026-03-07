@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import uuid
 
 from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from ..database import Base
 
@@ -13,7 +13,8 @@ class AgentIntegration(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id = Column(String, index=True, nullable=False)
     integration_name = Column(String, index=True, nullable=False)
-    
+    integration_metadata = Column(JSONB, nullable=True, default=None)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 

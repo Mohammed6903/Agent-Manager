@@ -208,3 +208,27 @@ def get_client_secret_from_file():
     with open(CLIENT_SECRETS_FILE, 'r') as f:
         data = json.load(f)
         return data['web']['client_secret']
+
+def fetch_google_user_info(credentials) -> dict:
+    """Fetch basic profile info from Google's userinfo endpoint using the provided credentials.
+    
+    Returns a dict with 'email', 'name', and optionally 'picture'.
+    Returns an empty dict on failure so callers can treat it as optional metadata.
+    """
+    import requests
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {k: v for k, v in {
+                "email": data.get("email"),
+                "name": data.get("name"),
+                "picture": data.get("picture"),
+            }.items() if v is not None}
+    except Exception as e:
+        logger.warning(f"Failed to fetch Google user info: {e}")
+    return {}

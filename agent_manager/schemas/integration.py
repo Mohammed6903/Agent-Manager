@@ -21,6 +21,7 @@ class AuthFieldSchema(BaseModel):
 class ConnectedAgentInfo(BaseModel):
     agent_id: str
     name: str
+    integration_metadata: Optional[Dict[str, Any]] = None
 
 class IntegrationDefResponse(BaseModel):
     name: str
@@ -49,6 +50,7 @@ class AgentIntegrationResponse(BaseModel):
     agent_id: str
     integration_name: str
     created_at: datetime
+    integration_metadata: Optional[Dict[str, Any]] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,6 +65,7 @@ class AgentAssignedIntegrationDetail(BaseModel):
     auth_scheme: Dict[str, Any]
     auth_fields: List[AuthFieldSchema]
     usage_instructions: str
+    integration_metadata: Optional[Dict[str, Any]] = None
 
 
 class AgentIntegrationListResponse(BaseModel):

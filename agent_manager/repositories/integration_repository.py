@@ -13,7 +13,7 @@ class IntegrationRepository:
 
     # -- Agent Integration --
 
-    def assign_to_agent(self, agent_id: str, integration_name: str) -> AgentIntegration:
+    def assign_to_agent(self, agent_id: str, integration_name: str, metadata: dict = None) -> AgentIntegration:
         existing = self.db.execute(
             select(AgentIntegration).where(
                 AgentIntegration.agent_id == agent_id,
@@ -22,13 +22,31 @@ class IntegrationRepository:
         ).scalar_one_or_none()
         
         if existing:
+            if metadata is not None:
+                existing.integration_metadata = metadata
+                self.db.commit()
+                self.db.refresh(existing)
             return existing
             
-        mapping = AgentIntegration(agent_id=agent_id, integration_name=integration_name)
+        mapping = AgentIntegration(
+            agent_id=agent_id,
+            integration_name=integration_name,
+            integration_metadata=metadata,
+        )
         self.db.add(mapping)
         self.db.commit()
         self.db.refresh(mapping)
         return mapping
+
+    def update_metadata(self, agent_id: str, integration_name: str, metadata: dict) -> Optional[AgentIntegration]:
+        """Update (or set) the integration_metadata for an existing assignment."""
+        assignment = self.get_assignment(agent_id, integration_name)
+        if not assignment:
+            return None
+        assignment.integration_metadata = metadata
+        self.db.commit()
+        self.db.refresh(assignment)
+        return assignment
 
     def get_assignment(self, agent_id: str, integration_name: str) -> Optional[AgentIntegration]:
         return self.db.execute(

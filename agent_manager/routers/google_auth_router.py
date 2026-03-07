@@ -36,22 +36,25 @@ def callback(request: Request, db: Session = Depends(get_db)):
         integration_name = None
 
     try:
-        auth_service.exchange_code_and_store(db, agent_id, str(request.url), raw_state=state)
+        creds = auth_service.exchange_code_and_store(db, agent_id, str(request.url), raw_state=state)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Fetch user profile for metadata (email, name, picture)
+    user_metadata = auth_service.fetch_google_user_info(creds) if creds else None
 
     # OAuth succeeded — assign only the specific requested integration
     from ..repositories.integration_repository import IntegrationRepository
     repo = IntegrationRepository(db)
     if integration_name:
-        repo.assign_to_agent(agent_id, integration_name)
+        repo.assign_to_agent(agent_id, integration_name, metadata=user_metadata)
     else:
         # Legacy fallback: assign all Google integrations
         from ..integrations import INTEGRATION_REGISTRY
         from ..integrations.google.base_google import BaseGoogleIntegration
         for name, cls in INTEGRATION_REGISTRY.items():
             if issubclass(cls, BaseGoogleIntegration):
-                repo.assign_to_agent(agent_id, name)
+                repo.assign_to_agent(agent_id, name, metadata=user_metadata)
 
     html_content = """
     <!DOCTYPE html>
