@@ -60,6 +60,13 @@ class IntegrationRepository:
         """Return every agent-integration assignment row."""
         return list(self.db.execute(select(AgentIntegration)).scalars().all())
 
+    def get_connected_agent_ids(self, integration_name: str) -> List[str]:
+        """Return agent IDs that are already connected to the given integration."""
+        stmt = select(AgentIntegration.agent_id).where(
+            AgentIntegration.integration_name == integration_name
+        )
+        return [row for row in self.db.execute(stmt).scalars().all()]
+
     def create_log(self, integration_name: str, agent_id: str, method: str, endpoint: str, status_code: int, duration_ms: int, request_id: Optional[str] = None, error_message: Optional[str] = None) -> IntegrationLog:
         log = IntegrationLog(
             integration_name=integration_name,

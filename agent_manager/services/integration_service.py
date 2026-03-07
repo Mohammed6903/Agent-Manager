@@ -157,5 +157,20 @@ class IntegrationService:
             creds=creds
         )
 
+    async def get_unconnected_agents(self, integration_name: str) -> List[dict]:
+        """Return agents that are NOT yet connected to the given integration."""
+        try:
+            get_integration(integration_name)
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Integration '{integration_name}' not found.")
+
+        connected_ids = set(self.repo.get_connected_agent_ids(integration_name))
+
+        all_agents = []
+        if self.agent_svc:
+            all_agents = await self.agent_svc.list_agents()
+
+        return [a for a in all_agents if a["id"] not in connected_ids]
+
     def get_recent_logs(self, integration_name: str, limit: int = 20) -> List[IntegrationLog]:
         return self.repo.get_recent_logs(integration_name, limit)

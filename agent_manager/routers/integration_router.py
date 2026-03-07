@@ -131,6 +131,14 @@ def get_integration_credentials(
         "credentials": credentials,
     }
 
+@router.get("/{integration_name}/unconnected-agents", response_model=List[Dict[str, Any]])
+async def get_unconnected_agents(
+    integration_name: str,
+    svc: IntegrationService = Depends(get_integration_service),
+):
+    """Return all agents that are NOT yet connected to the given integration."""
+    return await svc.get_unconnected_agents(integration_name)
+
 @router.get("/{integration_name}/logs", response_model=IntegrationLogListResponse)
 def get_integration_logs(
     integration_name: str,
