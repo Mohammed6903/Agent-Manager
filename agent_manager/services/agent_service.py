@@ -9,6 +9,8 @@ from typing import Any, List
 
 from fastapi import HTTPException
 
+from sqlalchemy.orm import Session
+
 from ..config import settings
 from ..schemas.chat import AgentResponse, CreateAgentRequest, UpdateAgentRequest
 from ..repositories.storage import StorageRepository
@@ -22,9 +24,10 @@ SHARED_DIR = Path(settings.OPENCLAW_STATE_DIR) / "shared"
 SHARED_FILES = ("SOUL.md", "AGENTS.md")
 
 class AgentService:
-    def __init__(self, storage: StorageRepository, gateway: GatewayClient):
+    def __init__(self, storage: StorageRepository, gateway: GatewayClient, db: Session = None):
         self.storage = storage
         self.gateway = gateway
+        self.db = db
 
     def _workspace(self, agent_id: str) -> str:
         return str(Path(settings.OPENCLAW_STATE_DIR) / f"workspace-{agent_id}")
@@ -219,7 +222,7 @@ class AgentService:
         await self.storage.ensure_dir(agent_dir)
 
         # IDENTITY.md is always agent-specific — never symlinked
-        identity_content = req.identity or self._default_identity(agent_id, req.name, req.role)
+        identity_content = req.identity or self._default_identity(agent_id, req.name, req.role or "")
         await self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content)
 
         # SOUL.md → symlink to shared copy (fallback: write from template)
@@ -330,11 +333,16 @@ class AgentService:
         )
 
     async def delete_agent(self, agent_id: str) -> dict[str, str]:
+        # ── 1. Gateway: remove the agent and all its cron jobs ──────────────────
         try:
             await self.gateway.delete_agent(agent_id)
         except Exception as exc:
-            logger.warning("Gateway delete failed: %s", str(exc))
+            logger.warning("Gateway delete_agent failed: %s", str(exc))
 
+        if self.db:
+            await self._delete_agent_db_data(agent_id)
+
+        # ── 2. Filesystem ────────────────────────────────────────────────────────
         workspace = self._workspace(agent_id)
         agent_base = str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id)
 
@@ -343,6 +351,42 @@ class AgentService:
 
         logger.info("Agent '%s' deleted", agent_id)
         return {"status": "deleted", "agent_id": agent_id}
+
+    async def _delete_agent_db_data(self, agent_id: str) -> None:
+        """Remove every database record associated with the agent."""
+        from sqlalchemy import delete as sa_delete
+        from ..models.gmail import GoogleAccount, AgentSecret
+        from ..models.agent_task import AgentTask
+        from ..repositories.integration_repository import IntegrationRepository
+        from ..repositories.cron_ownership_repository import CronOwnershipRepository
+        from ..repositories.context_repository import ContextRepository
+
+        # -- Cron jobs: remove from gateway first, then ownership/pipeline rows --
+        cron_repo = CronOwnershipRepository(self.db)
+        cron_ids = cron_repo.delete_by_agent_id(agent_id)
+        for cron_id in cron_ids:
+            try:
+                await self.gateway.cron_remove(cron_id)
+            except Exception as exc:
+                logger.warning("cron_remove(%s) failed during agent delete: %s", cron_id, exc)
+
+        # -- Integration assignments + logs --
+        IntegrationRepository(self.db).delete_all_for_agent(agent_id)
+
+        # -- Context assignments (not the shared global contexts themselves) --
+        ContextRepository(self.db).delete_agent_context_assignments(agent_id)
+
+        # -- Agent tasks --
+        self.db.execute(sa_delete(AgentTask).where(AgentTask.agent_id == agent_id))
+
+        # -- Google OAuth tokens --
+        self.db.execute(sa_delete(GoogleAccount).where(GoogleAccount.agent_id == agent_id))
+
+        # -- All secrets (API keys, OAuth credentials) --
+        self.db.execute(sa_delete(AgentSecret).where(AgentSecret.agent_id == agent_id))
+
+        self.db.commit()
+        logger.info("DB data purged for agent '%s'", agent_id)
 
     # ── Shared-file admin helpers ────────────────────────────────────────────────
 

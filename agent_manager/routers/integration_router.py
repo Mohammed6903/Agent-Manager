@@ -9,7 +9,9 @@ from ..schemas.integration import (
     AgentIntegrationAssignRequest,
     AgentIntegrationResponse,
     AgentIntegrationListResponse,
+    AgentIntegrationsStatusResponse,
     AgentAssignedIntegrationDetail,
+    IntegrationDefBriefResponse,
     IntegrationLogListResponse,
 )
 from ..dependencies import get_db, get_agent_service
@@ -95,16 +97,16 @@ async def generic_oauth_callback(
 
     return result
 
-@router.get("/agent/{agent_id}", response_model=AgentIntegrationListResponse)
+@router.get("/agent/{agent_id}", response_model=AgentIntegrationsStatusResponse)
 def get_agent_integrations(
     agent_id: str,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """List integrations assigned to the agent."""
-    integrations = svc.get_agent_integrations(agent_id)
-    filtered = []
-    for intg in integrations:
-        filtered.append(AgentAssignedIntegrationDetail(
+    """List integrations split into connected (assigned) and available (unassigned) for an agent."""
+    status = svc.get_agent_integrations_status(agent_id)
+
+    connected = [
+        AgentAssignedIntegrationDetail(
             id=intg["id"],
             integration_name=intg["name"],
             name=intg["name"],
@@ -114,9 +116,26 @@ def get_agent_integrations(
             auth_scheme=intg["auth_scheme"],
             auth_fields=intg["auth_fields"],
             usage_instructions=intg["usage_instructions"],
-            integration_metadata=intg.get("integration_metadata"),
-        ))
-    return AgentIntegrationListResponse(integrations=filtered)
+            display_metadata=intg.get("display_metadata"),
+        )
+        for intg in status["connected"]
+    ]
+
+    available = [
+        IntegrationDefBriefResponse(
+            name=intg["name"],
+            display_name=intg.get("display_name", intg["name"]),
+            api_type=intg["api_type"],
+            base_url=intg["base_url"],
+            auth_scheme=intg["auth_scheme"],
+            auth_fields=intg["auth_fields"],
+            endpoints=intg["endpoints"],
+            usage_instructions=intg["usage_instructions"],
+        )
+        for intg in status["available"]
+    ]
+
+    return AgentIntegrationsStatusResponse(connected=connected, available=available)
 
 @router.get("/{integration_name}/credentials", response_model=Dict[str, Any])
 def get_integration_credentials(

@@ -11,6 +11,18 @@ class AuthFlowType(str, Enum):
     OAUTH2_GENERIC = "oauth2_generic"  # Future OAuth providers, List, Any
 
 
+class MetadataFieldType(str, Enum):
+    STRING = "string"
+    IMAGE_URL = "image_url"
+
+
+@dataclass
+class MetadataFieldDef:
+    """Declares a single whitelisted metadata field and how the UI should render it."""
+    name: str
+    type: MetadataFieldType = MetadataFieldType.STRING
+
+
 @dataclass
 class AuthFieldDef:
     name: str
@@ -37,6 +49,27 @@ class BaseIntegration:
     usage_instructions: ClassVar[str] = ""
     auth_flow: ClassVar[AuthFlowType] = AuthFlowType.STATIC
     oauth2_provider: ClassVar[Optional["OAuth2FlowProvider"]] = None
+    # Whitelisted metadata fields surfaced in API responses.
+    # Each entry declares the field name and how the UI should render the value.
+    # Override per integration — default exposes nothing.
+    metadata_fields: ClassVar[List[MetadataFieldDef]] = []
+
+    @classmethod
+    def filter_metadata(cls, raw: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+        """Return a typed list of metadata entries from raw integration_metadata.
+
+        Each item is {"key": ..., "value": ..., "type": ...} so the frontend
+        can render strings and images differently without guessing.
+        Returns None when raw is None or no fields are whitelisted.
+        """
+        if not raw or not cls.metadata_fields:
+            return None
+        result = [
+            {"key": f.name, "value": raw[f.name], "type": f.type.value}
+            for f in cls.metadata_fields
+            if f.name in raw
+        ]
+        return result or None
 
     @classmethod
     def to_dict(cls) -> Dict[str, Any]:

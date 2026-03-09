@@ -53,6 +53,14 @@ class ContextRepository:
     def list_global_contexts(self) -> List[GlobalContext]:
         return list(self.db.execute(select(GlobalContext)).scalars().all())
 
+    def delete_agent_context_assignments(self, agent_id: str) -> None:
+        """Remove all context assignments for an agent (does not delete the global contexts)."""
+        from sqlalchemy import delete as sa_delete
+        self.db.execute(
+            sa_delete(AgentContext).where(AgentContext.agent_id == agent_id)
+        )
+        self.db.commit()
+
     def assign_context_to_agent(self, agent_id: str, context_id: uuid.UUID) -> AgentContext:
         # Check if already assigned
         existing = self.db.execute(

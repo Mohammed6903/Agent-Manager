@@ -10,7 +10,7 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 from ..database import get_db
 from ..services import gmail_auth_service as auth_service
-from ..schemas.gmail import ManualCallbackRequest
+from ..schemas.google import ManualCallbackRequest
 
 router = APIRouter()
 

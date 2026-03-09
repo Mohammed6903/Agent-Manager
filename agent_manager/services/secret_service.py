@@ -77,3 +77,17 @@ class SecretService:
         db.commit()
         db.refresh(secret)
         return secret
+
+    @staticmethod
+    def delete_secret(db: Session, agent_id: str, service_name: str) -> bool:
+        """Delete the secret for the given agent + service. Returns True if deleted, False if not found."""
+        deleted = (
+            db.query(AgentSecret)
+            .filter(
+                AgentSecret.agent_id == agent_id,
+                AgentSecret.service_name == service_name,
+            )
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        return deleted > 0

@@ -29,9 +29,10 @@ def get_gateway() -> GatewayClient:
 
 def get_agent_service(
     storage: Annotated[StorageRepository, Depends(get_storage)],
-    gateway: Annotated[GatewayClient, Depends(get_gateway)]
+    gateway: Annotated[GatewayClient, Depends(get_gateway)],
+    db: Session = Depends(get_db),
 ) -> AgentService:
-    return AgentService(storage, gateway)
+    return AgentService(storage, gateway, db)
 
 def get_session_service(
     storage: Annotated[StorageRepository, Depends(get_storage)]

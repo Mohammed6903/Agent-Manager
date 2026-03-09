@@ -2,13 +2,17 @@ from typing import Dict, Type, List
 
 from .base import BaseIntegration, AuthFlowType
 # from .notion import NotionIntegration  # temporarily hidden
-from .google import GmailIntegration, GoogleCalendarIntegration
+from .google import GmailIntegration, GoogleCalendarIntegration, GoogleDriveIntegration, GoogleSheetsIntegration, GoogleDocsIntegration, GoogleMeetIntegration
 
 # Registry of all available integrations
 INTEGRATION_REGISTRY: Dict[str, Type[BaseIntegration]] = {
     # NotionIntegration.name: NotionIntegration,  # temporarily hidden
     GmailIntegration.name: GmailIntegration,
     GoogleCalendarIntegration.name: GoogleCalendarIntegration,
+    GoogleDriveIntegration.name: GoogleDriveIntegration,
+    GoogleSheetsIntegration.name: GoogleSheetsIntegration,
+    GoogleDocsIntegration.name: GoogleDocsIntegration,
+    GoogleMeetIntegration.name: GoogleMeetIntegration,
 }
 
 

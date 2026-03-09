@@ -14,7 +14,7 @@ from pydantic import BaseModel, field_validator
 class CreateAgentRequest(BaseModel):
     agent_id: str
     name: str
-    role: str
+    role: Optional[str] = None
     soul: Optional[str] = None
     identity: Optional[str] = None
 

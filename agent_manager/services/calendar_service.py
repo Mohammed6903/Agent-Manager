@@ -1,10 +1,13 @@
 """Google Calendar operations service."""
 
+import uuid
+
 from googleapiclient.discovery import build
 from .gmail_auth_service import get_valid_credentials
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
+
 
 from ..integrations.sdk_logger import log_integration_call
 
@@ -78,16 +81,18 @@ def create_event(
     description: Optional[str] = None,
     location: Optional[str] = None,
     attendees: Optional[list] = None,
+    timezone: str = "UTC",
+    add_meet: bool = False,
 ):
-    """Create a new calendar event."""
+    """Create a new calendar event with optional Google Meet and timezone support."""
     service = get_service(db, agent_id)
     if not service:
         return None
 
     event_body = {
         "summary": summary,
-        "start": {"dateTime": start_time, "timeZone": "UTC"},
-        "end": {"dateTime": end_time, "timeZone": "UTC"},
+        "start": {"dateTime": start_time, "timeZone": timezone},
+        "end": {"dateTime": end_time, "timeZone": timezone},
     }
 
     if description:
@@ -97,11 +102,27 @@ def create_event(
     if attendees:
         event_body["attendees"] = [{"email": email} for email in attendees]
 
-    event = service.events().insert(calendarId="primary", body=event_body).execute()
+    params = {}
+    if add_meet:
+        event_body["conferenceData"] = {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
+        params["conferenceDataVersion"] = 1
+
+    event = service.events().insert(
+        calendarId="primary",
+        body=event_body,
+        **params,
+    ).execute()
+
     return {
         "id": event["id"],
         "summary": event.get("summary"),
         "htmlLink": event.get("htmlLink"),
+        "meetLink": event.get("conferenceData", {}).get("entryPoints", [{}])[0].get("uri"),
     }
 
 
@@ -127,9 +148,11 @@ def update_event(
     if summary:
         event["summary"] = summary
     if start_time:
-        event["start"] = {"dateTime": start_time, "timeZone": "UTC"}
+        existing_tz = event.get("start", {}).get("timeZone", "UTC")
+        event["start"] = {"dateTime": start_time, "timeZone": existing_tz}
     if end_time:
-        event["end"] = {"dateTime": end_time, "timeZone": "UTC"}
+        existing_tz = event.get("end", {}).get("timeZone", "UTC")
+        event["end"] = {"dateTime": end_time, "timeZone": existing_tz}
     if description is not None:
         event["description"] = description
     if location is not None:

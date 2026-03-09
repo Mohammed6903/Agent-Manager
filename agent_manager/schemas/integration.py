@@ -21,7 +21,7 @@ class AuthFieldSchema(BaseModel):
 class ConnectedAgentInfo(BaseModel):
     agent_id: str
     name: str
-    integration_metadata: Optional[Dict[str, Any]] = None
+    display_metadata: Optional[List[Dict[str, Any]]] = None
 
 class IntegrationDefResponse(BaseModel):
     name: str
@@ -33,6 +33,18 @@ class IntegrationDefResponse(BaseModel):
     endpoints: List[EndpointSchema]
     usage_instructions: str
     connected_agents: List[ConnectedAgentInfo] = []
+
+
+class IntegrationDefBriefResponse(BaseModel):
+    """Integration definition without connected-agent info — used in per-agent listings."""
+    name: str
+    display_name: str
+    api_type: str
+    base_url: str
+    auth_scheme: Dict[str, Any]
+    auth_fields: List[AuthFieldSchema]
+    endpoints: List[EndpointSchema]
+    usage_instructions: str
 
 
 # --- Agent Integration ---
@@ -50,8 +62,7 @@ class AgentIntegrationResponse(BaseModel):
     agent_id: str
     integration_name: str
     created_at: datetime
-    integration_metadata: Optional[Dict[str, Any]] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 class AgentAssignedIntegrationDetail(BaseModel):
@@ -65,11 +76,16 @@ class AgentAssignedIntegrationDetail(BaseModel):
     auth_scheme: Dict[str, Any]
     auth_fields: List[AuthFieldSchema]
     usage_instructions: str
-    integration_metadata: Optional[Dict[str, Any]] = None
+    display_metadata: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentIntegrationListResponse(BaseModel):
     integrations: List[AgentAssignedIntegrationDetail]
+
+
+class AgentIntegrationsStatusResponse(BaseModel):
+    connected: List[AgentAssignedIntegrationDetail]
+    available: List[IntegrationDefBriefResponse]
 
 
 # --- Integration Logs ---

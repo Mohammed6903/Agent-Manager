@@ -51,6 +51,20 @@ class CronOwnershipRepository:
             self.db.delete(entry)
             self.db.commit()
 
+    def delete_by_agent_id(self, agent_id: str) -> List[str]:
+        """Remove all cron ownership entries for an agent.
+
+        Returns the list of cron_ids that were removed so callers can also
+        remove the jobs from the gateway.
+        CronPipelineRun rows cascade automatically via the FK constraint.
+        """
+        entries = self.db.query(CronOwnership).filter(CronOwnership.agent_id == agent_id).all()
+        cron_ids = [e.cron_id for e in entries]
+        for entry in entries:
+            self.db.delete(entry)
+        self.db.commit()
+        return cron_ids
+
     def list_all(self) -> Dict[str, dict]:
         """Return the full mapping as {cron_id: {user_id, session_id, agent_id}}."""
         entries = self.db.query(CronOwnership).all()

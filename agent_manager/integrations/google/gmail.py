@@ -1,7 +1,7 @@
 from typing import List
 
 from .base_google import BaseGoogleIntegration
-from ..base import EndpointDef
+from ..base import EndpointDef, MetadataFieldDef, MetadataFieldType
 
 
 class GmailIntegration(BaseGoogleIntegration):
@@ -10,7 +10,12 @@ class GmailIntegration(BaseGoogleIntegration):
     name = "gmail"
     display_name = "Gmail"
     base_url = "https://gmail.googleapis.com"
-    
+    metadata_fields = [
+        MetadataFieldDef(name="email", type=MetadataFieldType.STRING),
+        MetadataFieldDef(name="name",  type=MetadataFieldType.STRING),
+        MetadataFieldDef(name="picture", type=MetadataFieldType.IMAGE_URL),
+    ]
+
     scopes: List[str] = [
         "https://www.googleapis.com/auth/gmail.modify", 
         "https://www.googleapis.com/auth/gmail.send"

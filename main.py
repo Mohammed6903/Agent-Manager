@@ -13,6 +13,9 @@ from agent_manager.routers.agent_router import router as agent_router
 from agent_manager.routers.google_auth_router import router as google_auth_router
 from agent_manager.routers.gmail_router import router as gmail_router
 from agent_manager.routers.calendar_router import router as calendar_router
+from agent_manager.routers.drive_router import router as drive_router
+from agent_manager.routers.sheets_router import router as sheets_router
+from agent_manager.routers.docs_router import router as docs_router
 from agent_manager.routers.secrets_router import router as secrets_router
 from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
@@ -128,6 +131,27 @@ app.include_router(
 app.include_router(
     calendar_router,
     prefix="/api/integrations/calendar",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Drive endpoints
+app.include_router(
+    drive_router,
+    prefix="/api/integrations/drive",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Sheets endpoints
+app.include_router(
+    sheets_router,
+    prefix="/api/integrations/sheets",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Docs endpoints
+app.include_router(
+    docs_router,
+    prefix="/api/integrations/docs",
     responses={404: {"description": "Resource not found"}},
 )
 

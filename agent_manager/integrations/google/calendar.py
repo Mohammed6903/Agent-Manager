@@ -1,7 +1,7 @@
 from typing import List
 
 from .base_google import BaseGoogleIntegration
-from ..base import EndpointDef
+from ..base import EndpointDef, MetadataFieldDef, MetadataFieldType
 
 
 class GoogleCalendarIntegration(BaseGoogleIntegration):
@@ -10,7 +10,12 @@ class GoogleCalendarIntegration(BaseGoogleIntegration):
     name = "google_calendar"
     display_name = "Google Calendar"
     base_url = "https://www.googleapis.com/calendar/v3"
-    
+    metadata_fields = [
+        MetadataFieldDef(name="email", type=MetadataFieldType.STRING),
+        MetadataFieldDef(name="name",  type=MetadataFieldType.STRING),
+        MetadataFieldDef(name="picture", type=MetadataFieldType.IMAGE_URL),
+    ]
+
     scopes: List[str] = [
         "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/calendar.events"

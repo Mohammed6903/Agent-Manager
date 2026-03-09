@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..services import gmail_service
-from ..schemas.gmail import (
+from ..schemas.google import (
     SendEmailRequest,
     ReplyRequest,
     ModifyLabelsRequest,

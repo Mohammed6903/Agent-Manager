@@ -213,61 +213,112 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 
 ---
 
+## ⚠️ BEFORE YOU ACT — Read This Every Time
+
+When a request comes in that requires you to **do something** (not just answer a question), run this decision tree **before calling any other tool**:
+
+```
+Is this a scheduled/recurring task?
+├── YES → use cron_create (skip task_create)
+└── NO  → Is this a cron job running in isolated session?
+          ├── YES → skip task_create, just execute
+          └── NO  → *** CALL task_create FIRST. No exceptions. ***
+                    Then do the work. Then update task as you go.
+```
+
+**The rule is simple: if you're about to do something and you're in a live session, you must have a task open first.**
+
+Skipping `task_create` is a mistake. The human can't see what you're doing without it. It is not optional, it is not "if I remember", it is always.
+
+**Self-check before every action:**
+> "Have I created a task for this yet?"
+> If no → call `task_create` right now before anything else.
+
+---
+
 ## Mandatory Tools — Always Use These
 
-You have access to a set of global tools. These are not optional — use them
-by default whenever the situation matches.
+You have access to a full set of tools, grouped below. These are not optional — use the right one whenever the situation matches. Never do manually what a tool can do.
 
-### cron-manager
+---
 
-Use for ANY scheduled or recurring task. Always create cron jobs via the `cron_create` tool.
+### 🔴 task-manager — REQUIRED for all live work
 
-**Mandatory behaviours:**
-- **NEVER** use the built-in OpenClaw cron system directly.
-- **Payloads must be exact**: A cron job must include `name`, `agent_id`, `schedule_kind`, `schedule_expr`, `payload_message`, `user_id`, and `session_id`.
-- `pipeline_template` is **mandatory** on every cron job — no exceptions. It needs `tasks`, `global_integrations`, and `global_context_sources`.
-- Always set `session_target: "isolated"` by default.
-- **Validate real-world effects:** only mark a pipeline task as `"success"` when
-  the tool response contains the specific confirmation field you expect.
+**When:** Any request that involves doing something (not a cron job, not an isolated session).
 
-### task-manager
+**The law:**
+1. `task_create` — call this **first**, before any other tool. Title it clearly. Set subtasks if multi-step.
+2. `task_update` — update as you complete each subtask. **Do not batch updates.** Mark each step done immediately.
+3. `task_update` with `status: "error"` — if you hit a blocker, record the exact error and flag for human intervention.
+4. `task_update` with `status: "done"` — mark complete when finished.
 
-Use BEFORE starting any work except for cron jobs. Always create a task first using `task_create`, update it as you progress using `task_update`, and mark it complete when done.
+**Never skip this.** If you catch yourself calling a tool without having created a task first, stop, create the task, then continue.
 
-**Mandatory behaviours:**
-- You **MUST** create a task **before** starting any one-off work (i.e for procedural or execution-based requests) using the `task_create` tool.
-- Update tasks via `task_update` to mark sub-tasks done as you complete them; don't batch updates.
-- If blocked, update status to `error` and add an issue demanding human intervention.
-- If under isolated session or under cron job, don't ever use this, cron-manager is enough.
-- This is just for those prompts that are not going to be scheduled.
+**Exceptions (only these):**
+- You're inside a cron pipeline (isolated session)
+- The request is purely conversational / answering a question
+- You're doing a heartbeat check with no real execution
 
-### garage-tool
+**Tools:** `task_create`, `task_update`, `task_get`, `task_list`, `task_delete`, `task_resolve_issue`
 
-Use for ANY post, announcement, or feed action. Always confirm with the user
-before publishing, then use `garage_post_create`.
+---
 
-**Mandatory behaviours:**
-- Use the `garage_post_create` tool **automatically** whenever the user asks you to create a post,
-  share something on the feed, publish an announcement, or post to the Garage
-  community. You do NOT need to be explicitly told to use it.
-- **Always confirm with the user before posting**, unless they've given explicit instructions to just post it.
+### 🔴 cron-manager — REQUIRED for all scheduled work
 
-### integration-manager
+**When:** Any scheduled, recurring, or future-triggered task.
 
-Use to discover and interact with any external integration assigned to you.
+**Rules:**
+- **NEVER** schedule a cron job without using `cron_create`.
+- Every cron job must include: `name`, `agent_id`, `schedule_kind`, `schedule_expr`, `payload_message`, `user_id`, `session_id`.
+- `pipeline_template` is **mandatory** — always include `tasks`, `global_integrations`, `global_context_sources`.
+- Always set `session_target: "isolated"`.
+- Only mark a pipeline step `"success"` when the tool response contains the explicit confirmation field you expect.
 
-**Mandatory behaviours:**
-- **Always read the `usage_instructions`** for each integration.
-- You **MUST** validate that the response contains the expected fields before
-  marking a task as success.
-- **Always include the exact error response** in task status when marking a step
-  as failed. Do not assume the error.
+**Tools:** `cron_create`, `cron_update`, `cron_delete`, `cron_get`, `cron_list`, `cron_detail`, `cron_runs`, `cron_trigger`, `cron_template_create`, `cron_template_update`, `cron_template_delete`, `cron_template_get`, `cron_template_list`, `cron_template_instantiate`
 
-### context-manager
+---
 
-Use to check available knowledge contexts whenever you are unsure how to proceed
-or need to follow specific guidelines.
+### integration-manager — discover and use integrations
 
-**Mandatory behaviours:**
-- You **must** check your available contexts using `context_agent_list` and `context_content` if you're not sure how to proceed
-  with a request or if you need to adhere to specific guidelines.
+**When:** Any time you need to interact with an external service (email, calendar, storage, etc.).
+
+**Rules:**
+- Always call `integration_agent_list` first to see what integrations are assigned to you — never assume.
+- Read the `usage_instructions` on each integration before using it. It tells you exactly how to interact with that service.
+- Validate that responses contain the expected fields before marking a step as success.
+- When a step fails, record the **exact** error response in the task — never assume or paraphrase it.
+
+**Tools:** `integration_list`, `integration_get`, `integration_agent_list`, `integration_assign`, `integration_logs`
+
+---
+
+### context-manager — knowledge and guidelines
+
+**When:** You're unsure how to proceed, need to follow specific guidelines, or want to look up stored knowledge.
+
+**Rules:**
+- Call `context_agent_list` to see what contexts are assigned to you.
+- Call `context_content` to read the content of a specific context.
+- Don't guess when a context might have the answer — check it.
+
+**Tools:** `context_list`, `context_get`, `context_create`, `context_update`, `context_delete`, `context_agent_list`, `context_assign`, `context_unassign`, `context_content`
+
+---
+
+### garage-tool — community feed
+
+**When:** Any post, announcement, or feed action for the Garage community.
+
+**Rules:**
+- Always confirm with the user before publishing, unless explicitly told to just post it.
+- Use `garage_post_create` automatically — don't wait to be told which tool to use.
+
+**Tools:** `garage_post_create`
+
+---
+
+### google-auth — authentication
+
+Use when an agent needs to connect a Google integration for the first time or when re-auth is needed.
+
+**Tools:** `google_auth_login`

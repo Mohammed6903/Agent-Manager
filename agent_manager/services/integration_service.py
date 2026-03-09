@@ -45,13 +45,21 @@ class IntegrationService:
             agents_map[a.integration_name].append({
                 "agent_id": a.agent_id,
                 "name": agent_names.get(a.agent_id, "Unknown Agent"),
-                "integration_metadata": a.integration_metadata,
+                "display_metadata": a.integration_metadata,
             })
         
         results = []
         for cls in list_integrations():
             d = cls.to_dict()
-            d["connected_agents"] = agents_map.get(cls.name, [])
+            raw_agents = agents_map.get(cls.name, [])
+            d["connected_agents"] = [
+                {
+                    "agent_id": a["agent_id"],
+                    "name": a["name"],
+                    "display_metadata": cls.filter_metadata(a["display_metadata"]),
+                }
+                for a in raw_agents
+            ]
             results.append(d)
         return results
 
@@ -102,10 +110,12 @@ class IntegrationService:
         return self.repo.assign_to_agent(req.agent_id, req.integration_name)
 
     def unassign_integration(self, agent_id: str, integration_name: str) -> bool:
-        """Remove an integration assignment from an agent."""
+        """Remove an integration assignment from an agent, including stored credentials."""
         removed = self.repo.unassign_from_agent(agent_id, integration_name)
         if not removed:
             raise HTTPException(status_code=404, detail=f"Integration '{integration_name}' is not assigned to agent '{agent_id}'.")
+        # Delete the stored credentials — no longer needed once unassigned
+        SecretService.delete_secret(self.db, agent_id, integration_name)
         return True
 
     def get_agent_integrations(self, agent_id: str) -> List[dict]:
@@ -117,12 +127,35 @@ class IntegrationService:
                 cls = get_integration(a.integration_name)
                 d = cls.to_dict()
                 d["id"] = str(a.id)
-                d["integration_metadata"] = a.integration_metadata
+                d["display_metadata"] = cls.filter_metadata(a.integration_metadata)
                 results.append(d)
             except ValueError:
                 # Integration exists in DB but not in code registry
                 pass
         return results
+
+    def get_agent_integrations_status(self, agent_id: str) -> dict:
+        """Return connected and available integrations for a given agent."""
+        assignments = self.repo.get_agent_integrations(agent_id)
+        connected_names = set()
+        connected = []
+        for a in assignments:
+            try:
+                cls = get_integration(a.integration_name)
+                d = cls.to_dict()
+                d["id"] = str(a.id)
+                d["display_metadata"] = cls.filter_metadata(a.integration_metadata)
+                connected.append(d)
+                connected_names.add(a.integration_name)
+            except ValueError:
+                pass
+
+        available = []
+        for cls in list_integrations():
+            if cls.name not in connected_names:
+                available.append(cls.to_dict())
+
+        return {"connected": connected, "available": available}
 
     def get_agent_credentials(self, agent_id: str, integration_name: str) -> dict:
         assignment = self.repo.get_assignment(agent_id, integration_name)

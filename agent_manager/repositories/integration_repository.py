@@ -85,6 +85,17 @@ class IntegrationRepository:
         )
         return [row for row in self.db.execute(stmt).scalars().all()]
 
+    def delete_all_for_agent(self, agent_id: str) -> None:
+        """Delete all integration assignments and logs for an agent."""
+        from sqlalchemy import delete as sa_delete
+        self.db.execute(
+            sa_delete(IntegrationLog).where(IntegrationLog.agent_id == agent_id)
+        )
+        self.db.execute(
+            sa_delete(AgentIntegration).where(AgentIntegration.agent_id == agent_id)
+        )
+        self.db.commit()
+
     def create_log(self, integration_name: str, agent_id: str, method: str, endpoint: str, status_code: int, duration_ms: int, request_id: Optional[str] = None, error_message: Optional[str] = None) -> IntegrationLog:
         log = IntegrationLog(
             integration_name=integration_name,

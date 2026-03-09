@@ -23,6 +23,12 @@ DEFAULT_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile"
 ]
 
+# Identity scopes always included so we can fetch user profile/email for metadata
+IDENTITY_SCOPES = {
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+}
+
 # Get the directory of the current file
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # credentials file is in the parent (agent_manager/) directory
@@ -59,6 +65,9 @@ def get_required_scopes(agent_id: str, db: Session, include_integration: str = N
                 
     if not scopes:
         return DEFAULT_SCOPES
+    # Always include identity scopes so the userinfo endpoint is accessible
+    # regardless of which Google integration is being assigned.
+    scopes.update(IDENTITY_SCOPES)
     return list(scopes)
 
 def get_google_flow(scopes: list[str], state=None):
@@ -80,7 +89,16 @@ def exchange_code_and_store(db: Session, agent_id: str, authorization_response: 
                    the state used when the auth URL was generated.
     """
     from urllib.parse import urlparse, parse_qs
-    
+
+    # Google sometimes uses shorthand aliases in the callback scope param
+    # (e.g. "profile" / "email") when include_granted_scopes=true re-includes
+    # previously granted scopes. oauthlib's scope-change check then fails because
+    # the token response normalises them to full URIs. Map them upfront.
+    _SCOPE_ALIASES = {
+        "profile": "https://www.googleapis.com/auth/userinfo.profile",
+        "email": "https://www.googleapis.com/auth/userinfo.email",
+    }
+
     # Extract the actual granted scopes from Google's callback URL
     parsed = urlparse(authorization_response)
     qs = parse_qs(parsed.query)
@@ -88,7 +106,11 @@ def exchange_code_and_store(db: Session, agent_id: str, authorization_response: 
     
     if callback_scopes:
         # Google returns scopes as a space-separated string in a single list element
-        scopes = callback_scopes[0].split()
+        raw_scopes = callback_scopes[0].split()
+        scopes = [_SCOPE_ALIASES.get(s, s) for s in raw_scopes]
+        # Deduplicate while preserving order (shorthand + full URI can both appear)
+        seen = set()
+        scopes = [s for s in scopes if not (s in seen or seen.add(s))]
     else:
         # Fallback to DB-based scopes if not in URL
         scopes = get_required_scopes(agent_id, db)

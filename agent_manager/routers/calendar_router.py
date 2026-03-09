@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..services import calendar_service
-from ..schemas.gmail import CreateEventRequest, UpdateEventRequest
+from ..schemas.google import CreateEventRequest, UpdateEventRequest
 
 router = APIRouter()
 
@@ -47,6 +47,8 @@ def create_calendar_event(body: CreateEventRequest, db: Session = Depends(get_db
             description=body.description,
             location=body.location,
             attendees=body.attendees,
+            timezone=body.timezone,
+            add_meet=body.add_meet,
         )
         if event is None:
             raise HTTPException(status_code=401, detail="Agent not authenticated or token expired")
