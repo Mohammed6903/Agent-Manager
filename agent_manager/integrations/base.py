@@ -9,6 +9,8 @@ class AuthFlowType(str, Enum):
     STATIC = "static"          # API keys, bearer tokens — user provides directly
     OAUTH2_GOOGLE = "oauth2_google"    # Google OAuth — handled by GoogleOAuth2Flow
     OAUTH2_GENERIC = "oauth2_generic"  # Future OAuth providers, List, Any
+    OAUTH1_TWITTER = "oauth1_twitter"  # Twitter OAuth 1.0a
+    OAUTH2_LINKEDIN = "oauth2_linkedin"  # LinkedIn OAuth 2.0
 
 
 class MetadataFieldType(str, Enum):

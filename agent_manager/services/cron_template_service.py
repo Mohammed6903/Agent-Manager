@@ -23,7 +23,7 @@ class CronTemplateService:
         template = self.repo.get_by_id(template_id)
         if not template:
             raise HTTPException(status_code=404, detail="Template not found")
-        if not template.is_public and template.created_by_user_id != user_id:
+        if template.is_public is False and template.created_by_user_id != user_id:
             raise HTTPException(status_code=403, detail="Not authorized to view this template")
         return template
 

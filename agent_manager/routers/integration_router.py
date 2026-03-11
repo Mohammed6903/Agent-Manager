@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 
-from fastapi import APIRouter, Depends, Response, HTTPException
+from fastapi import APIRouter, Depends, Response, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -65,9 +65,10 @@ def assign_integration_to_agent(
 
 @router.get("/oauth/callback/{provider}")
 async def generic_oauth_callback(
+    request: Request,
     provider: str,
-    code: str,
     state: str,
+    code: str = None, # Optional: OAuth 2.0 uses 'code', OAuth 1.0 uses 'oauth_verifier' in query_params
     db: Session = Depends(get_db),
 ):
     from ..integrations.auth.oauth2_registry import get_oauth2_provider
@@ -76,14 +77,20 @@ async def generic_oauth_callback(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Unknown OAuth provider: {provider}")
 
-    agent_id = state  # state carries agent_id
+    # State handles composite values (e.g. "agent_id|integration_name")
+    if "|" in state:
+        agent_id, integration_name = state.split("|", 1)
+    else:
+        agent_id = state
+        integration_name = provider
 
     try:
         result = await flow_provider.handle_callback(
             db=db,
             agent_id=agent_id,
-            integration_name=provider,
+            integration_name=integration_name,
             code=code,
+            request=request,  # Pass raw request for parsing OAuth 1.0a query params
         )
     except HTTPException:
         raise
@@ -93,7 +100,7 @@ async def generic_oauth_callback(
     # OAuth succeeded — now persist the assignment
     from ..repositories.integration_repository import IntegrationRepository
     repo = IntegrationRepository(db)
-    repo.assign_to_agent(agent_id, provider)
+    repo.assign_to_agent(agent_id, integration_name)
 
     return result
 

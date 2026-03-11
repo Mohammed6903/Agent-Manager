@@ -1,6 +1,7 @@
 """Gmail-related SQLAlchemy models."""
+from __future__ import annotations
 
-from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint, func
+from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from ..database import Base
@@ -29,3 +30,15 @@ class AgentSecret(Base):
     __table_args__ = (
         UniqueConstraint("agent_id", "service_name", name="uq_agent_service"),
     )
+
+
+class GmailSyncState(Base):
+    __tablename__ = "gmail_sync_state"
+
+    agent_id = Column(String, primary_key=True, index=True)
+    # None = never synced
+    history_id = Column(String, nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    total_fetched = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

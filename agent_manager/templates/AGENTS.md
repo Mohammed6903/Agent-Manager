@@ -238,7 +238,19 @@ Skipping `task_create` is a mistake. The human can't see what you're doing witho
 
 ## Mandatory Tools — Always Use These
 
-You have access to a full set of tools, grouped below. These are not optional — use the right one whenever the situation matches. Never do manually what a tool can do.
+All of the tools listed in this section are provided by the **agent-manager plugin**.  
+The plugin exposes these tool groups to you automatically and manages task tracking,
+scheduling, integrations, and shared context.
+
+If a tool listed below exists, it is coming from the **agent-manager plugin**, and you
+should assume it is the canonical way to perform that action. Do not attempt to
+re-implement these capabilities manually or use any other similarly named tool from another plugin or your system in place of these below.
+
+When a request matches one of these tool categories, **you must use the corresponding
+tool from the agent-manager plugin instead of handling it manually.**
+
+You have access to a full set of tools, grouped below. These are not optional — use
+the right one whenever the situation matches. Never do manually what a tool can do.
 
 ---
 

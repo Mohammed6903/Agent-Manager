@@ -24,6 +24,7 @@ from agent_manager.routers.cron_template_router import router as cron_template_r
 from agent_manager.routers.analytics_router import router as analytics_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 from agent_manager.dependencies import get_storage, get_gateway
+from agent_manager.services.qdrant_service import ensure_collection
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,13 @@ async def lifespan(app: FastAPI):
         settings.OPENCLAW_GATEWAY_URL,
         settings.OPENCLAW_STATE_DIR,
     )
+
+    # Ensure Qdrant collection
+    try:
+        ensure_collection()
+        logger.info("Qdrant collection ensured")
+    except Exception as exc:
+        logger.warning("Failed to ensure Qdrant collection: %s", exc)
 
     # Bootstrap shared workspace files (SOUL.md, AGENTS.md)
     try:
@@ -221,7 +229,6 @@ async def crons_websocket(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         cron_ws_manager.disconnect(ws)
-
 
 def main():
     uvicorn.run(

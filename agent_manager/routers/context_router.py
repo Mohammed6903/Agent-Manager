@@ -1,21 +1,27 @@
-from typing import List
+import asyncio
+import json
 import uuid
+from typing import List
 
+from celery.contrib.abortable import AbortableAsyncResult
 from fastapi import APIRouter, Depends, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ..celery_app import celery_app
 from ..database import get_db
 from ..schemas.context import (
-    GlobalContextCreate,
-    GlobalContextUpdate,
-    GlobalContextResponse,
     AgentContextAssignRequest,
     AgentContextResponse,
-    ContextNameListResponse,
-    ContextListResponse,
     ContextContentResponse,
+    ContextListResponse,
+    GlobalContextCreate,
+    GlobalContextResponse,
+    GlobalContextUpdate,
 )
 from ..services.context_service import ContextService
+from ..services.third_party_context_service import ThirdPartyContextService
+from ..tasks.gmail_ingest_task import get_active_tasks
 
 router = APIRouter(tags=["Context Management"])
 
@@ -108,3 +114,99 @@ def get_context_content(
     content = svc.get_context_content_for_agent(agent_id, context_id)
     context = svc.get_global_context_by_id(context_id)
     return ContextContentResponse(id=context.id, name=context.name, content=content)
+
+@router.get("/ram/context/active")
+def list_active_tasks():
+    """Return all in-flight context sync tasks with their live Celery state."""
+    active = get_active_tasks()
+    rows = []
+    for key, task_id in active.items():
+        if ":" in key:
+            integration_name, agent_id = key.split(":", 1)
+        else:
+            integration_name = "gmail"
+            agent_id = key
+        rows.append(
+            {
+                "agent_id": agent_id,
+                "integration": integration_name,
+                "task_id": task_id,
+                "status": celery_app.AsyncResult(task_id).state,
+            }
+        )
+    return rows
+
+
+@router.post("/ram/context/gmail")
+def create_gmail_context(
+    agent_id: str,
+    force_full_sync: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Start a unified Gmail ingest + pipeline job for an agent.
+
+    Validates that Gmail is assigned and credentials are valid, creates a
+    ThirdPartyContext tracking row, and enqueues the background task.
+
+    Set ``force_full_sync=true`` to discard any stored sync checkpoint and
+    re-ingest the entire mailbox from scratch.
+    """
+    return ThirdPartyContextService(db).create_gmail_context(agent_id, force_full_sync)
+
+
+@router.delete("/ram/context/{context_id}/data")
+def purge_context_data(
+    context_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Delete context data from S3, Qdrant, and remove the context DB row."""
+    return ThirdPartyContextService(db).purge_gmail_context_data(context_id)
+
+
+@router.get("/ram/task/{task_id}/progress")
+async def task_progress(task_id: str):
+    """SSE stream — connect here to watch progress for any background task."""
+
+    async def event_stream():
+        while True:
+            result = celery_app.AsyncResult(task_id)
+            state = result.state
+            info = result.info or {}
+
+            data = {
+                "task_id": task_id,
+                "status": state,
+                **(info if isinstance(info, dict) else {"message": str(info)}),
+            }
+            yield f"data: {json.dumps(data)}\n\n"
+
+            if state in ("SUCCESS", "FAILURE", "REVOKED"):
+                break
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.delete("/ram/task/{task_id}")
+def cancel_task(task_id: str):
+    """Cancel any running Celery task by ID.
+
+    Sends a cooperative abort signal (for AbortableTask-based tasks) and also
+    revokes the task so it won't start if it is still queued.
+    """
+    AbortableAsyncResult(task_id, app=celery_app).abort()
+    celery_app.control.revoke(task_id)
+    state = celery_app.AsyncResult(task_id).state
+    return {
+        "task_id": task_id,
+        "status": "cancellation requested",
+        "current_state": state,
+    }

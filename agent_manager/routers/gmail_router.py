@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..services import gmail_service
+from ..services import gmail_service, gmail_search_service
 from ..schemas.google import (
     SendEmailRequest,
     ReplyRequest,
@@ -173,7 +173,66 @@ def modify_email_labels(body: ModifyLabelsRequest, db: Session = Depends(get_db)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/attachment", tags=["Gmail Email"])
+@router.get("/search/semantic", tags=["Gmail Search"])
+def semantic_search(
+    agent_id: str,
+    query: str,
+    top_k: int = 10,
+    only_unread: bool = False,
+    has_attachment: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Semantic search over all stored Gmail embeddings.
+
+    Returns ranked, deduplicated results by message — not by chunk.
+    """
+    try:
+        results = gmail_search_service.search_emails(
+            agent_id=agent_id,
+            query=query,
+            top_k=top_k,
+            only_unread=only_unread,
+            has_attachment=has_attachment,
+        )
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/search/snapshot", tags=["Gmail Search"])
+def email_snapshot(
+    agent_id: str,
+    hours: int = 24,
+    db: Session = Depends(get_db),
+):
+    """Lightweight recent email summary for agent session context."""
+    try:
+        results = gmail_search_service.snapshot(agent_id=agent_id, hours=hours)
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/search/full", tags=["Gmail Search"])
+def get_full_email(
+    agent_id: str,
+    message_id: str,
+    db: Session = Depends(get_db),
+):
+    """Fetch full email body from S3 by message_id.
+
+    Only call this when the agent needs complete content —
+    snippet + metadata from search results is usually enough.
+    """
+    try:
+        result = gmail_search_service.get_full_email(agent_id, message_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Message not found in S3")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 def get_attachment(
     agent_id: str,
     message_id: str,
