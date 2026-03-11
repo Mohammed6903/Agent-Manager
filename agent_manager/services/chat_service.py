@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post
+from ..services.context_injection_service import build_context_block
 from ..services.secret_service import SecretService
 from ..schemas.chat import ChatRequest, NewSessionResponse
 
@@ -202,6 +203,23 @@ class ChatService:
             session_id=req.session_id, room_id=req.room_id,
         )
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
+
+        # Inject third-party context (email context) into the system prompt
+        if db:
+            try:
+                context_block = await build_context_block(
+                    db, req.agent_id, req.message
+                )
+                if context_block:
+                    messages.insert(
+                        0, {"role": "system", "content": context_block}
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Context injection failed for agent %s: %s",
+                    req.agent_id,
+                    exc,
+                )
 
         headers = {
             "Content-Type": "application/json",
@@ -420,6 +438,7 @@ class ChatService:
         self,
         req: ChatRequest,
         uploaded_file_paths: list[str] | None = None,
+        db: Session | None = None,
     ) -> dict:
         """Send a non-streaming chat request and return the full response."""
         user_field = self._build_user_field(
@@ -427,6 +446,23 @@ class ChatService:
             session_id=req.session_id, room_id=req.room_id,
         )
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
+
+        # Inject third-party context
+        if db:
+            try:
+                context_block = await build_context_block(
+                    db, req.agent_id, req.message
+                )
+                if context_block:
+                    messages.insert(
+                        0, {"role": "system", "content": context_block}
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Context injection failed for agent %s: %s",
+                    req.agent_id,
+                    exc,
+                )
 
         body = {
             "model": f"openclaw:{req.agent_id}",

@@ -1,11 +1,11 @@
 from .google_flow import GoogleOAuth2Flow
-from .twitter_flow import TwitterOAuth1Flow
+from .twitter_flow import TwitterOAuth2Flow
 from .linkedin_flow import LinkedInOAuth2Flow
 from .oauth2_flow import OAuth2FlowProvider
 
 OAUTH2_PROVIDERS: dict[str, OAuth2FlowProvider] = {
     "google": GoogleOAuth2Flow(),
-    "twitter": TwitterOAuth1Flow(),
+    "twitter": TwitterOAuth2Flow(),
     "linkedin": LinkedInOAuth2Flow(),
 }
 

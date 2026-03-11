@@ -20,8 +20,10 @@ from agent_manager.routers.secrets_router import router as secrets_router
 from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
+from agent_manager.routers.twitter_router import router as twitter_router
 from agent_manager.routers.cron_template_router import router as cron_template_router
 from agent_manager.routers.analytics_router import router as analytics_router
+from agent_manager.routers.third_party_context_router import router as third_party_context_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 from agent_manager.dependencies import get_storage, get_gateway
 from agent_manager.services.qdrant_service import ensure_collection
@@ -177,6 +179,15 @@ app.include_router(
     responses={404: {"description": "Resource not found"}},
 )
 
+# Third-party context endpoints: /api/contexts/third-party
+# Must be registered before context_router so its literal prefix wins over
+# the /{context_id} catch-all route defined in context_router.
+app.include_router(
+    third_party_context_router,
+    prefix="/api/contexts/third-party",
+    responses={404: {"description": "Resource not found"}},
+)
+
 # Context endpoints: /api/contexts
 app.include_router(
     context_router,
@@ -188,6 +199,13 @@ app.include_router(
 app.include_router(
     integration_router,
     prefix="/api/integrations",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Twitter endpoints
+app.include_router(
+    twitter_router,
+    prefix="/api/integrations/twitter",
     responses={404: {"description": "Resource not found"}},
 )
 

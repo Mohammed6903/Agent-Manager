@@ -25,7 +25,7 @@ class SecretService:
     def _encrypt_secret_data(data: dict[str, str]) -> dict[str, Any]:
         """Encrypt every value in the dict with Fernet."""
         from ..security import encrypt
-        return {k: encrypt(v) for k, v in data.items()}
+        return {k: encrypt(str(v)) for k, v in data.items() if v is not None}
 
     @staticmethod
     def get_secret(db: Session, agent_id: str, service_name: str) -> dict | None:

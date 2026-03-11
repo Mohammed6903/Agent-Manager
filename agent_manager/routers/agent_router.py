@@ -257,7 +257,7 @@ async def chat_completions(
 ):
     """Send a message and get the full response (non-streaming)."""
     req, file_paths = await parse_chat_request(request)
-    return await chat_service.chat_non_stream(req, uploaded_file_paths=file_paths)
+    return await chat_service.chat_non_stream(req, uploaded_file_paths=file_paths, db=db)
 
 
 @router.post("/chat/new-session", tags=["Chat"])

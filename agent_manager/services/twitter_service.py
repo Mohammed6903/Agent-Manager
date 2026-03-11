@@ -4,10 +4,8 @@ import logging
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.orm import Session
-from oauthlib.oauth1 import Client
 import httpx
 
-from ..config import settings
 from .secret_service import SecretService
 from ..integrations.sdk_logger import log_integration_call
 
@@ -17,27 +15,18 @@ def _get_twitter_client(db: Session, agent_id: str) -> httpx.AsyncClient:
     """Helper to get an authenticated HTTP client for Twitter API v2."""
     creds = SecretService.get_secret(db, agent_id, "twitter")
     if not creds:
-        raise Exception("Twitter credentials not found for agent.")
+        raise Exception("Twitter credentials not found for agent")
     
-    # Setup OAuth1 client
-    oauth_client = Client(
-        client_key=settings.TWITTER_API_KEY,
-        client_secret=settings.TWITTER_API_SECRET,
-        resource_owner_key=creds.get("access_token"),
-        resource_owner_secret=creds.get("access_token_secret"),
+    access_token = creds.get("access_token")
+    if not access_token:
+        raise Exception("Twitter access token not found in stored credentials")
+        
+    return httpx.AsyncClient(
+        base_url="https://api.twitter.com/2",
+        headers={
+            "Authorization": f"Bearer {access_token}"
+        }
     )
-    
-    async def auth_flow(request: httpx.Request):
-        uri, headers, body = oauth_client.sign(
-            str(request.url),
-            http_method=request.method,
-            body=request.content or "",
-            headers=dict(request.headers),
-        )
-        request.headers.update(headers)
-        return request
-
-    return httpx.AsyncClient(auth=auth_flow, base_url="https://api.twitter.com/2")
 
 
 @log_integration_call("twitter", "POST", "/tweets")

@@ -71,8 +71,8 @@ class Settings(BaseSettings):
 
 
     # ── Twitter ─────────────────────────────────────────────────────────────────
-    TWITTER_API_KEY: str = ""
-    TWITTER_API_SECRET: str = ""
+    TWITTER_CLIENT_ID: str = ""
+    TWITTER_CLIENT_SECRET: str = ""
 
     # ── LinkedIn ────────────────────────────────────────────────────────────────
     LINKEDIN_CLIENT_ID: str = ""

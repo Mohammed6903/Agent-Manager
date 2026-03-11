@@ -1,10 +1,10 @@
-"""SQLAlchemy model for tracking third-party integration sync jobs."""
+"""SQLAlchemy models for tracking third-party integration sync jobs."""
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import Column, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from ..database import Base
@@ -35,4 +35,22 @@ class ThirdPartyContext(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ThirdPartyContextAssignment(Base):
+    """Links an agent to a ThirdPartyContext — mirrors the AgentContext pattern."""
+
+    __tablename__ = "third_party_context_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id = Column(String, index=True, nullable=False)
+    context_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("third_party_contexts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -4,7 +4,7 @@ from .base import BaseSDKIntegration, AuthFieldDef, EndpointDef, AuthFlowType
 
 
 class TwitterIntegration(BaseSDKIntegration):
-    """Twitter / X API Integration using OAuth 1.0a user context auth."""
+    """Twitter / X API Integration using OAuth 2.0 with PKCE."""
     
     name = "twitter"
     display_name = "Twitter / X"
@@ -12,17 +12,19 @@ class TwitterIntegration(BaseSDKIntegration):
     base_url = "https://api.twitter.com/2"
     
     auth_scheme: Dict[str, Any] = {
-        "type": "oauth1",
-        "consumer_key_field": "api_key",
-        "consumer_secret_field": "api_secret",
+        "type": "oauth2",
+        "client_id_field": "client_id",
+        "client_secret_field": "client_secret",
         "token_field": "access_token",
-        "token_secret_field": "access_token_secret",
+        "token_url": "https://api.twitter.com/2/oauth2/token",
+        "authorize_url": "https://twitter.com/i/oauth2/authorize",
+        "scopes": ["tweet.read", "tweet.write", "users.read", "offline.access"]
     }
     
-    auth_flow = AuthFlowType.OAUTH1_TWITTER
+    auth_flow = AuthFlowType.OAUTH2_GENERIC
     
-    from .auth.twitter_flow import TwitterOAuth1Flow
-    oauth2_provider = TwitterOAuth1Flow()
+    from .auth.twitter_flow import TwitterOAuth2Flow
+    oauth2_provider = TwitterOAuth2Flow()
     
     auth_fields: List[AuthFieldDef] = []
     
@@ -42,7 +44,7 @@ class TwitterIntegration(BaseSDKIntegration):
     ]
     
     usage_instructions = (
-        "Authenticate via OAuth 1.0a. "
-        "Use the Twitter API v2 endpoints. OAuth 1.0a credentials are used for the Authorization header. "
+        "Authenticate via OAuth 2.0 with PKCE. "
+        "Use the Twitter API v2 endpoints. The bearer access token is used for the Authorization header. "
         "Use the IntegrationClient to make requests to the base_url + endpoint path."
     )

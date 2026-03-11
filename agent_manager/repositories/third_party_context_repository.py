@@ -83,6 +83,18 @@ class ThirdPartyContextRepository:
             .all()
         )
 
+    def get_all_complete(self) -> list[ThirdPartyContext]:
+        """Return all ThirdPartyContext rows with status 'complete'."""
+        return list(
+            self.db.execute(
+                select(ThirdPartyContext)
+                .where(ThirdPartyContext.status == "complete")
+                .order_by(ThirdPartyContext.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+
     def get_active_by_agent_and_integration(
         self, agent_id: str, integration_name: str
     ) -> Optional[ThirdPartyContext]:

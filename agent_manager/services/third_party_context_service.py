@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 from ..celery_app import celery_app
 from ..repositories.integration_repository import IntegrationRepository
 from ..repositories.third_party_context_repository import ThirdPartyContextRepository
+from ..repositories.third_party_context_assignment_repository import (
+    ThirdPartyContextAssignmentRepository,
+)
 from ..services import gmail_service, qdrant_service, s3_service
 
 logger = logging.getLogger(__name__)
@@ -143,3 +146,51 @@ class ThirdPartyContextService:
             "deleted_qdrant_points": deleted_qdrant_points,
             "deleted_db_row": deleted_db_row,
         }
+
+    # ── List / Get ───────────────────────────────────────────────────────────
+
+    def get_context(self, context_id: uuid.UUID) -> dict:
+        """Fetch a single ThirdPartyContext by ID."""
+        ctx_repo = ThirdPartyContextRepository(self.db)
+        ctx = ctx_repo.get(context_id)
+        if not ctx:
+            raise HTTPException(status_code=404, detail="Context not found")
+        return ctx
+
+    def list_contexts_for_agent(self, agent_id: str) -> list:
+        """Return all ThirdPartyContext rows assigned to an agent."""
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        return assign_repo.get_contexts_for_agent(agent_id)
+
+    # ── Assignment ───────────────────────────────────────────────────────────
+
+    def assign_context(self, context_id: uuid.UUID, agent_id: str) -> dict:
+        """Create an assignment between an agent and a ThirdPartyContext."""
+        ctx_repo = ThirdPartyContextRepository(self.db)
+        ctx = ctx_repo.get(context_id)
+        if not ctx:
+            raise HTTPException(status_code=404, detail="Context not found")
+
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        row = assign_repo.assign(context_id, agent_id)
+        return row
+
+    def unassign_context(self, context_id: uuid.UUID, agent_id: str) -> None:
+        """Remove an assignment between an agent and a ThirdPartyContext."""
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        deleted = assign_repo.unassign(context_id, agent_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail="Assignment not found",
+            )
+
+    def get_all_complete_contexts(self) -> list:
+        """Return all ThirdPartyContext rows whose status is 'complete'."""
+        ctx_repo = ThirdPartyContextRepository(self.db)
+        return ctx_repo.get_all_complete()
+
+    def get_complete_contexts_for_agent(self, agent_id: str) -> list:
+        """Return only 'complete' ThirdPartyContext rows assigned to an agent."""
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        return assign_repo.get_contexts_for_agent(agent_id, status="complete")

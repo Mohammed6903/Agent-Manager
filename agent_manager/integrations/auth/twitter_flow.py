@@ -1,127 +1,115 @@
 import logging
+import base64
+import hashlib
+import os
 
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, Request
+from urllib.parse import urlencode
 
 from .oauth2_flow import OAuth2FlowProvider
 from ...services.secret_service import SecretService
-from ...services.twitter_auth_service import get_request_token, exchange_verifier
+from ...config import settings
+import httpx
 
 logger = logging.getLogger(__name__)
 
 
-# We still subclass OAuth2FlowProvider to fit into the generic callback router seamlessly.
-# The interface (get_auth_url, handle_callback) is generic enough for OAuth 1.0a 3-legged flow.
-class TwitterOAuth1Flow(OAuth2FlowProvider):
-    """OAuth 1.0a 3-legged flow for Twitter / X."""
-    
-    # We use sync wrapper here since the repository methods are sync, 
-    # but the flow provider interface expects synchronous get_auth_url.
-    # To handle the async get_request_token, we'll need a slight tweak to how auth_url is fetched,
-    # or we can use an event loop. Wait, the actual IntegrationRepository calling get_auth_url is sync.
-    # Let me use asyncio.run or similar.
-    def get_auth_url(self, agent_id: str, integration_name: str, db: Session = None) -> str:
-        import asyncio
-        composite_state = f"{agent_id}|{integration_name}"
-        
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we are already in an event loop (e.g. FastAPI request), we shouldn't use asyncio.run
-                # Wait, the repository is called from a sync context currently? No, FastAPI endpoints are async.
-                # Let's adjust this to be safe.
-                import threading
-                def _run_coro(coro):
-                    res = []
-                    ex = []
-                    def _thread_target():
-                        try:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            res.append(loop.run_until_complete(coro))
-                        except Exception as e:
-                            ex.append(e)
-                        finally:
-                            loop.close()
-                    t = threading.Thread(target=_thread_target)
-                    t.start()
-                    t.join()
-                    if ex:
-                        raise ex[0]
-                    return res[0]
-                auth_url, req_token, req_secret = _run_coro(get_request_token(state=composite_state))
-            else:
-                auth_url, req_token, req_secret = asyncio.run(get_request_token(state=composite_state))
-        except Exception as e:
-            logger.error(f"Failed to get Twitter request token: {e}")
-            raise HTTPException(status_code=500, detail="Failed to initialize Twitter Auth. Check API keys.")
+def generate_pkce_pair() -> tuple[str, str]:
+    """Generate a PKCE code_verifier and code_challenge."""
+    code_verifier = base64.urlsafe_b64encode(os.urandom(32)).decode('utf-8').rstrip('=')
+    code_challenge = hashlib.sha256(code_verifier.encode('utf-8')).digest()
+    code_challenge = base64.urlsafe_b64encode(code_challenge).decode('utf-8').rstrip('=')
+    return code_verifier, code_challenge
 
+
+class TwitterOAuth2Flow(OAuth2FlowProvider):
+    """OAuth 2.0 flow for Twitter / X with PKCE."""
+    
+    def get_auth_url(self, agent_id: str, integration_name: str, db: Session = None) -> str:
+        code_verifier, code_challenge = generate_pkce_pair()
+        state = f"{agent_id}|{integration_name}"
+        
+        # We need to temporarily store the code_verifier so we can use it during the callback
         if db:
             SecretService.set_secret(
                 db, 
                 agent_id, 
-                f"_twitter_oauth1_{agent_id}", 
-                {"request_token": req_token, "request_token_secret": req_secret}
+                f"_twitter_pkce_{agent_id}", 
+                {"code_verifier": code_verifier}
             )
+
+        # Scopes required for the SDK endpoints
+        scopes = "tweet.read tweet.write users.read offline.access dm.read dm.write"
+        redirect_uri = f"{settings.SERVER_URL}/api/integrations/oauth/callback/twitter"
         
-        return auth_url
+        params = {
+            "response_type": "code",
+            "client_id": settings.TWITTER_CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "scope": scopes,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256"
+        }
+        
+        url = f"https://twitter.com/i/oauth2/authorize?{urlencode(params)}"
+        return url
 
     async def handle_callback(
         self,
         db: Session,
         agent_id: str,
         integration_name: str,
-        code: str, # For OAuth 1.0a, this 'code' parameter in the router will be None!
-        request: Request = None, # We need the raw request to extract oauth_verifier
+        code: str,
+        request: Request = None,
     ) -> dict:
-        if not request:
-            raise HTTPException(status_code=400, detail="Missing request object in OAuth callback")
-        
-        # 1. Extract params from the request query string
-        oauth_token = request.query_params.get("oauth_token")
-        oauth_verifier = request.query_params.get("oauth_verifier")
-        denied = request.query_params.get("denied")
+        if not code:
+            raise HTTPException(status_code=400, detail="Missing authorization code")
 
-        if denied:
-            logger.info(f"User denied Twitter Auth for agent {agent_id}")
-            raise HTTPException(status_code=400, detail="User denied Twitter authorization")
-
-        if not oauth_token or not oauth_verifier:
-            logger.error(f"Missing OAuth 1.0a params. Got token={oauth_token}, verifier={'exists' if oauth_verifier else 'None'}")
-            raise HTTPException(status_code=400, detail="Missing required Twitter OAuth callback parameters")
-
-        # 2. Retrieve the request_token_secret from the DB
-        temp_secret_name = f"_twitter_oauth1_{agent_id}"
+        # 1. Retrieve the code_verifier from the DB
+        temp_secret_name = f"_twitter_pkce_{agent_id}"
         temp_creds = SecretService.get_secret(db, agent_id, temp_secret_name)
         
-        if not temp_creds:
-            logger.error(f"Could not find temporary OAuth 1.0 request token for agent {agent_id}")
+        if not temp_creds or "code_verifier" not in temp_creds:
+            logger.error(f"Could not find temporary OAuth 2.0 PKCE verifier for agent {agent_id}")
             raise HTTPException(status_code=400, detail="Twitter auth session expired or invalid. Please try again.")
 
-        request_token_secret = temp_creds.get("request_token_secret")
-        if not request_token_secret:
-            raise HTTPException(status_code=400, detail="Stored Twitter auth session corrupted")
+        code_verifier = temp_creds["code_verifier"]
 
-        # Check that the token matches what we sent
-        if temp_creds.get("request_token") != oauth_token:
-            logger.error("OAuth token from Twitter does not match the stored request token.")
-            raise HTTPException(status_code=400, detail="Twitter OAuth token mismatch")
+        # 2. Exchange code for access tokens
+        redirect_uri = f"{settings.SERVER_URL}/api/integrations/oauth/callback/twitter"
+        token_url = "https://api.twitter.com/2/oauth2/token"
+        
+        # Twitter OAuth2 uses Basic Auth with client_id:client_secret for confidential clients
+        auth = (str(settings.TWITTER_CLIENT_ID), str(settings.TWITTER_CLIENT_SECRET))
+        
+        payload = {
+            "code": code,
+            "grant_type": "authorization_code",
+            "client_id": str(settings.TWITTER_CLIENT_ID),
+            "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier
+        }
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
 
-        # 3. Exchange verifier for access tokens
         try:
-            tokens = await exchange_verifier(
-                request_token=oauth_token,
-                request_token_secret=request_token_secret,
-                oauth_verifier=oauth_verifier
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(token_url, data=payload, auth=auth, headers=headers)
+                resp.raise_for_status()
+                tokens = resp.json()
         except Exception as e:
-            logger.error(f"Failed to exchange Twitter OAuth verifier: {e}")
+            logger.error(f"Failed to exchange Twitter OAuth 2.0 code: {e}")
             raise HTTPException(status_code=400, detail="Failed to get Twitter access token")
 
-        # 4. Store final tokens for the integration
-        SecretService.set_secret(db, agent_id, integration_name, tokens)
+        # 3. Store final tokens for the integration
+        string_tokens = {k: str(v) for k, v in tokens.items() if v is not None}
+        SecretService.set_secret(db, agent_id, integration_name, string_tokens)
 
-        # 5. Clean up temporary request tokens
+        # 4. Clean up temporary PKCE info
         SecretService.delete_secret(db, agent_id, temp_secret_name)
 
         return {
@@ -129,7 +117,6 @@ class TwitterOAuth1Flow(OAuth2FlowProvider):
             "agent_id": agent_id, 
             "integration": integration_name,
             "metadata": {
-                "user_id": tokens.get("user_id"),
-                "screen_name": tokens.get("screen_name")
+                "scopes": tokens.get("scope")
             }
         }

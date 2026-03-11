@@ -102,7 +102,46 @@ async def generic_oauth_callback(
     repo = IntegrationRepository(db)
     repo.assign_to_agent(agent_id, integration_name)
 
-    return result
+    # Return a friendly HTML response that closes the popup window
+    from fastapi.responses import HTMLResponse
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Authorization Successful</title>
+        <style>
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; margin: 0; }}
+            h1 {{ color: #58a6ff; }}
+            p {{ font-size: 16px; margin-bottom: 20px; }}
+            .loader {{ border: 4px solid #30363d; border-top: 4px solid #58a6ff; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin-top: 20px; }}
+            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        </style>
+    </head>
+    <body>
+        <h1>Authorization Successful!</h1>
+        <p>Successfully connected {integration_name.capitalize()} to your agent.</p>
+        <p>You can close this window now.</p>
+        <div class="loader"></div>
+        <script>
+            // Send a message to the opener window if it exists
+            if (window.opener) {{
+                window.opener.postMessage({{
+                    type: 'OAUTH_SUCCESS',
+                    integration: '{integration_name}',
+                    agent_id: '{agent_id}'
+                }}, '*');
+            }}
+            // Try to close the window automatically after a short delay
+            setTimeout(function() {{
+                window.close();
+            }}, 2000);
+        </script>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)
 
 @router.get("/agent/{agent_id}", response_model=AgentIntegrationsStatusResponse)
 def get_agent_integrations(

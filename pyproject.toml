@@ -30,4 +30,5 @@ dependencies = [
     "openai>=2.26.0",
     "google-genai>=1.66.0",
     "requests-oauthlib>=2.0.0",
+    "ruff>=0.15.5",
 ]
