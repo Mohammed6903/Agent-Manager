@@ -1,6 +1,11 @@
 """S3 storage service for raw integration data."""
+from __future__ import annotations
+
 import json
+from collections.abc import Callable
+
 import boto3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from botocore.exceptions import ClientError
 from ..config import settings
 
@@ -79,21 +84,63 @@ def delete_key(key: str) -> bool:
 
 # ── Gmail Helpers ────────────────────────────────────────────────────────────
 
+
+def _is_expired(key: str) -> bool:
+    """Return True if the S3 object carries the status=expired tag."""
+    try:
+        resp = _client().get_object_tagging(
+            Bucket=settings.S3_BUCKET_NAME, Key=key
+        )
+        return any(
+            t["Key"] == _EXPIRED_TAG_KEY and t["Value"] == _EXPIRED_TAG_VALUE
+            for t in resp.get("TagSet", [])
+        )
+    except ClientError:
+        return False
+
+
 def save_gmail_raw(agent_id: str, message_id: str, raw: dict) -> bool:
     return upload_json(gmail_raw_key(agent_id, message_id), raw)
 
+
 def load_gmail_raw(agent_id: str, message_id: str) -> dict | None:
-    return download_json(gmail_raw_key(agent_id, message_id))
+    """Load a stored email from S3, returning None if it is expired."""
+    key = gmail_raw_key(agent_id, message_id)
+    if _is_expired(key):
+        return None
+    return download_json(key)
+
 
 def gmail_message_exists(agent_id: str, message_id: str) -> bool:
-    return key_exists(gmail_raw_key(agent_id, message_id))
+    """Return True only if the message exists in S3 and is NOT expired."""
+    key = gmail_raw_key(agent_id, message_id)
+    if not key_exists(key):
+        return False
+    return not _is_expired(key)
+
 
 def list_gmail_message_ids(agent_id: str) -> list[str]:
-    """Return all message IDs already stored in S3 for this agent."""
+    """Return message IDs stored in S3 for this agent, excluding expired objects.
+
+    Tag checks are performed in parallel to keep the listing fast even for
+    large mailboxes.
+    """
     prefix = f"{agent_id}/gmail/raw/"
     keys = list_keys(prefix)
-    # Extract message ID from key: "agent_id/gmail/raw/MSG_ID.json" → "MSG_ID"
-    return [k.replace(prefix, "").replace(".json", "") for k in keys]
+    if not keys:
+        return []
+
+    # Check expired tags in parallel
+    def _keep(key: str) -> tuple[str, bool]:
+        return (key, not _is_expired(key))
+
+    active_keys: list[str] = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for key, keep in executor.map(_keep, keys):
+            if keep:
+                active_keys.append(key)
+
+    return [k.replace(prefix, "").replace(".json", "") for k in active_keys]
 
 
 def delete_all_gmail_raw(agent_id: str) -> int:
@@ -125,6 +172,97 @@ def delete_gmail_namespace(agent_id: str) -> int:
     for key in keys:
         delete_key(key)
     return len(keys)
+
+
+_EXPIRED_TAG_KEY = "status"
+_EXPIRED_TAG_VALUE = "expired"
+
+
+def tag_gmail_as_expired(
+    agent_id: str, progress_callback: Callable[[int, int], None] | None = None
+) -> int:
+    """Tag all Gmail raw objects as expired for soft-delete.
+
+    Applies the tag ``status=expired`` to every object under
+    ``{agent_id}/gmail/raw/`` in parallel. A bucket lifecycle rule
+    (see ``_ensure_lifecycle_rule``) will auto-delete tagged objects
+    after 30 days.
+
+    Args:
+        agent_id: Owner namespace.
+        progress_callback: Optional callable(tagged, total) for progress updates.
+
+    Returns:
+        Number of objects successfully tagged.
+    """
+    prefix = f"{agent_id}/gmail/raw/"
+    keys = list_keys(prefix)
+
+    if not keys:
+        if progress_callback:
+            progress_callback(0, 0)
+        return 0
+
+    client = _client()
+    total = len(keys)
+
+    def _tag_key(key: str) -> bool:
+        try:
+            client.put_object_tagging(
+                Bucket=settings.S3_BUCKET_NAME,
+                Key=key,
+                Tagging={"TagSet": [{"Key": _EXPIRED_TAG_KEY, "Value": _EXPIRED_TAG_VALUE}]},
+            )
+            return True
+        except ClientError as e:
+            print(f"Failed to tag {key}: {e}")
+            return False
+
+    tagged = 0
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(_tag_key, k): k for k in keys}
+        for i, future in enumerate(as_completed(futures), 1):
+            if future.result():
+                tagged += 1
+            if progress_callback and (i % 50 == 0 or i == total):
+                progress_callback(i, total)
+
+    _ensure_lifecycle_rule()
+
+    return tagged
+
+
+def _ensure_lifecycle_rule() -> None:
+    """Set up S3 lifecycle rule to auto-delete status=expired objects after 30 days.
+
+    Filters by the ``status=expired`` tag so only explicitly expired objects
+    are cleaned up — unrelated objects in the bucket are not affected.
+    Idempotent: safe to call multiple times.
+    """
+    client = _client()
+    try:
+        lifecycle_config = {
+            "Rules": [
+                {
+                    "ID": "DeleteExpiredGmailData",
+                    "Filter": {
+                        "Tag": {
+                            "Key": _EXPIRED_TAG_KEY,
+                            "Value": _EXPIRED_TAG_VALUE,
+                        }
+                    },
+                    "Status": "Enabled",
+                    "Expiration": {"Days": 30},
+                }
+            ]
+        }
+        client.put_bucket_lifecycle_configuration(
+            Bucket=settings.S3_BUCKET_NAME,
+            LifecycleConfiguration=lifecycle_config,
+        )
+        print(f"[S3] Lifecycle rule set: delete objects tagged status=expired after 30 days")
+    except Exception as e:
+        print(f"[S3] Failed to set lifecycle rule: {e}")
 
 # ── Calendar Helpers ─────────────────────────────────────────────────────────
 

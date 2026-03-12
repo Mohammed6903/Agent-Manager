@@ -13,7 +13,7 @@ from ..repositories.third_party_context_repository import ThirdPartyContextRepos
 from ..repositories.third_party_context_assignment_repository import (
     ThirdPartyContextAssignmentRepository,
 )
-from ..services import gmail_service, qdrant_service, s3_service
+from ..services import gmail_service
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +114,21 @@ class ThirdPartyContextService:
         }
 
     def purge_gmail_context_data(self, context_id: uuid.UUID) -> dict:
-        """Delete Gmail data for the context's agent and remove the context row.
+        """Enqueue background deletion of all Gmail data for this context.
 
-        Current storage namespaces Gmail data by agent, not context. Deleting a
-        single context therefore purges Gmail data for the whole agent.
+        Marks the context as 'deleting', dispatches a Celery task that removes
+        S3 objects, Qdrant points, and the DB row, then returns the task_id so
+        callers can poll for progress.
+
+        Args:
+            context_id: ID of the ThirdPartyContext row to purge.
+
+        Returns:
+            Dict with task_id, context_id, agent_id, and a status message.
+
+        Raises:
+            HTTPException 404: If the context does not exist.
+            HTTPException 400: If the context is not a Gmail context.
         """
         ctx_repo = ThirdPartyContextRepository(self.db)
         context = ctx_repo.get(context_id)
@@ -127,24 +138,27 @@ class ThirdPartyContextService:
         if context.integration_name != "gmail":
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Data purge is currently supported only for Gmail contexts."
-                ),
+                detail="Data purge is currently supported only for Gmail contexts.",
             )
 
-        deleted_s3_objects = s3_service.delete_gmail_namespace(context.agent_id)
-        deleted_qdrant_points = qdrant_service.delete_points_for_agent_source(
-            context.agent_id, "gmail"
-        )
-        deleted_db_row = ctx_repo.delete(context_id)
+        from ..tasks.gmail_context_task import delete_gmail_context  # noqa: PLC0415
 
+        task = delete_gmail_context.delay(context.agent_id, str(context_id))
+
+        ctx_repo.update_task(context_id, task.id, "deleting")
+
+        logger.info(
+            "Delete task %s enqueued for agent %s (context %s).",
+            task.id,
+            context.agent_id,
+            context_id,
+        )
         return {
+            "task_id": task.id,
             "context_id": str(context_id),
             "agent_id": context.agent_id,
             "integration": context.integration_name,
-            "deleted_s3_objects": deleted_s3_objects,
-            "deleted_qdrant_points": deleted_qdrant_points,
-            "deleted_db_row": deleted_db_row,
+            "message": "Background delete started.",
         }
 
     # ── List / Get ───────────────────────────────────────────────────────────

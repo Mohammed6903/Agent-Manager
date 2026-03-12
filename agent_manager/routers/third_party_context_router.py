@@ -35,12 +35,15 @@ def create_context(
     return svc.create_gmail_context(req.agent_id, req.force_full_sync)
 
 
-@router.delete("/{context_id}")
+@router.delete("/{context_id}", status_code=202)
 def delete_context(
     context_id: uuid.UUID,
     svc: ThirdPartyContextService = Depends(_get_service),
 ):
-    """Delete a context and its associated data (S3, Qdrant, DB)."""
+    """Enqueue background deletion of a context and all associated data (S3, Qdrant, DB).
+
+    Returns 202 Accepted immediately with a task_id that can be polled for progress.
+    """
     return svc.purge_gmail_context_data(context_id)
 
 

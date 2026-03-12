@@ -14,7 +14,7 @@ from ..celery_app import celery_app
 from ..database import SessionLocal
 from ..repositories.gmail_sync_repository import GmailSyncRepository
 from ..repositories.third_party_context_repository import ThirdPartyContextRepository
-from ..services import gmail_pipeline_service, s3_service
+from ..services import gmail_pipeline_service, qdrant_service, s3_service
 from ..services.gmail_auth_service import get_valid_credentials
 from .gmail_ingest_task import (
     _full_sync,
@@ -26,7 +26,7 @@ from .gmail_ingest_task import (
 
 logger = logging.getLogger(__name__)
 
-_PIPELINE_BATCH_SIZE = 50  # emails per pipeline batch
+_PIPELINE_BATCH_SIZE = 200  # was 50 — token fix gives ~7x more budget headroom
 
 
 def _load_batch_s3(agent_id: str, message_ids: list[str]) -> list[dict]:
@@ -111,6 +111,9 @@ def ingest_and_pipeline_gmail(
         from googleapiclient.discovery import build as _build_svc  # noqa: PLC0415
 
         service = _build_svc("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        account_email: str = profile.get("emailAddress", "")
+        total_estimate: int = profile.get("messagesTotal", 0)
         counter_lock = threading.Lock()
         # Capture task_id into a thread-safe closure — self.request.id is a
         # Celery thread-local and resolves to None inside ThreadPoolExecutor workers.
@@ -153,8 +156,6 @@ def ingest_and_pipeline_gmail(
                     )
                     sync_repo.clear(agent_id)
                     counters = {"fetched": 0, "skipped": 0, "failed": 0}
-                    profile = service.users().getProfile(userId="me").execute()
-                    total_estimate: int = profile.get("messagesTotal", 0)
                     _update_progress(
                         "FETCHING",
                         {
@@ -181,8 +182,6 @@ def ingest_and_pipeline_gmail(
                 else:
                     raise
         else:
-            profile = service.users().getProfile(userId="me").execute()
-            total_estimate = profile.get("messagesTotal", 0)
             _update_progress(
                 "FETCHING",
                 {
@@ -226,12 +225,6 @@ def ingest_and_pipeline_gmail(
         # ── Phase 2: Pipeline ─────────────────────────────────────────────────
         ctx_repo.update_status(ctx_id, "processing")
 
-        # Phase 2 reuses the same credentials — no second get_valid_credentials call needed
-        from googleapiclient.discovery import build as _build_svc2  # noqa: PLC0415
-        gmail_svc = _build_svc2("gmail", "v1", credentials=creds)
-        profile = gmail_svc.users().getProfile(userId="me").execute()
-        account_email: str = profile.get("emailAddress", "")
-
         message_ids = s3_service.list_gmail_message_ids(agent_id)
         total_pipeline = len(message_ids)
         processed = failed = 0
@@ -268,17 +261,24 @@ def ingest_and_pipeline_gmail(
 
             batch_ids = message_ids[i : i + _PIPELINE_BATCH_SIZE]
             raws = _load_batch_s3(agent_id, batch_ids)
+            s3_misses = len(batch_ids) - len(raws)
+            failed += s3_misses
             try:
                 gmail_pipeline_service.process_messages_batch(raws, agent_id, account_email)
                 processed += len(raws)
             except Exception:
-                failed += len(raws)
                 logger.exception(
-                    "Pipeline batch failed for agent %s (batch starting at %d).",
+                    "Pipeline batch failed for agent %s (batch starting at %d), retrying individually...",
                     agent_id,
                     i,
                 )
-            failed += len(batch_ids) - len(raws)  # S3 misses
+                for raw in raws:
+                    try:
+                        gmail_pipeline_service.process_message(raw, agent_id, account_email)
+                        processed += 1
+                    except Exception:
+                        failed += 1
+                        logger.exception("Single message failed: %s", raw.get("id"))
 
             _update_progress(
                 "PROCESSING",
@@ -313,4 +313,150 @@ def ingest_and_pipeline_gmail(
 
     finally:
         unregister_active_task(agent_id, task_id)
+        db.close()
+
+
+@celery_app.task(bind=True, base=AbortableTask, max_retries=3)
+def delete_gmail_context(
+    self, agent_id: str, context_id: str
+) -> dict[str, object]:
+    """Delete all Gmail data (soft-delete S3, hard-delete Qdrant/DB).
+
+    Deletion happens in stages with progress updates:
+    1. Move S3 data to expired/ prefix (soft-delete, auto-cleanup in 30 days)
+    2. Delete Qdrant embeddings (hard-delete)
+    3. Delete context DB row (hard-delete, only if steps 1-2 succeed)
+
+    DB row is ONLY deleted after S3 and Qdrant succeed, so if any step fails,
+    the DB row remains as a recovery point for manual cleanup or retry.
+
+    Emits progress updates so callers can poll the Celery result by task_id.
+
+    Args:
+        agent_id: Owner of the Gmail data namespace.
+        context_id: UUID string of the ThirdPartyContext row to delete.
+    """
+    task_id: str = self.request.id
+    ctx_id = uuid.UUID(context_id)
+    db = SessionLocal()
+    tagged_s3 = 0
+    deleted_qdrant = 0
+
+    try:
+        # ── Step 1: Tag S3 objects as expired (soft-delete) ────────────────
+        _update_progress(
+            "DELETING",
+            {
+                "stage": "expiring_s3",
+                "message": "Marking emails as expired (auto-deleted in 30 days)...",
+                "progress": 0,
+                "task_id": task_id,
+            },
+        )
+
+        def _on_s3_progress(tagged: int, total: int) -> None:
+            """Emit progress updates every 50 objects during S3 tagging."""
+            _update_progress(
+                "DELETING",
+                {
+                    "stage": "expiring_s3",
+                    "message": f"Marking emails as expired ({tagged}/{total})...",
+                    "progress": int((tagged / total * 100) if total else 0),
+                    "tagged": tagged,
+                    "total": total,
+                    "task_id": task_id,
+                },
+            )
+
+        try:
+            tagged_s3 = s3_service.tag_gmail_as_expired(
+                agent_id, progress_callback=_on_s3_progress
+            )
+            logger.info(
+                "Tagged %d S3 objects as expired for agent %s (context %s).",
+                tagged_s3,
+                agent_id,
+                context_id,
+            )
+        except Exception as s3_exc:
+            logger.exception("S3 tagging failed for agent %s.", agent_id)
+            _set_ctx_status(db, ctx_id, "delete_failed")
+            _update_progress(
+                "FAILURE",
+                {
+                    "stage": "error",
+                    "message": f"S3 soft-delete failed: {s3_exc}",
+                    "task_id": task_id,
+                },
+            )
+            raise
+
+        # ── Step 2: Delete Qdrant vectors ─────────────────────────────────
+        _update_progress(
+            "DELETING",
+            {
+                "stage": "deleting_qdrant",
+                "message": "Deleting vector embeddings from Qdrant...",
+                "tagged_s3_objects": tagged_s3,
+                "task_id": task_id,
+            },
+        )
+        try:
+            deleted_qdrant = qdrant_service.delete_points_for_agent_source(agent_id, "gmail")
+            logger.info(
+                "Deleted %d Qdrant points for agent %s (context %s).",
+                deleted_qdrant,
+                agent_id,
+                context_id,
+            )
+        except Exception as qdrant_exc:
+            logger.exception("Qdrant deletion failed for agent %s.", agent_id)
+            _set_ctx_status(db, ctx_id, "delete_failed")
+            _update_progress(
+                "FAILURE",
+                {
+                    "stage": "error",
+                    "message": f"Qdrant deletion failed: {qdrant_exc}",
+                    "task_id": task_id,
+                },
+            )
+            raise
+
+        # ── Step 3: Delete DB row (ONLY after S3 + Qdrant succeed) ────────
+        _update_progress(
+            "DELETING",
+            {
+                "stage": "deleting_db",
+                "message": "Removing context record...",
+                "tagged_s3_objects": tagged_s3,
+                "deleted_qdrant_points": deleted_qdrant,
+                "task_id": task_id,
+            },
+        )
+        ctx_repo = ThirdPartyContextRepository(db)
+        deleted_db = ctx_repo.delete(ctx_id)
+
+        logger.info(
+            "Delete task %s complete for agent %s (context %s).",
+            task_id,
+            agent_id,
+            context_id,
+        )
+        return {
+            "stage": "complete",
+            "message": "Context deleted successfully (S3 data tagged for 30-day expiry).",
+            "context_id": context_id,
+            "agent_id": agent_id,
+            "tagged_s3_objects": tagged_s3,
+            "deleted_qdrant_points": deleted_qdrant,
+            "deleted_db_row": deleted_db,
+            "s3_retention_days": 30,
+            "task_id": task_id,
+        }
+
+    except Exception as exc:
+        logger.exception("Delete task %s failed: %s", task_id, exc)
+        raise self.retry(exc=exc, countdown=60)
+
+    finally:
         db.close()

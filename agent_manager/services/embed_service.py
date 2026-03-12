@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # ── Shared constants ─────────────────────────────────────────────────────────
 
-_TOKENS_PER_WORD = 10
+_TOKENS_PER_WORD = 1.5  # was 10 — English prose averages ~1.3 tokens/word; 1.5 adds safety headroom
 _MAX_429_RETRIES = 5
 
 # ── OpenAI: text-embedding-3-small ───────────────────────────────────────────
@@ -225,29 +225,9 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     return _embed_texts_openai(texts)
 
 
-# OpenAI hard limit per API call (we stay below with _OPENAI_MAX_INPUTS, but
-# embed_texts_safe guards against callers sending arbitrarily large lists).
-_SAFE_MAX_INPUTS = 2048
-
-
 def embed_texts_safe(texts: list[str]) -> list[list[float]]:
-    """Embed texts, chunking into sub-batches of up to 2048 inputs internally.
-
-    Callers (e.g. batch pipeline) can pass any number of texts without worrying
-    about provider input limits — this wrapper handles the splitting.
-
-    Args:
-        texts: Texts to embed. Order is preserved in the returned list.
-
-    Returns:
-        Float vectors in the same order as *texts*.
-    """
-    if not texts:
-        return []
-    vectors: list[list[float]] = []
-    for i in range(0, len(texts), _SAFE_MAX_INPUTS):
-        vectors.extend(embed_texts(texts[i : i + _SAFE_MAX_INPUTS]))
-    return vectors
+    """Thin alias — embed_texts already handles all batching and rate-limiting internally."""
+    return embed_texts(texts)
 
 
 def embed_single(text: str) -> list[float]:

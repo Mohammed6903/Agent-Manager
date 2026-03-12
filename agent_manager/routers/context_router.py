@@ -170,8 +170,14 @@ async def task_progress(task_id: str):
     async def event_stream():
         while True:
             result = celery_app.AsyncResult(task_id)
-            state = result.state
-            info = result.info or {}
+            try:
+                state = result.state
+                info = result.info or {}
+            except Exception:
+                # Celery couldn't deserialize the stored failure result (e.g. missing
+                # exc_type on a retry exception). Emit a clean FAILURE event and stop.
+                yield f'data: {json.dumps({"task_id": task_id, "status": "FAILURE", "message": "Task failed — check worker logs for details."})}\n\n'
+                break
 
             data = {
                 "task_id": task_id,
