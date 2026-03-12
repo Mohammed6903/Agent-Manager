@@ -306,7 +306,7 @@ def ingest_and_pipeline_gmail(
     except Exception as exc:
         _set_ctx_status(db, ctx_id, "failed")
         _update_progress(
-            "FAILURE",
+            "FAILED",
             {"stage": "error", "message": str(exc), "task_id": task_id},
         )
         raise self.retry(exc=exc, countdown=300)
@@ -382,7 +382,7 @@ def delete_gmail_context(
             logger.exception("S3 tagging failed for agent %s.", agent_id)
             _set_ctx_status(db, ctx_id, "delete_failed")
             _update_progress(
-                "FAILURE",
+                "FAILED",
                 {
                     "stage": "error",
                     "message": f"S3 soft-delete failed: {s3_exc}",
@@ -413,7 +413,7 @@ def delete_gmail_context(
             logger.exception("Qdrant deletion failed for agent %s.", agent_id)
             _set_ctx_status(db, ctx_id, "delete_failed")
             _update_progress(
-                "FAILURE",
+                "FAILED",
                 {
                     "stage": "error",
                     "message": f"Qdrant deletion failed: {qdrant_exc}",

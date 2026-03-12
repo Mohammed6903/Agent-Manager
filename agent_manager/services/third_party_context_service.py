@@ -45,7 +45,7 @@ class ThirdPartyContextService:
         if active_ctx:
             if active_ctx.celery_task_id:
                 task_state = celery_app.AsyncResult(active_ctx.celery_task_id).state
-                if task_state in {"SUCCESS", "FAILURE", "REVOKED"}:
+                if task_state in {"SUCCESS", "FAILURE", "FAILED", "REVOKED"}:
                     ctx_repo.update_status(active_ctx.id, "failed")
                 else:
                     raise HTTPException(

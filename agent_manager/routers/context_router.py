@@ -176,7 +176,7 @@ async def task_progress(task_id: str):
             except Exception:
                 # Celery couldn't deserialize the stored failure result (e.g. missing
                 # exc_type on a retry exception). Emit a clean FAILURE event and stop.
-                yield f'data: {json.dumps({"task_id": task_id, "status": "FAILURE", "message": "Task failed — check worker logs for details."})}\n\n'
+                yield f'data: {json.dumps({"task_id": task_id, "status": "FAILED", "message": "Task failed — check worker logs for details."})}\n\n'
                 break
 
             data = {
@@ -186,7 +186,7 @@ async def task_progress(task_id: str):
             }
             yield f"data: {json.dumps(data)}\n\n"
 
-            if state in ("SUCCESS", "FAILURE", "REVOKED"):
+            if state in ("SUCCESS", "FAILURE", "FAILED", "REVOKED"):
                 break
 
             await asyncio.sleep(1)
