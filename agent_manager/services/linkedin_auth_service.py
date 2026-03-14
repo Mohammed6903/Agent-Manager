@@ -65,6 +65,12 @@ async def exchange_code(code: str) -> dict:
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+        # TEMP DEBUG — remove after fixing
+        logger.error("LinkedIn token exchange status: %s", resp.status_code)
+        logger.error("LinkedIn token exchange body: %s", resp.text)
+        logger.error("LinkedIn redirect_uri sent: %s", REDIRECT_URI)
+        resp.raise_for_status()
+        return resp.json()
         resp.raise_for_status()
         return resp.json()
 
