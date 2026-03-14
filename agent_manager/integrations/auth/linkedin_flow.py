@@ -51,19 +51,17 @@ class LinkedInOAuth2Flow(OAuth2FlowProvider):
 
         # Fetch user profile metadata
         from ...services.linkedin_service import get_userinfo
-        user_metadata = []
+        user_metadata = {}
         try:
             profile = await get_userinfo(db, agent_id)
             if profile.get("email"):
-                user_metadata.append({"key": "email", "value": profile["email"], "type": "string"})
+                user_metadata["email"] = profile["email"]
             if profile.get("name"):
-                user_metadata.append({"key": "name", "value": profile["name"], "type": "string"})
-            if profile.get("given_name") and profile.get("family_name"):
-                full_name = f"{profile['given_name']} {profile['family_name']}"
-                if not profile.get("name"):
-                    user_metadata.append({"key": "name", "value": full_name, "type": "string"})
+                user_metadata["name"] = profile["name"]
+            elif profile.get("given_name") and profile.get("family_name"):
+                user_metadata["name"] = f"{profile['given_name']} {profile['family_name']}"
             if profile.get("picture"):
-                user_metadata.append({"key": "picture", "value": profile["picture"], "type": "image_url"})
+                user_metadata["picture"] = profile["picture"]
         except Exception as e:
             logger.warning(f"Failed to fetch LinkedIn user info during callback: {e}")
 
