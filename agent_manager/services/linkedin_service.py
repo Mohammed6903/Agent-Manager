@@ -29,6 +29,13 @@ def _normalize_urn(value: str, urn_type: str) -> str:
     prefix = f"urn:li:{urn_type}:"
     return value if value.startswith(prefix) else f"{prefix}{value}"
 
+def _extract_ugc_post_id(urn: str) -> str:
+    """Extract the numeric ID from any LinkedIn post URN or return as-is if already an ID."""
+    urn = unquote(urn)
+    if urn.startswith("urn:li:share:") or urn.startswith("urn:li:ugcPost:"):
+        return urn.split(":")[-1]  # "7438602681604222976"
+    return urn  # already a raw numeric ID
+
 
 async def _maybe_refresh_creds(db: Session, agent_id: str, creds: dict) -> dict:
     """Refresh the access token if it has expired (or is about to, within 60s).
@@ -161,11 +168,12 @@ async def create_ugc_post(db: Session, agent_id: str, author_urn: str, text: str
         return data
 
 
+@log_integration_call("linkedin", "GET", "/ugcPosts/{ugcPostId}")
 async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
-    urn = unquote(ugc_post_urn)
+    post_id = _extract_ugc_post_id(ugc_post_urn)
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        url = f"https://api.linkedin.com/v2/ugcPosts/{urn}"
+        url = f"https://api.linkedin.com/v2/ugcPosts/{post_id}"
         req = client.build_request("GET", url)
         resp = await client.send(req)
         if not resp.is_success:
@@ -173,24 +181,16 @@ async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
         return resp.json()
 
 
-@log_integration_call("linkedin", "DELETE", "/ugcPosts/{ugcPostUrn}")
+@log_integration_call("linkedin", "DELETE", "/ugcPosts/{ugcPostId}")
 async def delete_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
-    urn = unquote(ugc_post_urn)
-    
-    if urn.startswith("urn:li:share:"):
-        urn = urn.replace("urn:li:share:", "urn:li:ugcPost:", 1)
-    
+    post_id = _extract_ugc_post_id(ugc_post_urn)
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        # Build request manually to prevent httpx from encoding the URN colons
-        url = f"https://api.linkedin.com/v2/ugcPosts/{urn}"
+        url = f"https://api.linkedin.com/v2/ugcPosts/{post_id}"
         req = client.build_request("DELETE", url)
         resp = await client.send(req)
-        
-        # Surface LinkedIn's error body before raising
         if not resp.is_success:
             raise Exception(f"LinkedIn DELETE failed {resp.status_code}: {resp.text}")
-        
         return {"status": "success"} if resp.status_code == 204 else resp.json()
 
 
