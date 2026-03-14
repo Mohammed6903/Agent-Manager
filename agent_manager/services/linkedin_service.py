@@ -150,7 +150,15 @@ async def create_ugc_post(db: Session, agent_id: str, author_urn: str, text: str
     async with client:
         resp = await client.post("/ugcPosts", json=payload)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        
+        # Normalize the returned ID to ugcPost URN for consistency
+        if "id" in data and data["id"].startswith("urn:li:share:"):
+            data["ugcPostUrn"] = data["id"].replace("urn:li:share:", "urn:li:ugcPost:", 1)
+        else:
+            data["ugcPostUrn"] = data.get("id")
+        
+        return data
 
 
 @log_integration_call("linkedin", "GET", "/ugcPosts/{ugcPostUrn}")
@@ -165,8 +173,13 @@ async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
 
 @log_integration_call("linkedin", "DELETE", "/ugcPosts/{ugcPostUrn}")
 async def delete_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
-    # Decode in case the caller passed a percent-encoded URN
     urn = unquote(ugc_post_urn)
+    
+    # LinkedIn creates posts with urn:li:share: but the delete endpoint
+    # requires urn:li:ugcPost: — convert if needed.
+    if urn.startswith("urn:li:share:"):
+        urn = urn.replace("urn:li:share:", "urn:li:ugcPost:", 1)
+    
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
         resp = await client.delete(f"/ugcPosts/{urn}")
