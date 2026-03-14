@@ -21,6 +21,7 @@ from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
 from agent_manager.routers.twitter_router import router as twitter_router
+from agent_manager.routers.linkedin_router import router as linkedin_router
 from agent_manager.routers.cron_template_router import router as cron_template_router
 from agent_manager.routers.analytics_router import router as analytics_router
 from agent_manager.routers.third_party_context_router import router as third_party_context_router
@@ -206,6 +207,13 @@ app.include_router(
 app.include_router(
     twitter_router,
     prefix="/api/integrations/twitter",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# LinkedIn endpoints
+app.include_router(
+    linkedin_router,
+    prefix="/api/integrations/linkedin",
     responses={404: {"description": "Resource not found"}},
 )
 
