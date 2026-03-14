@@ -35,34 +35,6 @@ async def list_available_integrations(
     """List all available hardcoded integrations."""
     return await svc.list_available_integrations()
 
-@router.get("/{integration_name}", response_model=IntegrationDefResponse)
-async def get_integration_def(
-    integration_name: str,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Get a specific integration definition."""
-    # Note: though get_integration_def is currently sync in service, 
-    # we make this async for consistency if it ever needs to fetch agents.
-    # For now, we can just return it.
-    return svc.get_integration_def(integration_name)
-
-
-# -- Agent Assignment & Usage --
-
-@router.post("/assign")
-def assign_integration_to_agent(
-    req: AgentIntegrationAssignRequest,
-    svc: IntegrationService = Depends(get_integration_service),
-):
-    """Assign an integration to an agent by providing valid credentials."""
-    result = svc.assign_integration(req)
-    
-    if isinstance(result, str):
-        # result is an auth_url string for OAuth flows — return it as JSON
-        return {"status": "oauth_required", "auth_url": result, "integration_name": req.integration_name, "agent_id": req.agent_id}
-
-    return AgentIntegrationResponse.model_validate(result)
-
 @router.get("/oauth/callback/{provider}")
 async def generic_oauth_callback(
     request: Request,
@@ -142,6 +114,34 @@ async def generic_oauth_callback(
     """
     
     return HTMLResponse(content=html_content)
+
+@router.get("/{integration_name}", response_model=IntegrationDefResponse)
+async def get_integration_def(
+    integration_name: str,
+    svc: IntegrationService = Depends(get_integration_service),
+):
+    """Get a specific integration definition."""
+    # Note: though get_integration_def is currently sync in service, 
+    # we make this async for consistency if it ever needs to fetch agents.
+    # For now, we can just return it.
+    return svc.get_integration_def(integration_name)
+
+
+# -- Agent Assignment & Usage --
+
+@router.post("/assign")
+def assign_integration_to_agent(
+    req: AgentIntegrationAssignRequest,
+    svc: IntegrationService = Depends(get_integration_service),
+):
+    """Assign an integration to an agent by providing valid credentials."""
+    result = svc.assign_integration(req)
+    
+    if isinstance(result, str):
+        # result is an auth_url string for OAuth flows — return it as JSON
+        return {"status": "oauth_required", "auth_url": result, "integration_name": req.integration_name, "agent_id": req.agent_id}
+
+    return AgentIntegrationResponse.model_validate(result)
 
 @router.get("/agent/{agent_id}", response_model=AgentIntegrationsStatusResponse)
 def get_agent_integrations(
