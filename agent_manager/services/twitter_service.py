@@ -10,6 +10,7 @@ import httpx
 from .secret_service import SecretService
 from ..integrations.sdk_logger import log_integration_call
 from ..config import settings
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,8 @@ async def _refresh_twitter_token(db: Session, agent_id: str, refresh_token: str)
         SecretService.set_secret(db, agent_id, "twitter", string_tokens)
         return tokens
 
-async def _get_twitter_client(db: Session, agent_id: str) -> httpx.AsyncClient:
-    """Helper to get an authenticated HTTP client for Twitter API v2 with auto-refresh."""
+@asynccontextmanager
+async def _get_twitter_client(db: Session, agent_id: str):
     creds = SecretService.get_secret(db, agent_id, "twitter")
     if not creds:
         raise Exception("Twitter credentials not found for agent")
@@ -50,12 +51,10 @@ async def _get_twitter_client(db: Session, agent_id: str) -> httpx.AsyncClient:
     refresh_token = creds.get("refresh_token")
     expires_at = creds.get("expires_at")
 
-    # Check if we need to refresh (buffer of 60 seconds)
     should_refresh = False
     if expires_at and int(time.time()) + 60 > int(expires_at):
         should_refresh = True
     elif not expires_at and refresh_token:
-        # Legacy tokens without expires_at — refresh once to get it
         should_refresh = True
 
     if should_refresh and refresh_token:
@@ -69,12 +68,11 @@ async def _get_twitter_client(db: Session, agent_id: str) -> httpx.AsyncClient:
     if not access_token:
         raise Exception("Twitter access token not found")
         
-    return httpx.AsyncClient(
+    async with httpx.AsyncClient(
         base_url="https://api.twitter.com/2",
-        headers={
-            "Authorization": f"Bearer {access_token}"
-        }
-    )
+        headers={"Authorization": f"Bearer {access_token}"}
+    ) as client:
+        yield client
 
 
 @log_integration_call("twitter", "POST", "/tweets")
