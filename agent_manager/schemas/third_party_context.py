@@ -20,6 +20,11 @@ class ThirdPartyContextCreate(BaseModel):
     )
 
 
+class MappedAgent(BaseModel):
+    agent_id: str
+    name: str
+
+
 class ThirdPartyContextResponse(BaseModel):
     id: UUID
     agent_id: str
@@ -27,6 +32,7 @@ class ThirdPartyContextResponse(BaseModel):
     integration_metadata: Optional[dict[str, Any]] = None
     celery_task_id: Optional[str] = None
     status: str
+    mapped_agents: list[MappedAgent] = Field(default_factory=list)
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -41,10 +47,5 @@ class ThirdPartyContextAssignRequest(BaseModel):
     agent_id: str = Field(..., description="The agent to assign this context to")
 
 
-class ThirdPartyContextAssignResponse(BaseModel):
-    id: UUID
-    agent_id: str
-    context_id: UUID
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+class AvailableAgentsResponse(BaseModel):
+    agents: list[MappedAgent]

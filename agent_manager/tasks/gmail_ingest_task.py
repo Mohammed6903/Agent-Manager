@@ -47,21 +47,21 @@ def _redis() -> redis_lib.Redis:
     return redis_lib.from_url(settings.REDIS_URL, decode_responses=True)
 
 
-def _active_field(agent_id: str, integration_name: str = "gmail") -> str:
-    """Build a stable Redis hash field for a single integration + agent pair."""
-    return f"{integration_name}:{agent_id}"
+def _active_field(agent_id: str, integration_name: str = "gmail", task_type: str = "ingest") -> str:
+    """Build a stable Redis hash field for a single integration + agent pair + task type."""
+    return f"{integration_name}:{task_type}:{agent_id}"
 
 
-def register_active_task(agent_id: str, task_id: str) -> None:
-    """Record that *task_id* is actively ingesting mail for *agent_id*."""
+def register_active_task(agent_id: str, task_id: str, task_type: str = "ingest") -> None:
+    """Record that *task_id* is actively working for *agent_id*."""
     r = _redis()
-    r.hset(_ACTIVE_KEY, _active_field(agent_id), task_id)
+    r.hset(_ACTIVE_KEY, _active_field(agent_id, task_type=task_type), task_id)
     r.expire(_ACTIVE_KEY, _ACTIVE_TTL)
 
 
-def unregister_active_task(agent_id: str, task_id: str) -> None:
+def unregister_active_task(agent_id: str, task_id: str, task_type: str = "ingest") -> None:
     """Remove active entry only if it still points at *task_id*."""
-    field = _active_field(agent_id)
+    field = _active_field(agent_id, task_type=task_type)
     r = _redis()
     current = r.hget(_ACTIVE_KEY, field)
     if current == task_id:
@@ -100,13 +100,16 @@ def _update_progress(task_state: str, meta: dict[str, Any]) -> None:
 
 def _emit(counters: dict[str, int], total: int) -> None:
     """Emit a FETCHING progress event with the current counters."""
+    current = counters["fetched"]
+    percentage = int((current / total * 100) if total > 0 else 0)
     _update_progress(
         "FETCHING",
         {
             "stage": "fetching",
-            "message": "Fetching emails...",
-            "fetched": counters["fetched"],
+            "message": f"Fetching emails ({current}/{total})...",
+            "current": current,
             "total": total,
+            "percentage": percentage,
             "skipped": counters["skipped"],
             "failed": counters["failed"],
         },
@@ -339,13 +342,14 @@ def _full_sync(
         {
             "stage": "scanning",
             "message": "Scanning already-stored emails...",
-            "fetched": 0,
+            "current": 0,
             "total": total_estimate,
+            "percentage": 0,
             "skipped": 0,
             "failed": 0,
         },
     )
-    stored_ids: set[str] = set(s3_service.list_gmail_message_ids(agent_id))
+    stored_status: dict[str, bool] = s3_service.list_all_gmail_message_ids_with_status(agent_id)
 
     # ── Phase 1: Collect all unfetched message IDs via pagination ────────────
     all_to_fetch: list[str] = []
@@ -365,8 +369,28 @@ def _full_sync(
         if not message_refs:
             break
 
-        to_fetch = [ref["id"] for ref in message_refs if ref["id"] not in stored_ids]
-        counters["skipped"] += len(message_refs) - len(to_fetch)
+        to_fetch: list[str] = []
+        to_restore: list[str] = []
+        
+        for ref in message_refs:
+            msg_id = ref["id"]
+            if msg_id not in stored_status:
+                to_fetch.append(msg_id)
+            elif stored_status[msg_id]:
+                # It exists but is softly-deleted (expired), we can just restore it
+                to_restore.append(msg_id)
+            else:
+                # It exists and is active
+                counters["skipped"] += 1
+
+        if to_restore:
+            restored = s3_service.untag_gmail_as_expired(agent_id, to_restore)
+            with _lock:
+                counters["fetched"] += restored
+            # Update local state cache so if this ID is seen again, we know it's active
+            for r_id in to_restore:
+                stored_status[r_id] = False
+
         all_to_fetch.extend(to_fetch)
 
         page_token = response.get("nextPageToken")
@@ -379,8 +403,9 @@ def _full_sync(
         {
             "stage": "fetching",
             "message": f"Fetching {len(all_to_fetch)} new emails...",
-            "fetched": 0,
+            "current": 0,
             "total": actual_total,
+            "percentage": 0,
             "skipped": counters["skipped"],
             "failed": 0,
         },
@@ -432,6 +457,8 @@ def _incremental_sync(
     new_history_id: str = history_id
     to_fetch: list[str] = []
 
+    stored_status: dict[str, bool] = s3_service.list_all_gmail_message_ids_with_status(agent_id)
+
     # ── Collect all added message IDs from history ───────────────────────────
     while True:
         if is_aborted():
@@ -447,14 +474,29 @@ def _incremental_sync(
 
         response = service.users().history().list(**kwargs).execute()
         new_history_id = response.get("historyId", new_history_id)
+        
+        to_restore: list[str] = []
 
         for record in response.get("history", []):
             for added in record.get("messagesAdded", []):
                 msg_id: str = added["message"]["id"]
-                if not s3_service.gmail_message_exists(agent_id, msg_id):
+                
+                if msg_id not in stored_status:
                     to_fetch.append(msg_id)
+                elif stored_status[msg_id]:
+                    # Exists but is expired, restore it
+                    to_restore.append(msg_id)
                 else:
+                    # Exists and is active
                     counters["skipped"] += 1
+                    
+        if to_restore:
+            restored = s3_service.untag_gmail_as_expired(agent_id, to_restore)
+            with _lock:
+                counters["fetched"] += restored
+            # Update local state cache
+            for r_id in to_restore:
+                stored_status[r_id] = False
 
         page_token = response.get("nextPageToken")
         if not page_token:

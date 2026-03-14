@@ -95,6 +95,23 @@ class ThirdPartyContextRepository:
             .all()
         )
 
+    def get_all_by_integration_and_status(
+        self, integration_name: str, status: str
+    ) -> list[ThirdPartyContext]:
+        """Return all contexts for a specific integration and status."""
+        return list(
+            self.db.execute(
+                select(ThirdPartyContext)
+                .where(
+                    ThirdPartyContext.integration_name == integration_name,
+                    ThirdPartyContext.status == status,
+                )
+                .order_by(ThirdPartyContext.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+
     def get_active_by_agent_and_integration(
         self, agent_id: str, integration_name: str
     ) -> Optional[ThirdPartyContext]:
@@ -124,3 +141,22 @@ class ThirdPartyContextRepository:
         self.db.delete(row)
         self.db.commit()
         return True
+
+    def delete_all_by_agent_and_integration(
+        self, agent_id: str, integration_name: str
+    ) -> int:
+        """Delete all contexts for a specific agent and integration.
+
+        Returns the number of rows deleted.
+        """
+        rows = self.db.execute(
+            select(ThirdPartyContext).where(
+                ThirdPartyContext.agent_id == agent_id,
+                ThirdPartyContext.integration_name == integration_name,
+            )
+        ).scalars().all()
+        count = len(rows)
+        for row in rows:
+            self.db.delete(row)
+        self.db.commit()
+        return count

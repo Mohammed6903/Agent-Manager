@@ -14,6 +14,7 @@ from ..repositories.third_party_context_assignment_repository import (
     ThirdPartyContextAssignmentRepository,
 )
 from ..services import gmail_service
+from ..services.agent_service import AgentService
 
 logger = logging.getLogger(__name__)
 
@@ -21,190 +22,167 @@ logger = logging.getLogger(__name__)
 class ThirdPartyContextService:
     """Orchestrates validation and task dispatch for third-party context jobs."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, agent_service: AgentService | None = None) -> None:
         self.db = db
+        self.agent_service = agent_service
 
-    def create_gmail_context(self, agent_id: str, force_full_sync: bool = False) -> dict:
-        """Validate credentials, create a tracking row, and enqueue the sync task.
+    async def _enrich_context(self, ctx: any) -> dict:
+        """Add mapped_agents (ID + Name) to a context object/row."""
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        mappings = assign_repo.get_assignments_for_context(ctx.id)
+        mapped_ids = [m.agent_id for m in mappings]
 
-        Args:
-            agent_id: The agent requesting Gmail sync.
-            force_full_sync: When True, clear any stored sync checkpoint so the
-                task performs a full re-sync instead of an incremental one.
+        # Fetch names from agent_service if available
+        agent_map = {}
+        if self.agent_service:
+            try:
+                all_agents = await self.agent_service.list_agents()
+                agent_map = {a["id"]: a["name"] for a in all_agents}
+            except Exception as e:
+                logger.warning("Could not fetch agent names for enrichment: %s", e)
 
-        Returns:
-            Dict with task_id, context_id, and a status message.
+        # Convert SQLAlchemy model to dict if it isn't already
+        if hasattr(ctx, "__dict__"):
+            data = {
+                "id": ctx.id,
+                "agent_id": ctx.agent_id,
+                "integration_name": ctx.integration_name,
+                "integration_metadata": ctx.integration_metadata,
+                "celery_task_id": ctx.celery_task_id,
+                "status": ctx.status,
+                "created_at": ctx.created_at,
+                "updated_at": ctx.updated_at,
+            }
+        else:
+            data = dict(ctx)
 
-        Raises:
-            HTTPException 400: If Gmail is not assigned or credentials are invalid.
-        """
+        data["mapped_agents"] = [
+            {"agent_id": aid, "name": agent_map.get(aid, "Unknown Agent")}
+            for aid in mapped_ids
+        ]
+        return data
+
+    async def create_gmail_context(self, agent_id: str, force_full_sync: bool = False) -> dict:
+        """Validate credentials, create a tracking row, and enqueue the sync task."""
         ctx_repo = ThirdPartyContextRepository(self.db)
 
-        # Reject duplicate starts while another Gmail run is active.
+        # Check for a truly active task for THIS integration/agent pair
         active_ctx = ctx_repo.get_active_by_agent_and_integration(agent_id, "gmail")
-        if active_ctx:
-            if active_ctx.celery_task_id:
-                task_state = celery_app.AsyncResult(active_ctx.celery_task_id).state
-                if task_state in {"SUCCESS", "FAILURE", "FAILED", "REVOKED"}:
-                    ctx_repo.update_status(active_ctx.id, "failed")
-                else:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            "A Gmail context task is already running for this "
-                            f"agent. task_id={active_ctx.celery_task_id}"
-                        ),
-                    )
-            else:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "A Gmail context task is already running for this "
-                        "agent. Please wait for it to complete."
-                    ),
-                )
+        if active_ctx and active_ctx.celery_task_id:
+            state = celery_app.AsyncResult(active_ctx.celery_task_id).state
+            if state not in ("SUCCESS", "FAILURE", "FAILED", "REVOKED"):
+                return {
+                    "task_id": active_ctx.celery_task_id,
+                    "context_id": str(active_ctx.id),
+                    "message": "Gmail sync already in progress. Resuming view.",
+                }
 
-        # Verify Gmail is assigned to this agent
+        # Verify Gmail assignment
         assignment = IntegrationRepository(self.db).get_assignment(agent_id, "gmail")
         if not assignment:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Gmail integration is not assigned to agent '{agent_id}'. "
-                    "Please connect Gmail first."
-                ),
-            )
+            raise HTTPException(status_code=400, detail="Gmail integration not assigned to agent.")
 
-        # Verify Gmail credentials are still valid
+        # Verify credentials
         svc = gmail_service.get_service(self.db, agent_id)
         if not svc:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Gmail credentials are invalid or expired. "
-                    "Please reconnect Gmail."
-                ),
-            )
+            raise HTTPException(status_code=400, detail="Gmail credentials invalid/expired.")
 
-        # Create the tracking row in pending state
         ctx = ctx_repo.create(
             agent_id=agent_id,
             integration_name="gmail",
             metadata=assignment.integration_metadata,
         )
 
-        # Enqueue the merged task — import here to avoid circular imports at module load
+        # Automatically assign the creator so they appear in mapped_agents
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        assign_repo.assign(ctx.id, agent_id)
+
         from ..tasks.gmail_context_task import ingest_and_pipeline_gmail  # noqa: PLC0415
-
         task = ingest_and_pipeline_gmail.delay(agent_id, str(ctx.id), force_full_sync)
-
-        # Attach the task ID to the row now that we have it
         ctx_repo.update_task(ctx.id, task.id, "ingesting")
 
-        logger.info(
-            "Gmail context task %s enqueued for agent %s (context %s).",
-            task.id,
-            agent_id,
-            ctx.id,
-        )
         return {
             "task_id": task.id,
             "context_id": str(ctx.id),
             "message": "Background Gmail sync started.",
         }
 
-    def purge_gmail_context_data(self, context_id: uuid.UUID) -> dict:
-        """Enqueue background deletion of all Gmail data for this context.
-
-        Marks the context as 'deleting', dispatches a Celery task that removes
-        S3 objects, Qdrant points, and the DB row, then returns the task_id so
-        callers can poll for progress.
-
-        Args:
-            context_id: ID of the ThirdPartyContext row to purge.
-
-        Returns:
-            Dict with task_id, context_id, agent_id, and a status message.
-
-        Raises:
-            HTTPException 404: If the context does not exist.
-            HTTPException 400: If the context is not a Gmail context.
-        """
+    async def purge_gmail_context_data(self, context_id: uuid.UUID) -> dict:
+        """Enqueue background deletion of all Gmail data."""
         ctx_repo = ThirdPartyContextRepository(self.db)
         context = ctx_repo.get(context_id)
         if not context:
             raise HTTPException(status_code=404, detail="Context not found")
 
-        if context.integration_name != "gmail":
-            raise HTTPException(
-                status_code=400,
-                detail="Data purge is currently supported only for Gmail contexts.",
-            )
-
         from ..tasks.gmail_context_task import delete_gmail_context  # noqa: PLC0415
-
         task = delete_gmail_context.delay(context.agent_id, str(context_id))
-
         ctx_repo.update_task(context_id, task.id, "deleting")
 
-        logger.info(
-            "Delete task %s enqueued for agent %s (context %s).",
-            task.id,
-            context.agent_id,
-            context_id,
-        )
         return {
             "task_id": task.id,
             "context_id": str(context_id),
-            "agent_id": context.agent_id,
-            "integration": context.integration_name,
             "message": "Background delete started.",
         }
 
-    # ── List / Get ───────────────────────────────────────────────────────────
-
-    def get_context(self, context_id: uuid.UUID) -> dict:
-        """Fetch a single ThirdPartyContext by ID."""
+    async def get_context(self, context_id: uuid.UUID) -> dict:
+        """Fetch a single ThirdPartyContext by ID with its mappings."""
         ctx_repo = ThirdPartyContextRepository(self.db)
         ctx = ctx_repo.get(context_id)
         if not ctx:
             raise HTTPException(status_code=404, detail="Context not found")
-        return ctx
+        return await self._enrich_context(ctx)
 
-    def list_contexts_for_agent(self, agent_id: str) -> list:
+    async def list_contexts_for_agent(self, agent_id: str) -> list:
         """Return all ThirdPartyContext rows assigned to an agent."""
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
-        return assign_repo.get_contexts_for_agent(agent_id)
+        contexts = assign_repo.get_contexts_for_agent(agent_id)
+        return [await self._enrich_context(c) for c in contexts]
 
-    # ── Assignment ───────────────────────────────────────────────────────────
+    async def get_all_complete_contexts(self) -> list:
+        """Return all ThirdPartyContext rows whose status is 'complete'."""
+        ctx_repo = ThirdPartyContextRepository(self.db)
+        contexts = ctx_repo.get_all_complete()
+        return [await self._enrich_context(c) for c in contexts]
 
-    def assign_context(self, context_id: uuid.UUID, agent_id: str) -> dict:
-        """Create an assignment between an agent and a ThirdPartyContext."""
+    async def get_available_agents(self, context_id: uuid.UUID) -> list[dict]:
+        """Return agents NOT yet assigned to this context."""
+        if not self.agent_service:
+            return []
+        
+        all_agents = await self.agent_service.list_agents()
+        assign_repo = ThirdPartyContextAssignmentRepository(self.db)
+        mappings = assign_repo.get_assignments_for_context(context_id)
+        mapped_ids = {m.agent_id for m in mappings}
+
+        available = []
+        for a in all_agents:
+            if a["id"] not in mapped_ids:
+                available.append({"agent_id": a["id"], "name": a["name"]})
+        
+        return available
+
+    async def assign_context(self, context_id: uuid.UUID, agent_id: str) -> dict:
+        """Create an assignment and return the updated context."""
         ctx_repo = ThirdPartyContextRepository(self.db)
         ctx = ctx_repo.get(context_id)
         if not ctx:
             raise HTTPException(status_code=404, detail="Context not found")
 
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
-        row = assign_repo.assign(context_id, agent_id)
-        return row
+        assign_repo.assign(context_id, agent_id)
+        
+        # Return the ENTIRE context object so the frontend updates immediately
+        return await self._enrich_context(ctx)
 
     def unassign_context(self, context_id: uuid.UUID, agent_id: str) -> None:
-        """Remove an assignment between an agent and a ThirdPartyContext."""
+        """Remove an assignment."""
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         deleted = assign_repo.unassign(context_id, agent_id)
         if not deleted:
-            raise HTTPException(
-                status_code=404,
-                detail="Assignment not found",
-            )
+            raise HTTPException(status_code=404, detail="Assignment not found")
 
-    def get_all_complete_contexts(self) -> list:
-        """Return all ThirdPartyContext rows whose status is 'complete'."""
-        ctx_repo = ThirdPartyContextRepository(self.db)
-        return ctx_repo.get_all_complete()
-
-    def get_complete_contexts_for_agent(self, agent_id: str) -> list:
+    async def get_complete_contexts_for_agent(self, agent_id: str) -> list:
         """Return only 'complete' ThirdPartyContext rows assigned to an agent."""
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
-        return assign_repo.get_contexts_for_agent(agent_id, status="complete")
+        contexts = assign_repo.get_contexts_for_agent(agent_id, status="complete")
+        return [await self._enrich_context(c) for c in contexts]

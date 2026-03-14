@@ -81,7 +81,7 @@ def ingest_and_pipeline_gmail(
     db = SessionLocal()
 
     try:
-        register_active_task(agent_id, task_id)
+        register_active_task(agent_id, task_id, task_type="ingest")
         ctx_repo = ThirdPartyContextRepository(db)
         sync_repo = GmailSyncRepository(db)
         ctx_repo.update_task(ctx_id, task_id, "ingesting")
@@ -96,8 +96,9 @@ def ingest_and_pipeline_gmail(
             {
                 "stage": "counting",
                 "message": "Counting total emails...",
-                "fetched": 0,
+                "current": 0,
                 "total": 0,
+                "percentage": 0,
                 "skipped": 0,
                 "failed": 0,
                 "task_id": task_id,
@@ -130,8 +131,9 @@ def ingest_and_pipeline_gmail(
                 {
                     "stage": "fetching",
                     "message": "Fetching new emails since last sync...",
-                    "fetched": 0,
+                    "current": 0,
                     "total": 0,
+                    "percentage": 0,
                     "skipped": 0,
                     "failed": 0,
                     "task_id": task_id,
@@ -163,8 +165,9 @@ def ingest_and_pipeline_gmail(
                             "message": (
                                 f"Starting full fetch of ~{total_estimate} emails"
                             ),
-                            "fetched": 0,
+                            "current": 0,
                             "total": total_estimate,
+                            "percentage": 0,
                             "skipped": 0,
                             "failed": 0,
                             "task_id": task_id,
@@ -187,8 +190,9 @@ def ingest_and_pipeline_gmail(
                 {
                     "stage": "fetching",
                     "message": f"Starting fetch of ~{total_estimate} emails",
-                    "fetched": 0,
+                    "current": 0,
                     "total": total_estimate,
+                    "percentage": 0,
                     "skipped": 0,
                     "failed": 0,
                     "task_id": task_id,
@@ -234,8 +238,9 @@ def ingest_and_pipeline_gmail(
             {
                 "stage": "processing",
                 "message": "Starting pipeline...",
-                "processed": 0,
+                "current": 0,
                 "total": total_pipeline,
+                "percentage": 0,
                 "failed": 0,
                 "task_id": task_id,
             },
@@ -253,8 +258,9 @@ def ingest_and_pipeline_gmail(
                 return {
                     "stage": "aborted",
                     "message": "Task was cancelled.",
-                    "processed": processed,
+                    "current": processed,
                     "total": total_pipeline,
+                    "percentage": int((processed / total_pipeline * 100) if total_pipeline else 0),
                     "failed": failed,
                     "task_id": task_id,
                 }
@@ -280,13 +286,15 @@ def ingest_and_pipeline_gmail(
                         failed += 1
                         logger.exception("Single message failed: %s", raw.get("id"))
 
+            percentage = int((processed / total_pipeline * 100) if total_pipeline else 0)
             _update_progress(
                 "PROCESSING",
                 {
                     "stage": "processing",
-                    "message": "Processing emails...",
-                    "processed": processed,
+                    "message": f"Processing emails ({processed}/{total_pipeline})...",
+                    "current": processed,
                     "total": total_pipeline,
+                    "percentage": percentage,
                     "failed": failed,
                     "task_id": task_id,
                 },
@@ -297,8 +305,9 @@ def ingest_and_pipeline_gmail(
             "stage": "complete",
             "message": "Ingest and pipeline complete.",
             "ingest": ingest_result,
-            "processed": processed,
+            "current": processed,
             "total": total_pipeline,
+            "percentage": 100,
             "failed": failed,
             "task_id": task_id,
         }
@@ -312,7 +321,7 @@ def ingest_and_pipeline_gmail(
         raise self.retry(exc=exc, countdown=300)
 
     finally:
-        unregister_active_task(agent_id, task_id)
+        unregister_active_task(agent_id, task_id, task_type="ingest")
         db.close()
 
 
@@ -343,27 +352,31 @@ def delete_gmail_context(
     deleted_qdrant = 0
 
     try:
+        register_active_task(agent_id, task_id, task_type="delete")
         # ── Step 1: Tag S3 objects as expired (soft-delete) ────────────────
         _update_progress(
             "DELETING",
             {
                 "stage": "expiring_s3",
                 "message": "Marking emails as expired (auto-deleted in 30 days)...",
-                "progress": 0,
+                "current": 0,
+                "total": 0,
+                "percentage": 0,
                 "task_id": task_id,
             },
         )
 
         def _on_s3_progress(tagged: int, total: int) -> None:
             """Emit progress updates every 50 objects during S3 tagging."""
+            percentage = int((tagged / total * 100) if total else 0)
             _update_progress(
                 "DELETING",
                 {
                     "stage": "expiring_s3",
                     "message": f"Marking emails as expired ({tagged}/{total})...",
-                    "progress": int((tagged / total * 100) if total else 0),
-                    "tagged": tagged,
+                    "current": tagged,
                     "total": total,
+                    "percentage": percentage,
                     "task_id": task_id,
                 },
             )
@@ -397,7 +410,9 @@ def delete_gmail_context(
             {
                 "stage": "deleting_qdrant",
                 "message": "Deleting vector embeddings from Qdrant...",
-                "tagged_s3_objects": tagged_s3,
+                "current": 0,
+                "total": 1,
+                "percentage": 0,
                 "task_id": task_id,
             },
         )
@@ -428,13 +443,18 @@ def delete_gmail_context(
             {
                 "stage": "deleting_db",
                 "message": "Removing context record...",
-                "tagged_s3_objects": tagged_s3,
-                "deleted_qdrant_points": deleted_qdrant,
+                "current": 0,
+                "total": 1,
+                "percentage": 0,
                 "task_id": task_id,
             },
         )
         ctx_repo = ThirdPartyContextRepository(db)
         deleted_db = ctx_repo.delete(ctx_id)
+
+        # Also clear the sync checkpoints so a future reconnect does a full sync
+        sync_repo = GmailSyncRepository(db)
+        sync_repo.clear(agent_id)
 
         logger.info(
             "Delete task %s complete for agent %s (context %s).",
@@ -447,10 +467,9 @@ def delete_gmail_context(
             "message": "Context deleted successfully (S3 data tagged for 30-day expiry).",
             "context_id": context_id,
             "agent_id": agent_id,
-            "tagged_s3_objects": tagged_s3,
-            "deleted_qdrant_points": deleted_qdrant,
-            "deleted_db_row": deleted_db,
-            "s3_retention_days": 30,
+            "current": 1,
+            "total": 1,
+            "percentage": 100,
             "task_id": task_id,
         }
 
@@ -459,4 +478,5 @@ def delete_gmail_context(
         raise self.retry(exc=exc, countdown=60)
 
     finally:
+        unregister_active_task(agent_id, task_id, task_type="delete")
         db.close()

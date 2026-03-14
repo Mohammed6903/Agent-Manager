@@ -55,19 +55,26 @@ class ThirdPartyContextAssignmentRepository:
     def get_contexts_for_agent(
         self, agent_id: str, status: str | None = None
     ) -> list[ThirdPartyContext]:
-        """Return ThirdPartyContext rows assigned to an agent.
+        """Return ThirdPartyContext rows related to an agent (creator or assigned).
 
         Args:
             agent_id: The agent to look up.
             status: Optional status filter (e.g. "complete").
         """
+        from sqlalchemy import or_
         stmt = (
             select(ThirdPartyContext)
-            .join(
+            .outerjoin(
                 ThirdPartyContextAssignment,
                 ThirdPartyContextAssignment.context_id == ThirdPartyContext.id,
             )
-            .where(ThirdPartyContextAssignment.agent_id == agent_id)
+            .where(
+                or_(
+                    ThirdPartyContextAssignment.agent_id == agent_id,
+                    ThirdPartyContext.agent_id == agent_id,
+                )
+            )
+            .distinct()
         )
         if status:
             stmt = stmt.where(ThirdPartyContext.status == status)

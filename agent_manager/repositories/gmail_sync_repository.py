@@ -38,8 +38,23 @@ class GmailSyncRepository:
                 total_fetched=fetched_count,
             )
             self.db.add(state)
-        self.db.commit()
-        self.db.refresh(state)
+        
+        try:
+            self.db.commit()
+            self.db.refresh(state)
+        except Exception:
+            self.db.rollback()
+            # If there was a race condition inserting, we merge instead
+            state = self.db.merge(
+                GmailSyncState(
+                    agent_id=agent_id,
+                    history_id=history_id,
+                    last_synced_at=datetime.now(timezone.utc),
+                    total_fetched=fetched_count,
+                )
+            )
+            self.db.commit()
+            
         return state
 
     def clear(self, agent_id: str) -> None:

@@ -32,7 +32,7 @@ def create_cron_template(
 
 @router.get("", response_model=List[CronTemplateResponse])
 def list_cron_templates(
-    user_id: str,
+    user_id: str | None = None,
     svc: CronTemplateService = Depends(get_cron_template_service)
 ):
     """List all cron templates available to the user (owned + public)."""

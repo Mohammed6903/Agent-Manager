@@ -226,7 +226,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def embed_texts_safe(texts: list[str]) -> list[list[float]]:
-    """Thin alias — embed_texts already handles all batching and rate-limiting internally."""
+    """Thin alias — embed_texts already handles all batching internally."""
     return embed_texts(texts)
 
 

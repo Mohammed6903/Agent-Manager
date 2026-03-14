@@ -92,10 +92,11 @@ class CronTemplateService:
         # 2. Validate agent integration assignments
         from ..repositories.integration_repository import IntegrationRepository
         from ..config import settings as app_settings
+        from ..integrations import INTEGRATION_REGISTRY
         int_repo = IntegrationRepository(self.db)
 
         assigned_integrations = int_repo.get_agent_integrations(req.agent_id)
-        assigned_int_ids = {intg.id for intg in assigned_integrations}
+        assigned_names = {intg.integration_name for intg in assigned_integrations}
 
         server_url = app_settings.SERVER_URL.rstrip("/")
 
@@ -120,39 +121,38 @@ class CronTemplateService:
             )
 
             for t_int in template.integrations:
-                if t_int.integration_id not in assigned_int_ids:
-                    int_record_missing = int_repo.get_global_integration(t_int.integration_id)
-                    int_name = int_record_missing.name if int_record_missing else str(t_int.integration_id)
+                iname = t_int.integration_name
+                if iname not in assigned_names:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Agent {req.agent_id} does not have {int_name} integration assigned. Assign it first."
+                        detail=f"Agent {req.agent_id} does not have '{iname}' integration assigned. Assign it first."
                     )
 
-                int_record = next((i for i in assigned_integrations if i.id == t_int.integration_id), None)
-                if not int_record:
+                # Get the integration class from registry for documentation
+                int_cls = INTEGRATION_REGISTRY.get(iname)
+                if not int_cls:
+                    # This shouldn't happen if it was allowed to be created in template, but safety first
                     continue
 
-                int_id_str = str(int_record.id)
-                endpoints_arr = int_record.endpoints if isinstance(int_record.endpoints, list) else []
                 endpoints_str = "\n".join(
-                    [f"  - {ep.get('method')} {ep.get('path')} — {ep.get('description', '')}" for ep in endpoints_arr]
+                    [f"  - {ep.method} {ep.path} — {ep.description}" for ep in int_cls.endpoints]
                 )
 
-                usage_str = int_record.usage_instructions.strip() if int_record.usage_instructions else ""
+                usage_str = int_cls.usage_instructions.strip() if int_cls.usage_instructions else ""
                 usage_block = f"\nUsage notes: {usage_str}" if usage_str else ""
 
-                proxy_url = f"{server_url}/api/integrations/{int_id_str}/proxy"
+                proxy_url = f"{server_url}/api/integrations/{iname}/proxy"
 
                 # Build a concrete curl example for the first endpoint (or a generic one)
                 example_method = "POST"
                 example_path = "/example"
-                if endpoints_arr:
-                    example_method = endpoints_arr[0].get("method", "POST")
-                    example_path = endpoints_arr[0].get("path", "/example")
+                if int_cls.endpoints:
+                    example_method = int_cls.endpoints[0].method
+                    example_path = int_cls.endpoints[0].path
 
                 doc = (
-                    f"### {int_record.name}\n"
-                    f"Integration ID: {int_id_str}\n"
+                    f"### {int_cls.display_name}\n"
+                    f"Integration Name: {iname}\n"
                     f"Proxy URL: POST {proxy_url}\n\n"
                     f"curl example (adapt method, path, and body for each call):\n"
                     f"curl -X POST {proxy_url} "

@@ -1,20 +1,32 @@
 """Async wrappers around the `openclaw` CLI and shell commands."""
-
 from __future__ import annotations
-
 import asyncio
 import json
 import logging
+import os
 from typing import Any
-
 from fastapi import HTTPException
 
 logger = logging.getLogger("agent_manager.openclaw")
 
+# AWS env vars that openclaw auto-detects and tries to use for Bedrock discovery.
+# We strip these so openclaw doesn't attempt Bedrock when we only need S3.
+_AWS_VARS_TO_STRIP = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_DEFAULT_REGION",
+    "AWS_REGION",
+    "AWS_PROFILE",
+}
+
+def _openclaw_env() -> dict[str, str]:
+    """Return os.environ without AWS credentials so openclaw doesn't auto-detect Bedrock."""
+    return {k: v for k, v in os.environ.items() if k not in _AWS_VARS_TO_STRIP}
+
 
 async def run_openclaw(args: list[str]) -> dict[str, Any]:
     """Run an ``openclaw`` CLI command and return parsed JSON output.
-
     Raises :class:`HTTPException` (500) when the command exits non-zero.
     """
     proc = await asyncio.create_subprocess_exec(
@@ -22,9 +34,9 @@ async def run_openclaw(args: list[str]) -> dict[str, Any]:
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=_openclaw_env(),
     )
     stdout, stderr = await proc.communicate()
-
     stdout_text = stdout.decode().strip()
     stderr_text = stderr.decode().strip()
 
@@ -47,8 +59,6 @@ async def run_openclaw(args: list[str]) -> dict[str, Any]:
     try:
         return json.loads(stdout_text)
     except json.JSONDecodeError:
-        # CLI may wrap JSON in decorative text (emoji headers, box chars).
-        # Try to extract the JSON object/array from within.
         for start_char, end_char in [('{', '}'), ('[', ']')]:
             start = stdout_text.find(start_char)
             end = stdout_text.rfind(end_char)
@@ -57,7 +67,6 @@ async def run_openclaw(args: list[str]) -> dict[str, Any]:
                     return json.loads(stdout_text[start:end + 1])
                 except json.JSONDecodeError:
                     continue
-        # Truly plain text — wrap it
         return {"raw": stdout_text}
 
 
@@ -68,6 +77,7 @@ async def run_openclaw_raw(args: list[str]) -> str:
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=_openclaw_env(),
     )
     stdout, stderr = await proc.communicate()
 
@@ -89,7 +99,6 @@ async def run_openclaw_raw(args: list[str]) -> str:
 
 async def run_shell(cmd: str) -> str:
     """Run an arbitrary shell command and return stdout.
-
     Raises :class:`HTTPException` (500) on non-zero exit.
     """
     proc = await asyncio.create_subprocess_shell(

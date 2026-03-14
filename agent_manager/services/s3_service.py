@@ -143,6 +143,29 @@ def list_gmail_message_ids(agent_id: str) -> list[str]:
     return [k.replace(prefix, "").replace(".json", "") for k in active_keys]
 
 
+def list_all_gmail_message_ids_with_status(agent_id: str) -> dict[str, bool]:
+    """Return all message IDs in S3 for this agent mapped to their expired status.
+
+    Returns:
+        dict[str, bool]: Mapping of message_id to True if expired, False if active.
+    """
+    prefix = f"{agent_id}/gmail/raw/"
+    keys = list_keys(prefix)
+    if not keys:
+        return {}
+
+    def _check_status(key: str) -> tuple[str, bool]:
+        return (key, _is_expired(key))
+
+    results: dict[str, bool] = {}
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for key, is_expired in executor.map(_check_status, keys):
+            msg_id = key.replace(prefix, "").replace(".json", "")
+            results[msg_id] = is_expired
+
+    return results
+
+
 def delete_all_gmail_raw(agent_id: str) -> int:
     """Delete all stored Gmail messages for an agent from S3.
 
@@ -230,6 +253,43 @@ def tag_gmail_as_expired(
     _ensure_lifecycle_rule()
 
     return tagged
+
+
+def untag_gmail_as_expired(agent_id: str, message_ids: list[str]) -> int:
+    """Restore soft-deleted Gmail raw objects by removing their tags.
+
+    Args:
+        agent_id: Owner namespace.
+        message_ids: List of message IDs to restore.
+
+    Returns:
+        Number of objects successfully restored.
+    """
+    if not message_ids:
+        return 0
+
+    client = _client()
+
+    def _untag_key(msg_id: str) -> bool:
+        key = gmail_raw_key(agent_id, msg_id)
+        try:
+            # Removing all tags effectively removes the status=expired tag
+            client.delete_object_tagging(
+                Bucket=settings.S3_BUCKET_NAME,
+                Key=key,
+            )
+            return True
+        except ClientError as e:
+            print(f"Failed to untag {key}: {e}")
+            return False
+
+    untagged = 0
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for result in executor.map(_untag_key, message_ids):
+            if result:
+                untagged += 1
+
+    return untagged
 
 
 def _ensure_lifecycle_rule() -> None:

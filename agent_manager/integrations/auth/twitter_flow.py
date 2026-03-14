@@ -2,6 +2,7 @@ import logging
 import base64
 import hashlib
 import os
+import time
 
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, Request
@@ -106,6 +107,9 @@ class TwitterOAuth2Flow(OAuth2FlowProvider):
             raise HTTPException(status_code=400, detail="Failed to get Twitter access token")
 
         # 3. Store final tokens for the integration
+        if "expires_in" in tokens:
+            tokens["expires_at"] = int(time.time()) + int(tokens["expires_in"])
+            
         string_tokens = {k: str(v) for k, v in tokens.items() if v is not None}
         SecretService.set_secret(db, agent_id, integration_name, string_tokens)
 
@@ -120,3 +124,4 @@ class TwitterOAuth2Flow(OAuth2FlowProvider):
                 "scopes": tokens.get("scope")
             }
         }
+

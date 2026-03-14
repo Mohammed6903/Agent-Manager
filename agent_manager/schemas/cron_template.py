@@ -14,18 +14,18 @@ class CronTemplateCreate(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     is_public: bool = False
-    
+
     required_integrations: List[str] = Field(default_factory=list)
     variables: List[TemplateVariable] = Field(default_factory=list)
-    
+
     schedule_kind: Literal["at", "every", "cron"]
     schedule_expr: str
     schedule_tz: Optional[str] = None
     schedule_human: Optional[str] = None
-    
+
     session_target: Literal["main", "isolated"] = "isolated"
     delivery_mode: Literal["webhook", "none"] = "webhook"
-    
+
     payload_message: str
     pipeline_template: Optional[Dict[str, Any]] = None
 

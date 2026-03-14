@@ -121,15 +121,25 @@ def list_active_tasks():
     active = get_active_tasks()
     rows = []
     for key, task_id in active.items():
-        if ":" in key:
-            integration_name, agent_id = key.split(":", 1)
+        parts = key.split(":")
+        if len(parts) == 3:
+            # New format: integration:type:agent_id
+            integration_name, task_type, agent_id = parts
+        elif len(parts) == 2:
+            # Old format: integration:agent_id
+            integration_name, agent_id = parts
+            task_type = "ingest"
         else:
+            # Fallback
             integration_name = "gmail"
             agent_id = key
+            task_type = "ingest"
+
         rows.append(
             {
                 "agent_id": agent_id,
                 "integration": integration_name,
+                "task_type": task_type,
                 "task_id": task_id,
                 "status": celery_app.AsyncResult(task_id).state,
             }
