@@ -116,12 +116,30 @@ class TwitterOAuth2Flow(OAuth2FlowProvider):
         # 4. Clean up temporary PKCE info
         SecretService.delete_secret(db, agent_id, temp_secret_name)
 
+        # 5. Fetch user profile metadata
+        user_metadata = []
+        try:
+            async with httpx.AsyncClient() as client:
+                me_resp = await client.get(
+                    "https://api.twitter.com/2/users/me",
+                    headers={"Authorization": f"Bearer {tokens['access_token']}"},
+                    params={"user.fields": "profile_image_url"}
+                )
+                if me_resp.status_code == 200:
+                    user_data = me_resp.json().get("data", {})
+                    if user_data.get("name"):
+                        user_metadata.append({"key": "name", "value": user_data["name"], "type": "string"})
+                    if user_data.get("username"):
+                        user_metadata.append({"key": "username", "value": f"@{user_data['username']}", "type": "string"})
+                    if user_data.get("profile_image_url"):
+                        user_metadata.append({"key": "picture", "value": user_data["profile_image_url"], "type": "image_url"})
+        except Exception as e:
+            logger.warning(f"Failed to fetch Twitter user info during callback: {e}")
+
         return {
             "status": "authorized", 
             "agent_id": agent_id, 
             "integration": integration_name,
-            "metadata": {
-                "scopes": tokens.get("scope")
-            }
+            "metadata": user_metadata if user_metadata else None
         }
 

@@ -1,6 +1,6 @@
 from typing import Dict, List, Any
 
-from .base import BaseSDKIntegration, AuthFieldDef, EndpointDef, AuthFlowType
+from .base import BaseSDKIntegration, AuthFieldDef, EndpointDef, AuthFlowType, MetadataFieldDef, MetadataFieldType
 
 
 class LinkedInIntegration(BaseSDKIntegration):
@@ -11,6 +11,12 @@ class LinkedInIntegration(BaseSDKIntegration):
     api_type = "sdk"
     base_url = "https://api.linkedin.com/v2"
     
+    metadata_fields = [
+        MetadataFieldDef(name="email", type=MetadataFieldType.STRING),
+        MetadataFieldDef(name="name",  type=MetadataFieldType.STRING),
+        MetadataFieldDef(name="picture", type=MetadataFieldType.IMAGE_URL),
+    ]
+
     auth_scheme: Dict[str, Any] = {
         "type": "oauth2_http",
         "token_field": "access_token",

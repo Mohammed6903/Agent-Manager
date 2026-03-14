@@ -83,7 +83,9 @@ async def generic_oauth_callback(
     # OAuth succeeded — now persist the assignment
     from ..repositories.integration_repository import IntegrationRepository
     repo = IntegrationRepository(db)
-    repo.assign_to_agent(agent_id, integration_name)
+    # Extract metadata if returned by the flow provider
+    user_metadata = result.get("metadata") if isinstance(result, dict) else None
+    repo.assign_to_agent(agent_id, integration_name, metadata=user_metadata)
 
     # Return a friendly HTML response that closes the popup window
     from fastapi.responses import HTMLResponse
