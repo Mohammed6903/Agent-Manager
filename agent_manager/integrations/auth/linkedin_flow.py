@@ -24,6 +24,7 @@ class LinkedInOAuth2Flow(OAuth2FlowProvider):
         agent_id: str,
         integration_name: str,
         code: str,
+        **kwargs,
     ) -> dict:
         try:
             token_data = await exchange_code(code)

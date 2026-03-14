@@ -18,6 +18,7 @@ class OAuth2FlowProvider(ABC):
         agent_id: str,
         integration_name: str,
         code: str,
+        **kwargs,
     ) -> dict:
         """
         Exchange authorization code for tokens and store them.

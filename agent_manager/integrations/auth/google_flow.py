@@ -4,7 +4,7 @@ from .oauth2_flow import OAuth2FlowProvider
 from ...services.gmail_auth_service import get_google_flow, get_required_scopes, exchange_code_with_code
 
 class GoogleOAuth2Flow(OAuth2FlowProvider):
-    
+
     def get_auth_url(self, agent_id: str, integration_name: str, db: Session = None) -> str:
         if db:
             # include_integration ensures the scopes of the integration being assigned
@@ -24,8 +24,8 @@ class GoogleOAuth2Flow(OAuth2FlowProvider):
         composite_state = f"{agent_id}|{integration_name}"
         flow = get_google_flow(scopes=scopes, state=composite_state)
         auth_url, _ = flow.authorization_url(
-            access_type="offline", 
-            include_granted_scopes="true", 
+            access_type="offline",
+            include_granted_scopes="true",
             prompt="consent"
         )
         return auth_url
@@ -36,6 +36,7 @@ class GoogleOAuth2Flow(OAuth2FlowProvider):
         agent_id: str,
         integration_name: str,
         code: str,
+        **kwargs,
     ) -> dict:
         try:
             creds = exchange_code_with_code(db, agent_id, code)
@@ -43,5 +44,6 @@ class GoogleOAuth2Flow(OAuth2FlowProvider):
                 raise HTTPException(status_code=400, detail="Google OAuth exchange returned no credentials")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Google OAuth exchange failed: {str(e)}")
-            
+
         return {"status": "authorized", "agent_id": agent_id, "integration": integration_name}
+
