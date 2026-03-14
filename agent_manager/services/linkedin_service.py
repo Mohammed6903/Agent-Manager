@@ -159,7 +159,10 @@ async def create_ugc_post(db: Session, agent_id: str, author_urn: str, text: str
         resp.raise_for_status()
         data = resp.json()
         
-        # Normalize the returned ID to ugcPost URN for consistency
+        # Always preserve the original share URN for deletion
+        data["shareUrn"] = data.get("id")  # urn:li:share:... — pass this to delete
+        
+        # Also derive ugcPostUrn for reference (but don't use for delete)
         if "id" in data and data["id"].startswith("urn:li:share:"):
             data["ugcPostUrn"] = data["id"].replace("urn:li:share:", "urn:li:ugcPost:", 1)
         else:
@@ -183,10 +186,21 @@ async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
 
 @log_integration_call("linkedin", "DELETE", "/ugcPosts/{ugcPostId}")
 async def delete_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
-    post_id = _extract_ugc_post_id(ugc_post_urn)
+    urn = unquote(ugc_post_urn)
+    
+    # Route to correct endpoint based on URN type
+    if urn.startswith("urn:li:share:"):
+        share_id = urn.split(":")[-1]
+        url = f"https://api.linkedin.com/v2/shares/{share_id}"
+    elif urn.startswith("urn:li:ugcPost:"):
+        post_id = urn.split(":")[-1]
+        url = f"https://api.linkedin.com/v2/ugcPosts/{post_id}"
+    else:
+        # Raw numeric ID — try ugcPosts
+        url = f"https://api.linkedin.com/v2/ugcPosts/{urn}"
+
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        url = f"https://api.linkedin.com/v2/ugcPosts/{post_id}"
         req = client.build_request("DELETE", url)
         resp = await client.send(req)
         if not resp.is_success:
