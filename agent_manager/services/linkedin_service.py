@@ -155,7 +155,10 @@ async def create_ugc_post(db: Session, agent_id: str, author_urn: str, text: str
 
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
+        logger.error("ugcPosts payload: %s", payload)
         resp = await client.post("/ugcPosts", json=payload)
+        if not resp.is_success:
+            raise Exception(f"LinkedIn POST failed {resp.status_code}: {resp.text}")
         resp.raise_for_status()
         data = resp.json()
         
