@@ -17,7 +17,6 @@ REDIRECT_URI = f"{settings.SERVER_URL}/api/integrations/oauth/callback/linkedin"
 DEFAULT_SCOPES = [
     "openid",
     "profile",
-    "email",
     "w_member_social",
 ]
 

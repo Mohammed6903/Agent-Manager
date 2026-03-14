@@ -41,8 +41,19 @@ async def generic_oauth_callback(
     provider: str,
     state: str,
     code: str = None, # Optional: OAuth 2.0 uses 'code', OAuth 1.0 uses 'oauth_verifier' in query_params
+    error: str = None,
+    error_description: str = None,
     db: Session = Depends(get_db),
 ):
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OAuth authorization failed: {error} — {error_description}"
+        )
+
+    if not code:
+        raise HTTPException(status_code=400, detail="No authorization code received")
+    
     from ..integrations.auth.oauth2_registry import get_oauth2_provider
     try:
         flow_provider = get_oauth2_provider(provider)
