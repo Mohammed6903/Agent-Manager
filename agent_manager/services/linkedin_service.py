@@ -161,13 +161,15 @@ async def create_ugc_post(db: Session, agent_id: str, author_urn: str, text: str
         return data
 
 
-@log_integration_call("linkedin", "GET", "/ugcPosts/{ugcPostUrn}")
 async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
     urn = unquote(ugc_post_urn)
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        resp = await client.get(f"/ugcPosts/{urn}")
-        resp.raise_for_status()
+        url = f"https://api.linkedin.com/v2/ugcPosts/{urn}"
+        req = client.build_request("GET", url)
+        resp = await client.send(req)
+        if not resp.is_success:
+            raise Exception(f"LinkedIn GET ugcPost failed {resp.status_code}: {resp.text}")
         return resp.json()
 
 
@@ -175,15 +177,20 @@ async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
 async def delete_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
     urn = unquote(ugc_post_urn)
     
-    # LinkedIn creates posts with urn:li:share: but the delete endpoint
-    # requires urn:li:ugcPost: — convert if needed.
     if urn.startswith("urn:li:share:"):
         urn = urn.replace("urn:li:share:", "urn:li:ugcPost:", 1)
     
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        resp = await client.delete(f"/ugcPosts/{urn}")
-        resp.raise_for_status()
+        # Build request manually to prevent httpx from encoding the URN colons
+        url = f"https://api.linkedin.com/v2/ugcPosts/{urn}"
+        req = client.build_request("DELETE", url)
+        resp = await client.send(req)
+        
+        # Surface LinkedIn's error body before raising
+        if not resp.is_success:
+            raise Exception(f"LinkedIn DELETE failed {resp.status_code}: {resp.text}")
+        
         return {"status": "success"} if resp.status_code == 204 else resp.json()
 
 
