@@ -11,6 +11,8 @@ from .secret_service import SecretService
 from .linkedin_auth_service import refresh_access_token
 from ..integrations.sdk_logger import log_integration_call
 
+from urllib.parse import unquote
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -153,18 +155,21 @@ async def create_ugc_post(db: Session, agent_id: str, author_urn: str, text: str
 
 @log_integration_call("linkedin", "GET", "/ugcPosts/{ugcPostUrn}")
 async def get_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
+    urn = unquote(ugc_post_urn)
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        resp = await client.get(f"/ugcPosts/{ugc_post_urn}")
+        resp = await client.get(f"/ugcPosts/{urn}")
         resp.raise_for_status()
         return resp.json()
 
 
 @log_integration_call("linkedin", "DELETE", "/ugcPosts/{ugcPostUrn}")
 async def delete_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
+    # Decode in case the caller passed a percent-encoded URN
+    urn = unquote(ugc_post_urn)
     client, _ = await _get_linkedin_client(db, agent_id)
     async with client:
-        resp = await client.delete(f"/ugcPosts/{ugc_post_urn}")
+        resp = await client.delete(f"/ugcPosts/{urn}")
         resp.raise_for_status()
         return {"status": "success"} if resp.status_code == 204 else resp.json()
 
