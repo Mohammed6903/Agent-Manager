@@ -208,7 +208,12 @@ async def delete_ugc_post(db: Session, agent_id: str, ugc_post_urn: str):
         resp = await client.send(req)
         if not resp.is_success:
             raise Exception(f"LinkedIn DELETE failed {resp.status_code}: {resp.text}")
-        return {"status": "success"} if resp.status_code == 204 else resp.json()
+
+        # 204 = success with no body — don't call .json()
+        if resp.status_code == 204 or not resp.content:
+            return {"status": "success"}
+
+        return resp.json()
 
 
 @log_integration_call("linkedin", "GET", "/connections")
