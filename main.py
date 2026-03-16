@@ -24,6 +24,7 @@ from agent_manager.routers.twitter_router import router as twitter_router
 from agent_manager.routers.linkedin_router import router as linkedin_router
 from agent_manager.routers.cron_template_router import router as cron_template_router
 from agent_manager.routers.analytics_router import router as analytics_router
+from agent_manager.routers.billing_router import router as billing_router
 from agent_manager.routers.third_party_context_router import router as third_party_context_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
 from agent_manager.dependencies import get_storage, get_gateway
@@ -227,6 +228,13 @@ app.include_router(
 # Analytics endpoints: /api/analytics
 app.include_router(
     analytics_router,
+    prefix="/api",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Billing endpoints: /api/billing
+app.include_router(
+    billing_router,
     prefix="/api",
     responses={404: {"description": "Resource not found"}},
 )

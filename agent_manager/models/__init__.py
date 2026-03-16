@@ -7,6 +7,7 @@ from .cron_template import CronTemplate
 from .gmail import GoogleAccount, AgentSecret
 from .integration import AgentIntegration, IntegrationLog
 from .third_party_context import ThirdPartyContext, ThirdPartyContextAssignment
+from .chat_usage import ChatUsageLog
 
 __all__ = [
     "AgentTask",
@@ -21,4 +22,5 @@ __all__ = [
     "GoogleAccount",
     "ThirdPartyContext",
     "ThirdPartyContextAssignment",
+    "ChatUsageLog",
 ]

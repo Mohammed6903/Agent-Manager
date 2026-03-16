@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any, Annotated
 
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -252,12 +252,13 @@ async def chat(
 @router.post("/chat/completions", tags=["Chat"], openapi_extra=_CHAT_OPENAPI_EXTRA)
 async def chat_completions(
     request: Request,
+    background_tasks: BackgroundTasks,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
     db: Session = Depends(get_db),
 ):
     """Send a message and get the full response (non-streaming)."""
     req, file_paths = await parse_chat_request(request)
-    return await chat_service.chat_non_stream(req, uploaded_file_paths=file_paths, db=db)
+    return await chat_service.chat_non_stream(req, background_tasks=background_tasks, uploaded_file_paths=file_paths, db=db)
 
 
 @router.post("/chat/new-session", tags=["Chat"])

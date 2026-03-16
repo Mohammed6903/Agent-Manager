@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -9,17 +10,32 @@ import time
 from typing import AsyncGenerator
 
 import httpx
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..database import SessionLocal
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post
 from ..services.context_injection_service import build_context_block
 from ..services.secret_service import SecretService
+from ..services.usage_service import UsageService
 from ..schemas.chat import ChatRequest, NewSessionResponse
 
 logger = logging.getLogger("agent_manager.services.chat_service")
+
+
+async def _sync_usage_after_delay(agent_id: str, session_key: str, user_id: str) -> None:
+    """Wait for OpenClaw to flush its local disk write, then sync to DB."""
+    await asyncio.sleep(2.0)
+    try:
+        # Note: we use a new sync Session for the background task
+        with SessionLocal() as db:
+            usage_service = UsageService(gateway=None, db=db)  # type: ignore
+            await usage_service.sync_single_session(agent_id, session_key, user_id)
+    except Exception as exc:
+        logger.error("Failed to background sync usage for %s: %s", session_key, exc)
+
 
 # Timeout for non-streaming requests (sync completions).
 _HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=3000.0, write=10.0, pool=10.0)
@@ -425,6 +441,14 @@ class ChatService:
         db: Session | None = None,
     ) -> StreamingResponse:
         """Return a streaming SSE response proxied from the gateway."""
+        user_field = self._build_user_field(
+            req.agent_id, req.user_id,
+            session_id=req.session_id, room_id=req.room_id,
+        )
+        bg_task = BackgroundTasks()
+        session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
+        bg_task.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
+
         return StreamingResponse(
             self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
             media_type="text/event-stream",
@@ -432,11 +456,13 @@ class ChatService:
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",
             },
+            background=bg_task,
         )
 
     async def chat_non_stream(
         self,
         req: ChatRequest,
+        background_tasks: BackgroundTasks,
         uploaded_file_paths: list[str] | None = None,
         db: Session | None = None,
     ) -> dict:
@@ -445,6 +471,10 @@ class ChatService:
             req.agent_id, req.user_id,
             session_id=req.session_id, room_id=req.room_id,
         )
+        
+        session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
+        background_tasks.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
+
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
         # Inject third-party context

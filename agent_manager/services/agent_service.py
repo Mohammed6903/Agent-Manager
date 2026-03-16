@@ -210,40 +210,53 @@ class AgentService:
 
     async def create_agent(self, req: CreateAgentRequest) -> AgentResponse:
         agent_id = req.agent_id
-
-        existing = await self.gateway.list_agents()
-        if any(a.get("id") == agent_id for a in existing):
-            raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
-
         workspace = self._workspace(agent_id)
         agent_dir = self._agent_dir(agent_id)
 
-        await self.storage.ensure_dir(workspace)
-        await self.storage.ensure_dir(agent_dir)
+        # ── PHASE 1: Concurrent Network Reads ──────────────────────────────
+        # Fire both gateway requests at the same time instead of waiting for one to finish
+        existing_task = asyncio.create_task(self.gateway.list_agents())
+        config_task = asyncio.create_task(self.gateway.get_config())
+        
+        existing, config_data = await asyncio.gather(existing_task, config_task)
 
-        # IDENTITY.md is always agent-specific — never symlinked
-        identity_content = req.identity or self._default_identity(agent_id, req.name, req.role or "")
-        await self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content)
+        if any(a.get("id") == agent_id for a in existing):
+            raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
 
-        # SOUL.md → symlink to shared copy (fallback: write from template)
-        if req.soul:
-            # Explicit soul provided by the caller — write it directly
-            await self.storage.write_text(str(Path(workspace) / "SOUL.md"), req.soul)
-        else:
-            await self._symlink_or_write(workspace, "SOUL.md", self._default_soul())
-
-        agents_md_content = self._default_agents_md()
-
-        if not agents_md_content:
-            raise HTTPException(status_code=500, detail="Could not generate default AGENTS.md")
-
-        await self._symlink_or_write(workspace, "AGENTS.md", agents_md_content)
-
-        config_data = await self.gateway.get_config()
         config_hash = config_data.get("hash")
         if not config_hash:
              raise HTTPException(status_code=500, detail="Could not extract config hash")
 
+        agents_md_content = self._default_agents_md()
+        if not agents_md_content:
+            raise HTTPException(status_code=500, detail="Could not generate default AGENTS.md")
+
+        # ── PHASE 2: Concurrent Directory Creation ─────────────────────────
+        # Ensure both the workspace and agent_dir are created simultaneously
+        await asyncio.gather(
+            self.storage.ensure_dir(workspace),
+            self.storage.ensure_dir(agent_dir)
+        )
+
+        # ── PHASE 3: Concurrent File Writing ───────────────────────────────
+        # Now that directories exist, write all files and symlinks at the exact same time
+        identity_content = req.identity or self._default_identity(agent_id, req.name, req.role or "")
+        
+        file_tasks = [
+            self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content),
+            self._symlink_or_write(workspace, "AGENTS.md", agents_md_content)
+        ]
+
+        if req.soul:
+            file_tasks.append(self.storage.write_text(str(Path(workspace) / "SOUL.md"), req.soul))
+        else:
+            file_tasks.append(self._symlink_or_write(workspace, "SOUL.md", self._default_soul()))
+
+        # Execute all file writes in parallel
+        await asyncio.gather(*file_tasks)
+
+        # ── PHASE 4: Sequential Gateway Patch ──────────────────────────────
+        # The patch must happen last, once the file system is fully prepped
         new_entry = {
             "id": agent_id,
             "name": req.name,

@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
+import re
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
-from datetime import datetime, timezone
 
-from sqlalchemy.orm import Session
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
 
+from ..clients.gateway_client import GatewayClient
 from ..config import settings
 from ..models.chat_usage import ChatUsageLog
-from ..clients.gateway_client import GatewayClient  # Added GatewayClient
 
 logger = logging.getLogger("agent_manager.services.usage_service")
+
 
 class UsageService:
     def __init__(self, gateway: GatewayClient, db: Session):
@@ -25,91 +29,317 @@ class UsageService:
     # ── Log Ingestion ────────────────────────────────────────────────────────────
 
     async def sync_disk_usage_to_db(self) -> dict[str, int]:
+        """Hybrid Index + Detail pipeline for syncing LLM usage and cost data.
+
+        For each agent:
+          - Step 1: Stream sessions.json with ``ijson.kvitems`` (no full load).
+          - Step 2: Skip sessions whose ``updatedAt`` is not newer than the
+            latest ``created_at`` already in the database for that session.
+          - Step 3: Parse the corresponding ``.jsonl`` detail file line-by-line,
+            filtering for assistant turns only.
+          - Step 4: Batch-upsert via PostgreSQL ``ON CONFLICT DO UPDATE``.
         """
-        Queries the Gateway for active agents, locates their specific session
-        directories based on the config, and ingests new token records.
-        """
-        added_records = 0
+        added = 0
+        updated = 0
+        skipped = 0
         errors = 0
 
-        # 1. Base global sessions (for direct/non-agent LLM calls)
-        search_paths = [self.state_dir / "sessions"]
+        try:
+            module_name = "ijson"
+            ijson = importlib.import_module(module_name)
+        except ImportError as exc:
+            raise RuntimeError(
+                "ijson is required for streaming sessions.json. Install it first."
+            ) from exc
 
-        # 2. Dynamically pull active agents from your OpenClaw config
         try:
             agents = await self.gateway.list_agents()
-            for agent in agents:
-                agent_dir_str = agent.get("agentDir")
-                if agent_dir_str:
-                    # In OpenClaw, if agentDir is ".../agents/main/agent", 
-                    # the sessions live in ".../agents/main/sessions"
-                    session_dir = Path(agent_dir_str).parent / "sessions"
-                    search_paths.append(session_dir)
-        except Exception as e:
-            logger.error(f"Failed to fetch agents from gateway for usage sync: {e}")
+        except Exception as exc:
+            logger.error("Failed to fetch agents from gateway: %s", exc)
+            agents = []
 
-        # 3. Process the exact targeted paths
-        for session_dir in search_paths:
-            if not session_dir.exists() or not session_dir.is_dir():
+        for agent in agents:
+            agent_id = agent.get("id")
+            if not agent_id:
                 continue
 
-            for session_file in session_dir.glob("*.json"):
-                try:
-                    added, errs = self._process_session_file(session_file)
-                    added_records += added
-                    errors += errs
-                except Exception as e:
-                    logger.error(f"Failed to process session file {session_file}: {e}")
-                    errors += 1
+            sessions_file = (
+                self.state_dir / "agents" / agent_id / "sessions" / "sessions.json"
+            )
+            if not sessions_file.exists():
+                continue
 
-        self.db.commit()
-        logger.info(f"Sync complete. Added {added_records} new usage records. ({errors} errors)")
-        return {"added": added_records, "errors": errors}
-
-    def _process_session_file(self, file_path: Path) -> tuple[int, int]:
-        added = 0
-        errors = 0
-        
-        with open(file_path, "r", encoding="utf-8") as f:
             try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                return 0, 1 
+                a, u, s, e = self._sync_agent(ijson, agent_id, sessions_file)
+                added += a
+                updated += u
+                skipped += s
+                errors += e
+            except Exception as exc:
+                logger.error("Error syncing agent '%s': %s", agent_id, exc)
+                errors += 1
 
-        if not isinstance(data, list):
-            data = [data]
+        logger.info(
+            "Sync complete: added=%s updated=%s skipped=%s errors=%s",
+            added,
+            updated,
+            skipped,
+            errors,
+        )
+        return {"added": added, "updated": updated, "skipped": skipped, "errors": errors}
 
-        for turn in data:
-            usage = turn.get("usage", {})
-            total_tokens = usage.get("total_tokens", 0)
+    def _sync_agent(
+        self,
+        ijson: Any,
+        agent_id: str,
+        sessions_file: Path,
+    ) -> tuple[int, int, int, int]:
+        """Process a single agent's sessions.json end-to-end."""
+        total_added = 0
+        total_updated = 0
+        total_skipped = 0
+        total_errors = 0
+        sessions_dir = sessions_file.parent
+
+        with open(sessions_file, "rb") as file_obj:
+            for session_key, meta in ijson.kvitems(file_obj, ""):
+                if not isinstance(meta, dict):
+                    continue
+
+                session_id = meta.get("sessionId")
+                updated_at_ms = self._parse_updated_at_ms(meta.get("updatedAt"))
+                if not session_id or updated_at_ms is None:
+                    total_skipped += 1
+                    continue
+
+                # Delta guard: compare file's updatedAt against DB max(created_at).
+                source_ts = datetime.fromtimestamp(updated_at_ms / 1000, tz=timezone.utc)
+                db_max_ts = self._get_session_max_created_at(str(session_id))
+                if db_max_ts is not None and source_ts <= db_max_ts:
+                    total_skipped += 1
+                    continue
+
+                jsonl_file = sessions_dir / f"{session_id}.jsonl"
+                if not jsonl_file.exists():
+                    total_skipped += 1
+                    continue
+
+                user_id = self._extract_user_id_from_session_key(session_key)
+                try:
+                    records = self._parse_jsonl_session(
+                        jsonl_file, str(session_id), agent_id, user_id
+                    )
+                    if records:
+                        a, u = self._upsert_turn_batch(records)
+                        total_added += a
+                        total_updated += u
+                    else:
+                        total_skipped += 1
+                except Exception as exc:
+                    logger.error(
+                        "Error processing session '%s' for agent '%s': %s",
+                        session_id,
+                        agent_id,
+                        exc,
+                    )
+                    total_errors += 1
+
+        return total_added, total_updated, total_skipped, total_errors
+
+    async def sync_single_session(self, agent_id: str, session_key: str, user_id: str) -> None:
+        """Sync a single session from disk to the database by looking up its session_id."""
+        sessions_file = self.state_dir / "agents" / agent_id / "sessions" / "sessions.json"
+        if not sessions_file.exists():
+            return
             
-            if total_tokens == 0:
-                continue
+        try:
+            import ijson
+        except ImportError:
+            logger.error("ijson is required for streaming sessions.json")
+            return
 
-            message_id = turn.get("id") or turn.get("message_id")
-            if not message_id:
-                continue 
+        target_session_id = None
+        try:
+            with open(sessions_file, "rb") as file_obj:
+                for key, meta in ijson.kvitems(file_obj, ""):
+                    if key == session_key and isinstance(meta, dict):
+                        target_session_id = meta.get("sessionId")
+                        break
+        except Exception as exc:
+            logger.error("Error reading sessions.json for agent %s: %s", agent_id, exc)
+            return
 
-            log_entry = ChatUsageLog(
-                message_id=message_id,
-                user_id=turn.get("user", "unknown_user"),
-                session_id=turn.get("session_id", file_path.stem),
-                agent_id=turn.get("agent_id"),
-                model=turn.get("model", "unknown_model"),
-                prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
-                total_tokens=total_tokens,
-                created_at=datetime.now(timezone.utc)
+        if not target_session_id:
+            return
+
+        jsonl_file = self.state_dir / "agents" / agent_id / "sessions" / f"{target_session_id}.jsonl"
+        if not jsonl_file.exists():
+            return
+            
+        try:
+            records = self._parse_jsonl_session(
+                jsonl_file, str(target_session_id), agent_id, user_id
+            )
+            if records:
+                self._upsert_turn_batch(records)
+        except Exception as exc:
+            logger.error(
+                "Error processing single session '%s' for agent '%s': %s",
+                target_session_id,
+                agent_id,
+                exc,
             )
 
-            self.db.add(log_entry)
+    def _get_session_max_created_at(self, session_id: str) -> datetime | None:
+        """Return the latest ``created_at`` stored for a session, or ``None``."""
+        result = (
+            self.db.query(func.max(ChatUsageLog.created_at))
+            .filter(ChatUsageLog.session_id == session_id)
+            .scalar()
+        )
+        if result is None:
+            return None
+        if isinstance(result, datetime):
+            return result if result.tzinfo else result.replace(tzinfo=timezone.utc)
+        return None
+
+    def _parse_jsonl_session(
+        self,
+        jsonl_file: Path,
+        session_id: str,
+        agent_id: str,
+        user_id: str,
+    ) -> list[dict[str, Any]]:
+        """Read a .jsonl file line-by-line and return assistant-turn records."""
+        records: list[dict[str, Any]] = []
+
+        with open(jsonl_file, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+
+                if entry.get("type") != "message":
+                    continue
+
+                message = entry.get("message") or {}
+                if message.get("role") != "assistant":
+                    continue
+
+                message_id = entry.get("id")
+                if not message_id:
+                    continue
+
+                usage = message.get("usage") or {}
+                cost = usage.get("cost") or {}
+
+                records.append(
+                    {
+                        "id": uuid.uuid4(),
+                        "message_id": str(message_id),
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "agent_id": agent_id,
+                        "model": str(message.get("model") or "unknown_model"),
+                        "prompt_tokens": int(usage.get("input") or 0),
+                        "completion_tokens": int(usage.get("output") or 0),
+                        "total_tokens": int(usage.get("totalTokens") or 0),
+                        "input_cost": float(cost.get("input") or 0.0) * 2,
+                        "output_cost": float(cost.get("output") or 0.0) * 2,
+                        "total_cost": float(cost.get("total") or 0.0) * 2,
+                        "created_at": (
+                            self._parse_iso_timestamp(entry.get("timestamp"))
+                            or datetime.now(timezone.utc)
+                        ),
+                    }
+                )
+
+        return records
+
+    def _upsert_turn_batch(
+        self, records: list[dict[str, Any]]
+    ) -> tuple[int, int]:
+        """Batch-upsert turn records via PostgreSQL ``ON CONFLICT DO UPDATE``."""
+        stmt = pg_insert(ChatUsageLog).values(records)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["message_id"],
+            set_={
+                "model": stmt.excluded.model,
+                "prompt_tokens": stmt.excluded.prompt_tokens,
+                "completion_tokens": stmt.excluded.completion_tokens,
+                "total_tokens": stmt.excluded.total_tokens,
+                "input_cost": stmt.excluded.input_cost,
+                "output_cost": stmt.excluded.output_cost,
+                "total_cost": stmt.excluded.total_cost,
+                "created_at": stmt.excluded.created_at,
+            },
+        )
+        self.db.execute(stmt)
+        self.db.commit()
+        return len(records), 0
+
+    @staticmethod
+    def _parse_updated_at_ms(value: Any) -> int | None:
+        """Normalise an ``updatedAt`` value to a millisecond Unix timestamp."""
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            text_value = value.strip()
+            if text_value.isdigit():
+                return int(text_value)
+            if text_value.endswith("Z"):
+                text_value = text_value[:-1] + "+00:00"
             try:
-                self.db.flush() 
-                added += 1
-            except IntegrityError:
-                self.db.rollback() 
-                
-        return added, errors
+                parsed = datetime.fromisoformat(text_value)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.timestamp() * 1000)
+        return None
+
+    @staticmethod
+    def _parse_iso_timestamp(value: Any) -> datetime | None:
+        """Parse an ISO 8601 string or numeric epoch (ms) to a timezone-aware datetime."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+        if isinstance(value, str):
+            text = value.strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+            except ValueError:
+                return None
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return None
+
+    @staticmethod
+    def _extract_user_id_from_session_key(session_key: str) -> str:
+        group_match = re.search(r":group:([^:]+)", session_key)
+        if group_match:
+            return f"group:{group_match.group(1)}"
+
+        parts = session_key.split(":")
+        try:
+            openai_idx = parts.index("openai-user")
+            user_idx = openai_idx + 2
+            if len(parts) > user_idx:
+                return parts[user_idx]
+        except (ValueError, IndexError):
+            return "unknown_user"
+
+        return "unknown_user"
 
     # ── Usage Analytics ──────────────────────────────────────────────────────────
 
@@ -143,7 +373,8 @@ class UsageService:
                 ChatUsageLog.model,
                 func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
                 func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
-                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+                func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+                func.sum(ChatUsageLog.total_cost).label("total_cost")
             )
             .group_by(ChatUsageLog.model)
             .all()
@@ -154,7 +385,101 @@ class UsageService:
                 "model": r.model,
                 "prompt_tokens": r.total_prompt,
                 "completion_tokens": r.total_completion,
-                "total_tokens": r.total_tokens
+                "total_tokens": r.total_tokens,
+                "total_cost": r.total_cost or 0.0
+            }
+            for r in results
+        ]
+
+    def get_current_month_usage(self) -> Dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        
+        results = (
+            self.db.query(
+                ChatUsageLog.model,
+                func.sum(ChatUsageLog.total_cost).label("total_cost"),
+                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+            )
+            .filter(ChatUsageLog.created_at >= start_of_month)
+            .group_by(ChatUsageLog.model)
+            .all()
+        )
+        
+        models = []
+        total_cost = 0.0
+        total_tokens = 0
+        
+        for r in results:
+            cost = r.total_cost or 0.0
+            models.append({"name": r.model, "cost": cost, "tokens": r.total_tokens or 0})
+            total_cost += cost
+            total_tokens += (r.total_tokens or 0)
+            
+        return {
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "total_models_used": len(models),
+            "models": models
+        }
+
+    def get_daily_usage_last_7_days(self) -> List[Dict[str, Any]]:
+        from sqlalchemy import cast, Date
+        from datetime import timedelta
+        
+        now = datetime.now(timezone.utc)
+        start_date = now - timedelta(days=7)
+        
+        results = (
+            self.db.query(
+                cast(ChatUsageLog.created_at, Date).label("date"),
+                func.sum(ChatUsageLog.total_cost).label("total_cost"),
+                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+            )
+            .filter(ChatUsageLog.created_at >= start_date)
+            .group_by(cast(ChatUsageLog.created_at, Date))
+            .order_by(cast(ChatUsageLog.created_at, Date))
+            .all()
+        )
+        
+        return [
+            {
+                "date": str(r.date),
+                "total_cost": r.total_cost or 0.0,
+                "total_tokens": r.total_tokens or 0
+            }
+            for r in results
+        ]
+
+    def get_monthly_usage_last_12_months(self) -> List[Dict[str, Any]]:
+        from sqlalchemy import extract
+        
+        now = datetime.now(timezone.utc)
+        month = now.month - 11
+        year = now.year
+        while month <= 0:
+            month += 12
+            year -= 1
+        start_date = datetime(year, month, 1, tzinfo=timezone.utc)
+        
+        results = (
+            self.db.query(
+                extract('year', ChatUsageLog.created_at).label("year"),
+                extract('month', ChatUsageLog.created_at).label("month"),
+                func.sum(ChatUsageLog.total_cost).label("total_cost"),
+                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+            )
+            .filter(ChatUsageLog.created_at >= start_date)
+            .group_by("year", "month")
+            .order_by("year", "month")
+            .all()
+        )
+        
+        return [
+            {
+                "month": f"{int(r.year)}-{int(r.month):02d}",
+                "total_cost": r.total_cost or 0.0,
+                "total_tokens": r.total_tokens or 0
             }
             for r in results
         ]

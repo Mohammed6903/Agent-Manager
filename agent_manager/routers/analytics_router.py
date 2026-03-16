@@ -25,3 +25,4 @@ async def get_agent_analytics(
     compute/storage, and interaction metrics.
     """
     return await analytics_service.get_agent_analytics(agent_id)
+
