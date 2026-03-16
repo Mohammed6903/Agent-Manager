@@ -5,17 +5,18 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
 
-from sqlalchemy import func
+from sqlalchemy import func, cast, Date, extract
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..clients.gateway_client import GatewayClient
 from ..config import settings
 from ..models.chat_usage import ChatUsageLog
+from ..models.cron import CronOwnership, CronPipelineRun
 
 logger = logging.getLogger("agent_manager.services.usage_service")
 
@@ -29,16 +30,7 @@ class UsageService:
     # ── Log Ingestion ────────────────────────────────────────────────────────────
 
     async def sync_disk_usage_to_db(self) -> dict[str, int]:
-        """Hybrid Index + Detail pipeline for syncing LLM usage and cost data.
-
-        For each agent:
-          - Step 1: Stream sessions.json with ``ijson.kvitems`` (no full load).
-          - Step 2: Skip sessions whose ``updatedAt`` is not newer than the
-            latest ``created_at`` already in the database for that session.
-          - Step 3: Parse the corresponding ``.jsonl`` detail file line-by-line,
-            filtering for assistant turns only.
-          - Step 4: Batch-upsert via PostgreSQL ``ON CONFLICT DO UPDATE``.
-        """
+        """Hybrid Index + Detail pipeline for syncing LLM usage and cost data."""
         added = 0
         updated = 0
         skipped = 0
@@ -248,9 +240,9 @@ class UsageService:
                         "prompt_tokens": int(usage.get("input") or 0),
                         "completion_tokens": int(usage.get("output") or 0),
                         "total_tokens": int(usage.get("totalTokens") or 0),
-                        "input_cost": float(cost.get("input") or 0.0) * 2,
-                        "output_cost": float(cost.get("output") or 0.0) * 2,
-                        "total_cost": float(cost.get("total") or 0.0) * 2,
+                        "input_cost": float(cost.get("input") or 0.0) * settings.COST_MULTIPLIER,
+                        "output_cost": float(cost.get("output") or 0.0) * settings.COST_MULTIPLIER,
+                        "total_cost": float(cost.get("total") or 0.0) * settings.COST_MULTIPLIER,
                         "created_at": (
                             self._parse_iso_timestamp(entry.get("timestamp"))
                             or datetime.now(timezone.utc)
@@ -343,117 +335,346 @@ class UsageService:
 
     # ── Usage Analytics ──────────────────────────────────────────────────────────
 
-    def get_usage_per_user(self) -> List[Dict[str, Any]]:
-        results = (
+    def get_usage_per_user(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+        """Aggregate usage per user, filtering by user_id and agent_id if provided."""
+        # Chat Usage
+        chat_query = self.db.query(
+            ChatUsageLog.user_id,
+            func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
+            func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+            func.sum(ChatUsageLog.total_cost).label("total_cost"),
+            func.count(ChatUsageLog.id).label("total_requests")
+        )
+        if user_id:
+            chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
+        if agent_id:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        
+        chat_results = chat_query.group_by(ChatUsageLog.user_id).all()
+
+        # Cron Usage
+        cron_query = self.db.query(
+            CronOwnership.user_id,
+            func.sum(CronPipelineRun.input_tokens).label("total_prompt"),
+            func.sum(CronPipelineRun.output_tokens).label("total_completion"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
+            func.sum(CronPipelineRun.total_cost).label("total_cost"),
+            func.count(CronPipelineRun.id).label("total_requests")
+        ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)
+
+        if user_id:
+            cron_query = cron_query.filter(CronOwnership.user_id == user_id)
+        if agent_id:
+            cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+
+        cron_results = cron_query.group_by(CronOwnership.user_id).all()
+
+        # Merge results
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        for r in chat_results:
+            merged[r.user_id] = {
+                "user_id": r.user_id,
+                "prompt_tokens": int(r.total_prompt or 0),
+                "completion_tokens": int(r.total_completion or 0),
+                "total_tokens": int(r.total_tokens or 0),
+                "total_cost": float(r.total_cost or 0.0),
+                "total_requests": int(r.total_requests or 0)
+            }
+
+        for r in cron_results:
+            if r.user_id in merged:
+                merged[r.user_id]["prompt_tokens"] += int(r.total_prompt or 0)
+                merged[r.user_id]["completion_tokens"] += int(r.total_completion or 0)
+                merged[r.user_id]["total_tokens"] += int(r.total_tokens or 0)
+                merged[r.user_id]["total_cost"] += float(r.total_cost or 0.0)
+                merged[r.user_id]["total_requests"] += int(r.total_requests or 0)
+            else:
+                merged[r.user_id] = {
+                    "user_id": r.user_id,
+                    "prompt_tokens": int(r.total_prompt or 0),
+                    "completion_tokens": int(r.total_completion or 0),
+                    "total_tokens": int(r.total_tokens or 0),
+                    "total_cost": float(r.total_cost or 0.0),
+                    "total_requests": int(r.total_requests or 0)
+                }
+
+        return list(merged.values())
+
+    async def get_usage_per_agent_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        """Aggregate usage per agent for a given user, including agent_name."""
+        # Chat Usage
+        chat_results = (
             self.db.query(
-                ChatUsageLog.user_id,
+                ChatUsageLog.agent_id,
                 func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
                 func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
                 func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+                func.sum(ChatUsageLog.total_cost).label("total_cost"),
                 func.count(ChatUsageLog.id).label("total_requests")
             )
-            .group_by(ChatUsageLog.user_id)
+            .filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None))
+            .group_by(ChatUsageLog.agent_id)
             .all()
         )
-        
-        return [
-            {
-                "user_id": r.user_id,
-                "prompt_tokens": r.total_prompt,
-                "completion_tokens": r.total_completion,
-                "total_tokens": r.total_tokens,
-                "total_requests": r.total_requests
-            }
-            for r in results
-        ]
 
-    def get_usage_per_model(self) -> List[Dict[str, Any]]:
-        results = (
+        # Cron Usage
+        cron_results = (
             self.db.query(
-                ChatUsageLog.model,
-                func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
-                func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
-                func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
-                func.sum(ChatUsageLog.total_cost).label("total_cost")
+                CronOwnership.agent_id,
+                func.sum(CronPipelineRun.input_tokens).label("total_prompt"),
+                func.sum(CronPipelineRun.output_tokens).label("total_completion"),
+                func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
+                func.sum(CronPipelineRun.total_cost).label("total_cost"),
+                func.count(CronPipelineRun.id).label("total_requests")
             )
-            .group_by(ChatUsageLog.model)
+            .join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)
+            .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None))
+            .group_by(CronOwnership.agent_id)
             .all()
         )
-        
-        return [
-            {
-                "model": r.model,
-                "prompt_tokens": r.total_prompt,
-                "completion_tokens": r.total_completion,
-                "total_tokens": r.total_tokens,
-                "total_cost": r.total_cost or 0.0
-            }
-            for r in results
-        ]
 
-    def get_current_month_usage(self) -> Dict[str, Any]:
+        # Merge results by agent_id
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        for r in chat_results:
+            a_id = r.agent_id
+            merged[a_id] = {
+                "agent_id": a_id,
+                "prompt_tokens": int(r.total_prompt or 0),
+                "completion_tokens": int(r.total_completion or 0),
+                "total_tokens": int(r.total_tokens or 0),
+                "total_cost": float(r.total_cost or 0.0),
+                "total_requests": int(r.total_requests or 0)
+            }
+
+        for r in cron_results:
+            a_id = r.agent_id
+            if a_id in merged:
+                merged[a_id]["prompt_tokens"] += int(r.total_prompt or 0)
+                merged[a_id]["completion_tokens"] += int(r.total_completion or 0)
+                merged[a_id]["total_tokens"] += int(r.total_tokens or 0)
+                merged[a_id]["total_cost"] += float(r.total_cost or 0.0)
+                merged[a_id]["total_requests"] += int(r.total_requests or 0)
+            else:
+                merged[a_id] = {
+                    "agent_id": a_id,
+                    "prompt_tokens": int(r.total_prompt or 0),
+                    "completion_tokens": int(r.total_completion or 0),
+                    "total_tokens": int(r.total_tokens or 0),
+                    "total_cost": float(r.total_cost or 0.0),
+                    "total_requests": int(r.total_requests or 0)
+                }
+
+        # Fetch agent names from gateway
+        agent_name_map: Dict[str, str] = {}
+        try:
+            all_agents = await self.gateway.list_agents()
+            agent_name_map = {str(a.get("id")): a.get("name", "Unknown Agent") for a in all_agents if "id" in a}
+        except Exception as exc:
+            logger.warning("Failed to fetch agents from gateway for usage mapping: %s", exc)
+
+        final_results = []
+        for a_id, data in merged.items():
+            data["agent_name"] = agent_name_map.get(a_id, a_id)
+            final_results.append(data)
+
+        # Sort by cost descending or total tokens
+        final_results.sort(key=lambda x: x["total_cost"], reverse=True)
+        return final_results
+
+    def get_usage_per_model(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+        """Aggregate usage per model, filtering by user_id and agent_id."""
+        # Chat Usage
+        chat_query = self.db.query(
+            ChatUsageLog.model,
+            func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
+            func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+            func.sum(ChatUsageLog.total_cost).label("total_cost")
+        )
+        if user_id:
+            chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
+        if agent_id:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        
+        chat_results = chat_query.group_by(ChatUsageLog.model).all()
+
+        # Cron Usage
+        cron_query = self.db.query(
+            CronPipelineRun.model,
+            func.sum(CronPipelineRun.input_tokens).label("total_prompt"),
+            func.sum(CronPipelineRun.output_tokens).label("total_completion"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
+            func.sum(CronPipelineRun.total_cost).label("total_cost")
+        ).join(CronOwnership, CronOwnership.cron_id == CronPipelineRun.cron_id)
+
+        if user_id:
+            cron_query = cron_query.filter(CronOwnership.user_id == user_id)
+        if agent_id:
+            cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+
+        cron_results = cron_query.group_by(CronPipelineRun.model).all()
+
+        # Merge
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        for r in chat_results:
+            model = r.model or "unknown"
+            merged[model] = {
+                "model": model,
+                "prompt_tokens": int(r.total_prompt or 0),
+                "completion_tokens": int(r.total_completion or 0),
+                "total_tokens": int(r.total_tokens or 0),
+                "total_cost": float(r.total_cost or 0.0)
+            }
+
+        for r in cron_results:
+            model = r.model or "unknown"
+            if model in merged:
+                merged[model]["prompt_tokens"] += int(r.total_prompt or 0)
+                merged[model]["completion_tokens"] += int(r.total_completion or 0)
+                merged[model]["total_tokens"] += int(r.total_tokens or 0)
+                merged[model]["total_cost"] += float(r.total_cost or 0.0)
+            else:
+                merged[model] = {
+                    "model": model,
+                    "prompt_tokens": int(r.total_prompt or 0),
+                    "completion_tokens": int(r.total_completion or 0),
+                    "total_tokens": int(r.total_tokens or 0),
+                    "total_cost": float(r.total_cost or 0.0)
+                }
+
+        return list(merged.values())
+
+    def get_current_month_usage(self, user_id: str | None = None, agent_id: str | None = None) -> Dict[str, Any]:
+        """Aggregate usage for current month, filtering by user_id and agent_id."""
         now = datetime.now(timezone.utc)
         start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        start_of_month_ms = int(start_of_month.timestamp() * 1000)
         
-        results = (
-            self.db.query(
-                ChatUsageLog.model,
-                func.sum(ChatUsageLog.total_cost).label("total_cost"),
-                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
-            )
-            .filter(ChatUsageLog.created_at >= start_of_month)
-            .group_by(ChatUsageLog.model)
-            .all()
-        )
+        # Chat
+        chat_query = self.db.query(
+            ChatUsageLog.model,
+            func.sum(ChatUsageLog.total_cost).label("total_cost"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+        ).filter(ChatUsageLog.created_at >= start_of_month)
+
+        if user_id:
+            chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
+        if agent_id:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
         
-        models = []
+        chat_results = chat_query.group_by(ChatUsageLog.model).all()
+
+        # Cron
+        cron_query = self.db.query(
+            CronPipelineRun.model,
+            func.sum(CronPipelineRun.total_cost).label("total_cost"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens")
+        ).join(CronOwnership, CronOwnership.cron_id == CronPipelineRun.cron_id).filter(CronPipelineRun.started_at >= start_of_month_ms)
+
+        if user_id:
+            cron_query = cron_query.filter(CronOwnership.user_id == user_id)
+        if agent_id:
+            cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+
+        cron_results = cron_query.group_by(CronPipelineRun.model).all()
+
+        # Merge
+        models_data: Dict[str, Dict[str, Any]] = {}
         total_cost = 0.0
         total_tokens = 0
-        
-        for r in results:
-            cost = r.total_cost or 0.0
-            models.append({"name": r.model, "cost": cost, "tokens": r.total_tokens or 0})
+
+        for r in chat_results:
+            name = r.model or "unknown"
+            cost = float(r.total_cost or 0.0)
+            tokens = int(r.total_tokens or 0)
+            models_data[name] = {"name": name, "cost": cost, "tokens": tokens}
             total_cost += cost
-            total_tokens += (r.total_tokens or 0)
+            total_tokens += tokens
+
+        for r in cron_results:
+            name = r.model or "unknown"
+            cost = float(r.total_cost or 0.0)
+            tokens = int(r.total_tokens or 0)
+            if name in models_data:
+                models_data[name]["cost"] += cost
+                models_data[name]["tokens"] += tokens
+            else:
+                models_data[name] = {"name": name, "cost": cost, "tokens": tokens}
+            total_cost += cost
+            total_tokens += tokens
             
         return {
             "total_cost": total_cost,
             "total_tokens": total_tokens,
-            "total_models_used": len(models),
-            "models": models
+            "total_models_used": len(models_data),
+            "models": list(models_data.values())
         }
 
-    def get_daily_usage_last_7_days(self) -> List[Dict[str, Any]]:
-        from sqlalchemy import cast, Date
-        from datetime import timedelta
-        
+    def get_daily_usage_last_7_days(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+        """Aggregate daily usage for last 7 days, filtering by user_id and agent_id."""
         now = datetime.now(timezone.utc)
         start_date = now - timedelta(days=7)
+        start_date_ms = int(start_date.timestamp() * 1000)
         
-        results = (
-            self.db.query(
-                cast(ChatUsageLog.created_at, Date).label("date"),
-                func.sum(ChatUsageLog.total_cost).label("total_cost"),
-                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
-            )
-            .filter(ChatUsageLog.created_at >= start_date)
-            .group_by(cast(ChatUsageLog.created_at, Date))
-            .order_by(cast(ChatUsageLog.created_at, Date))
-            .all()
-        )
-        
-        return [
-            {
-                "date": str(r.date),
-                "total_cost": r.total_cost or 0.0,
-                "total_tokens": r.total_tokens or 0
-            }
-            for r in results
-        ]
+        # Chat
+        chat_query = self.db.query(
+            cast(ChatUsageLog.created_at, Date).label("date"),
+            func.sum(ChatUsageLog.total_cost).label("total_cost"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+        ).filter(ChatUsageLog.created_at >= start_date)
 
-    def get_monthly_usage_last_12_months(self) -> List[Dict[str, Any]]:
-        from sqlalchemy import extract
+        if user_id:
+            chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
+        if agent_id:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
         
+        chat_results = chat_query.group_by(cast(ChatUsageLog.created_at, Date)).all()
+
+        # Cron
+        cron_query = self.db.query(
+            cast(func.to_timestamp(CronPipelineRun.started_at / 1000), Date).label("date"),
+            func.sum(CronPipelineRun.total_cost).label("total_cost"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens")
+        ).join(CronOwnership, CronOwnership.cron_id == CronPipelineRun.cron_id).filter(CronPipelineRun.started_at >= start_date_ms)
+
+        if user_id:
+            cron_query = cron_query.filter(CronOwnership.user_id == user_id)
+        if agent_id:
+            cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+
+        cron_results = cron_query.group_by(cast(func.to_timestamp(CronPipelineRun.started_at / 1000), Date)).all()
+
+        # Merge
+        merged: Dict[str, Dict[str, Any]] = {}
+        
+        for r in chat_results:
+            d = str(r.date)
+            merged[d] = {
+                "date": d,
+                "total_cost": float(r.total_cost or 0.0),
+                "total_tokens": int(r.total_tokens or 0)
+            }
+
+        for r in cron_results:
+            d = str(r.date)
+            if d in merged:
+                merged[d]["total_cost"] += float(r.total_cost or 0.0)
+                merged[d]["total_tokens"] += int(r.total_tokens or 0)
+            else:
+                merged[d] = {
+                    "date": d,
+                    "total_cost": float(r.total_cost or 0.0),
+                    "total_tokens": int(r.total_tokens or 0)
+                }
+
+        return sorted(list(merged.values()), key=lambda x: x["date"])
+
+    def get_monthly_usage_last_12_months(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+        """Aggregate monthly usage for last 12 months, filtering by user_id and agent_id."""
         now = datetime.now(timezone.utc)
         month = now.month - 11
         year = now.year
@@ -461,28 +682,62 @@ class UsageService:
             month += 12
             year -= 1
         start_date = datetime(year, month, 1, tzinfo=timezone.utc)
+        start_date_ms = int(start_date.timestamp() * 1000)
         
-        results = (
-            self.db.query(
-                extract('year', ChatUsageLog.created_at).label("year"),
-                extract('month', ChatUsageLog.created_at).label("month"),
-                func.sum(ChatUsageLog.total_cost).label("total_cost"),
-                func.sum(ChatUsageLog.total_tokens).label("total_tokens")
-            )
-            .filter(ChatUsageLog.created_at >= start_date)
-            .group_by("year", "month")
-            .order_by("year", "month")
-            .all()
-        )
+        # Chat
+        chat_query = self.db.query(
+            extract('year', ChatUsageLog.created_at).label("year"),
+            extract('month', ChatUsageLog.created_at).label("month"),
+            func.sum(ChatUsageLog.total_cost).label("total_cost"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+        ).filter(ChatUsageLog.created_at >= start_date)
+
+        if user_id:
+            chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
+        if agent_id:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
         
-        return [
-            {
-                "month": f"{int(r.year)}-{int(r.month):02d}",
-                "total_cost": r.total_cost or 0.0,
-                "total_tokens": r.total_tokens or 0
+        chat_results = chat_query.group_by("year", "month").all()
+
+        # Cron
+        cron_query = self.db.query(
+            extract('year', func.to_timestamp(CronPipelineRun.started_at / 1000)).label("year"),
+            extract('month', func.to_timestamp(CronPipelineRun.started_at / 1000)).label("month"),
+            func.sum(CronPipelineRun.total_cost).label("total_cost"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens")
+        ).join(CronOwnership, CronOwnership.cron_id == CronPipelineRun.cron_id).filter(CronPipelineRun.started_at >= start_date_ms)
+
+        if user_id:
+            cron_query = cron_query.filter(CronOwnership.user_id == user_id)
+        if agent_id:
+            cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+
+        cron_results = cron_query.group_by("year", "month").all()
+
+        # Merge
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        for r in chat_results:
+            m = f"{int(r.year)}-{int(r.month):02d}"
+            merged[m] = {
+                "month": m,
+                "total_cost": float(r.total_cost or 0.0),
+                "total_tokens": int(r.total_tokens or 0)
             }
-            for r in results
-        ]
+
+        for r in cron_results:
+            m = f"{int(r.year)}-{int(r.month):02d}"
+            if m in merged:
+                merged[m]["total_cost"] += float(r.total_cost or 0.0)
+                merged[m]["total_tokens"] += int(r.total_tokens or 0)
+            else:
+                merged[m] = {
+                    "month": m,
+                    "total_cost": float(r.total_cost or 0.0),
+                    "total_tokens": int(r.total_tokens or 0)
+                }
+
+        return sorted(list(merged.values()), key=lambda x: x["month"])
 
     async def sync_cron_cost(self, agent_id: str, session_id: str, run_id: str) -> None:
         """Update a CronPipelineRun's costs by reading the corresponding .jsonl session log."""
@@ -530,7 +785,6 @@ class UsageService:
                     total_output_cost += float(cost.get("output") or 0.0)
                     total_cost += float(cost.get("total") or 0.0)
 
-            from ..models.cron import CronPipelineRun
             from ..database import SessionLocal
 
             # Use a fresh session for background task to ensure it's not closed
@@ -539,29 +793,27 @@ class UsageService:
                 affected = db.query(CronPipelineRun).filter(CronPipelineRun.id == run_id).update({
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
-                    "input_cost": total_input_cost * 2,
-                    "output_cost": total_output_cost * 2,
-                    "total_cost": total_cost * 2
+                    "input_cost": total_input_cost * settings.COST_MULTIPLIER,
+                    "output_cost": total_output_cost * settings.COST_MULTIPLIER,
+                    "total_cost": total_cost * settings.COST_MULTIPLIER
                 })
                 db.commit()
                 if affected == 0:
                     logger.warning("No CronPipelineRun found to update for run_id '%s'", run_id)
                 else:
                     logger.info("Synced costs for cron run %s (affected=%s): tokens=%s, total_cost=%s", 
-                                run_id, affected, total_total_tokens, total_cost * 2)
+                                run_id, affected, total_total_tokens, total_cost * settings.COST_MULTIPLIER)
             finally:
                 db.close()
 
         except Exception as exc:
             logger.error("Error syncing cron cost for run '%s': %s", run_id, exc)
 
-    def get_token_usage_for_agent(self, agent_id: str, now: datetime) -> Dict[str, Any]:
-        """Aggregate token usage for a specific agent from both chat and cron runs."""
-        from ..models.cron import CronOwnership, CronPipelineRun
-
+    def get_token_usage_for_agent(self, user_id: str, agent_id: str, now: datetime) -> Dict[str, Any]:
+        """Aggregate token usage for a specific agent and user from both chat and cron runs."""
         agent_cron_ids = (
             self.db.query(CronOwnership.cron_id)
-            .filter(CronOwnership.agent_id == agent_id)
+            .filter(CronOwnership.agent_id == agent_id, CronOwnership.user_id == user_id)
         )
 
         # Lifetime totals from Crons
@@ -582,7 +834,7 @@ class UsageService:
                 func.coalesce(func.sum(ChatUsageLog.completion_tokens), 0).label("out"),
                 func.count(ChatUsageLog.id).label("cnt"),
             )
-            .filter(ChatUsageLog.agent_id == agent_id)
+            .filter(ChatUsageLog.agent_id == agent_id, ChatUsageLog.user_id == user_id)
             .first()
         )
 
@@ -637,6 +889,191 @@ class UsageService:
                 {"type": "Output", "value": output_total},
             ],
         }
+
+    async def get_agents_monthly_usage_chart(self, user_id: str) -> List[Dict[str, Any]]:
+        """Return 12-month token/cost usage grouped by month and agent_id."""
+        now = datetime.now(timezone.utc)
+        month = now.month - 11
+        year = now.year
+        while month <= 0:
+            month += 12
+            year -= 1
+        start_date = datetime(year, month, 1, tzinfo=timezone.utc)
+        start_date_ms = int(start_date.timestamp() * 1000)
+
+        # Chat
+        chat_query = self.db.query(
+            ChatUsageLog.agent_id,
+            extract('year', ChatUsageLog.created_at).label("year"),
+            extract('month', ChatUsageLog.created_at).label("month"),
+            func.sum(ChatUsageLog.total_cost).label("total_cost"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+        ).filter(ChatUsageLog.created_at >= start_date, ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None))
+        chat_results = chat_query.group_by("year", "month", ChatUsageLog.agent_id).all()
+
+        # Cron
+        cron_query = self.db.query(
+            CronOwnership.agent_id,
+            extract('year', func.to_timestamp(CronPipelineRun.started_at / 1000)).label("year"),
+            extract('month', func.to_timestamp(CronPipelineRun.started_at / 1000)).label("month"),
+            func.sum(CronPipelineRun.total_cost).label("total_cost"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens")
+        ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
+         .filter(CronPipelineRun.started_at >= start_date_ms, CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None))
+        cron_results = cron_query.group_by("year", "month", CronOwnership.agent_id).all()
+
+        merged: Dict[str, Dict[str, Any]] = {}
+        for r in chat_results:
+            key = f"{int(r.year)}-{int(r.month):02d}_{r.agent_id}"
+            merged[key] = {
+                "month": f"{int(r.year)}-{int(r.month):02d}",
+                "agent_id": r.agent_id,
+                "total_cost": float(r.total_cost or 0.0),
+                "total_tokens": int(r.total_tokens or 0)
+            }
+            
+        for r in cron_results:
+            key = f"{int(r.year)}-{int(r.month):02d}_{r.agent_id}"
+            if key in merged:
+                merged[key]["total_cost"] += float(r.total_cost or 0.0)
+                merged[key]["total_tokens"] += int(r.total_tokens or 0)
+            else:
+                merged[key] = {
+                    "month": f"{int(r.year)}-{int(r.month):02d}",
+                    "agent_id": r.agent_id,
+                    "total_cost": float(r.total_cost or 0.0),
+                    "total_tokens": int(r.total_tokens or 0)
+                }
+
+        agent_name_map = {}
+        try:
+            all_agents = await self.gateway.list_agents()
+            agent_name_map = {str(a.get("id")): a.get("name", "Unknown Agent") for a in all_agents if "id" in a}
+        except Exception:
+            pass
+
+        final_results = []
+        for data in merged.values():
+            data["agent_name"] = agent_name_map.get(data["agent_id"], data["agent_id"])
+            final_results.append(data)
+            
+        return sorted(final_results, key=lambda x: x["month"])
+
+    async def get_agents_summary(self, user_id: str) -> List[Dict[str, Any]]:
+        """Return lifetime and current month summary for all agents of a user."""
+        from ..models.agent_task import AgentTask
+        now = datetime.now(timezone.utc)
+        start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        start_of_month_ms = int(start_of_month.timestamp() * 1000)
+        from collections import defaultdict
+
+        # 1. Fetch lifetime costs per agent
+        lifetime_chat = self.db.query(
+            ChatUsageLog.agent_id,
+            func.sum(ChatUsageLog.total_cost).label("cost")
+        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None)).group_by(ChatUsageLog.agent_id).all()
+        
+        lifetime_cron = self.db.query(
+            CronOwnership.agent_id,
+            func.sum(CronPipelineRun.total_cost).label("cost"),
+            func.count(CronPipelineRun.id).label("jobs_ran")
+        ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
+         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None)).group_by(CronOwnership.agent_id).all()
+
+        # 2. Fetch current month metrics per agent
+        month_chat = self.db.query(
+            ChatUsageLog.agent_id,
+            func.sum(ChatUsageLog.total_cost).label("cost"),
+            func.sum(ChatUsageLog.total_tokens).label("tokens")
+        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None), ChatUsageLog.created_at >= start_of_month).group_by(ChatUsageLog.agent_id).all()
+        
+        month_cron = self.db.query(
+            CronOwnership.agent_id,
+            func.sum(CronPipelineRun.total_cost).label("cost"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("tokens")
+        ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
+         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None), CronPipelineRun.started_at >= start_of_month_ms).group_by(CronOwnership.agent_id).all()
+
+        # 3. Discover agents the user has usage for
+        agent_ids = set()
+        for r in lifetime_chat: agent_ids.add(r.agent_id)
+        for r in lifetime_cron: agent_ids.add(r.agent_id)
+        
+        tasks_data = []
+        if agent_ids:
+            tasks_data = self.db.query(
+                AgentTask.agent_id,
+                func.count(AgentTask.id).label("tasks_ran")
+            ).filter(AgentTask.agent_id.in_(agent_ids)).group_by(AgentTask.agent_id).all()
+
+        # 4. Top model for current month
+        top_models_chat = self.db.query(
+            ChatUsageLog.agent_id,
+            ChatUsageLog.model,
+            func.count(ChatUsageLog.id).label("usage_count")
+        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None), ChatUsageLog.created_at >= start_of_month).group_by(ChatUsageLog.agent_id, ChatUsageLog.model).all()
+        
+        top_models_cron = self.db.query(
+            CronOwnership.agent_id,
+            CronPipelineRun.model,
+            func.count(CronPipelineRun.id).label("usage_count")
+        ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
+         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None), CronPipelineRun.started_at >= start_of_month_ms).group_by(CronOwnership.agent_id, CronPipelineRun.model).all()
+
+        agent_models = defaultdict(lambda: defaultdict(int))
+        for r in top_models_chat: agent_models[r.agent_id][r.model or "unknown"] += r.usage_count
+        for r in top_models_cron: agent_models[r.agent_id][r.model or "unknown"] += r.usage_count
+        
+        top_model_per_agent = {}
+        for a_id, models in agent_models.items():
+            if models:
+                top_model = max(models.items(), key=lambda x: x[1])[0]
+                top_model_per_agent[a_id] = top_model
+
+        # Aggregate everything
+        agents_summary = {}
+        for a_id in agent_ids:
+            agents_summary[a_id] = {
+                "agent_id": a_id,
+                "lifetime_cost": 0.0,
+                "current_month_cost": 0.0,
+                "current_month_tokens": 0,
+                "tasks_ran": 0,
+                "jobs_ran": 0,
+                "top_model": top_model_per_agent.get(a_id, "unknown")
+            }
+
+        for r in lifetime_chat: agents_summary[r.agent_id]["lifetime_cost"] += float(r.cost or 0.0)
+        for r in lifetime_cron:
+            agents_summary[r.agent_id]["lifetime_cost"] += float(r.cost or 0.0)
+            agents_summary[r.agent_id]["jobs_ran"] += int(r.jobs_ran or 0)
+
+        for r in month_chat:
+            agents_summary[r.agent_id]["current_month_cost"] += float(r.cost or 0.0)
+            agents_summary[r.agent_id]["current_month_tokens"] += int(r.tokens or 0)
+        for r in month_cron:
+            agents_summary[r.agent_id]["current_month_cost"] += float(r.cost or 0.0)
+            agents_summary[r.agent_id]["current_month_tokens"] += int(r.tokens or 0)
+
+        for r in tasks_data:
+            if r.agent_id in agents_summary:
+                agents_summary[r.agent_id]["tasks_ran"] += int(r.tasks_ran or 0)
+
+        # Get Agent Names
+        agent_name_map = {}
+        try:
+            all_agents = await self.gateway.list_agents()
+            agent_name_map = {str(a.get("id")): a.get("name", "Unknown Agent") for a in all_agents if "id" in a}
+        except Exception:
+            pass
+
+        final_results = []
+        for a_id, data in agents_summary.items():
+            data["agent_name"] = agent_name_map.get(a_id, a_id)
+            final_results.append(data)
+
+        final_results.sort(key=lambda x: x["current_month_cost"], reverse=True)
+        return final_results
 
     def get_user_chat_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         records = (

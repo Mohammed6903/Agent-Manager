@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # ── Encryption ──────────────────────────────────────────────────────────────
     FERNET_KEY: str = ""
 
+    # ── Cost Configuration ──────────────────────────────────────────────────────
+    COST_MULTIPLIER: float = 2.0
+
 
     # ── Twitter ─────────────────────────────────────────────────────────────────
     TWITTER_CLIENT_ID: str = ""

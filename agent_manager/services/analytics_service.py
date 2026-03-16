@@ -62,14 +62,14 @@ class AnalyticsService:
 
     # ── Public entry point ───────────────────────────────────────────────────
 
-    async def get_agent_analytics(self, agent_id: str) -> AgentAnalyticsResponse:
+    async def get_agent_analytics(self, user_id: str, agent_id: str) -> AgentAnalyticsResponse:
         now = datetime.now(timezone.utc)
 
-        tasks = self._task_analytics(agent_id, now)
-        jobs = await self._job_analytics(agent_id)
-        tokens = self._token_analytics(agent_id, now)
-        work_time = self._work_time_analytics(agent_id, now)
-        uptime = await self._uptime_analytics(agent_id, now)
+        tasks = self._task_analytics(user_id, agent_id, now)
+        jobs = await self._job_analytics(user_id, agent_id)
+        tokens = self._token_analytics(user_id, agent_id, now)
+        work_time = self._work_time_analytics(user_id, agent_id, now)
+        uptime = await self._uptime_analytics(user_id, agent_id, now)
         compute = await self._compute_analytics(agent_id)
         interactions = await self._interaction_analytics(agent_id, now)
 
@@ -86,40 +86,42 @@ class AnalyticsService:
 
     # ── Tasks ────────────────────────────────────────────────────────────────
 
-    def _task_analytics(self, agent_id: str, now: datetime) -> TaskAnalytics:
-        rows = (
-            self.db.query(AgentTask.status, func.count(AgentTask.id))
-            .filter(AgentTask.agent_id == agent_id)
-            .group_by(AgentTask.status)
-            .all()
-        )
+    def _task_analytics(self, user_id: str, agent_id: str, now: datetime) -> TaskAnalytics:
+        # Assuming AgentTask has user_id. Let's check the model if possible.
+        # If not, we filter by agent_id and assume agent is user-specific.
+        # However, the requirement said "fetch results for specific user_id, and agent_id's data".
+        query = self.db.query(AgentTask.status, func.count(AgentTask.id)).filter(AgentTask.agent_id == agent_id)
+        
+        # Check if AgentTask has user_id
+        if hasattr(AgentTask, "user_id"):
+            query = query.filter(AgentTask.user_id == user_id)
+
+        rows = query.group_by(AgentTask.status).all()
         counts: Dict[str, int] = {r[0]: r[1] for r in rows}
         completed = counts.get("completed", 0)
         pending = counts.get("assigned", 0) + counts.get("in_progress", 0)
         failed = counts.get("error", 0)
 
-        # Weekly trend — tasks created per day of the current week
+        # Weekly trend
         week_start = (now - timedelta(days=now.weekday())).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        week_rows = (
-            self.db.query(
+        trend_query = self.db.query(
                 extract("dow", AgentTask.created_at).label("dow"),
                 func.count(AgentTask.id),
-            )
-            .filter(
+            ).filter(
                 AgentTask.agent_id == agent_id,
                 AgentTask.created_at >= week_start,
             )
-            .group_by("dow")
-            .all()
-        )
-        # extract('dow' ...) returns 0=Sun..6=Sat in PostgreSQL
+        
+        if hasattr(AgentTask, "user_id"):
+            trend_query = trend_query.filter(AgentTask.user_id == user_id)
+
+        week_rows = trend_query.group_by("dow").all()
         dow_map: Dict[int, int] = {int(r[0]): r[1] for r in week_rows}
-        # Convert to Mon-based list: pg dow 1=Mon..6=Sat, 0=Sun
         weekly_trend = []
         for i, name in enumerate(DAY_NAMES):
-            pg_dow = (i + 1) % 7  # Mon=1 … Sat=6, Sun=0
+            pg_dow = (i + 1) % 7
             weekly_trend.append(DayTasks(day=name, tasks=dow_map.get(pg_dow, 0)))
 
         return TaskAnalytics(
@@ -131,38 +133,32 @@ class AnalyticsService:
 
     # ── Jobs ─────────────────────────────────────────────────────────────────
 
-    async def _job_analytics(self, agent_id: str) -> JobAnalytics:
-        # All cron_ids owned by this agent
-        cron_ids = (
+    async def _job_analytics(self, user_id: str, agent_id: str) -> JobAnalytics:
+        # All cron_ids owned by this agent AND user
+        owned_cron_ids = (
             self.db.query(CronOwnership.cron_id)
-            .filter(CronOwnership.agent_id == agent_id)
-            .subquery()
+            .filter(CronOwnership.agent_id == agent_id, CronOwnership.user_id == user_id)
         )
 
         total_runs_result = (
             self.db.query(func.count(CronPipelineRun.id))
-            .filter(CronPipelineRun.cron_id.in_(
-                self.db.query(CronOwnership.cron_id).filter(CronOwnership.agent_id == agent_id)
-            ))
+            .filter(CronPipelineRun.cron_id.in_(owned_cron_ids))
             .scalar()
         ) or 0
 
-        # Runs per cron — join to get a human-readable name from cron_id
+        # Runs per cron
         per_cron = (
             self.db.query(
                 CronPipelineRun.cron_id,
                 func.count(CronPipelineRun.id).label("runs"),
             )
-            .filter(CronPipelineRun.cron_id.in_(
-                self.db.query(CronOwnership.cron_id).filter(CronOwnership.agent_id == agent_id)
-            ))
+            .filter(CronPipelineRun.cron_id.in_(owned_cron_ids))
             .group_by(CronPipelineRun.cron_id)
             .order_by(func.count(CronPipelineRun.id).desc())
             .limit(10)
             .all()
         )
 
-        # Fetch cron metadata from gateway to get names
         cron_name_map: Dict[str, str] = {}
         try:
             all_crons = await self.gateway.cron_list()
@@ -178,9 +174,9 @@ class AnalyticsService:
 
     # ── Tokens ───────────────────────────────────────────────────────────────
 
-    def _token_analytics(self, agent_id: str, now: datetime) -> TokenAnalytics:
+    def _token_analytics(self, user_id: str, agent_id: str, now: datetime) -> TokenAnalytics:
         if self.usage_service:
-            usage = self.usage_service.get_token_usage_for_agent(agent_id, now)
+            usage = self.usage_service.get_token_usage_for_agent(user_id, agent_id, now)
             return TokenAnalytics(
                 total_consumed=usage["total_consumed"],
                 this_month=usage["this_month"],
@@ -200,13 +196,12 @@ class AnalyticsService:
 
     # ── Work Time ────────────────────────────────────────────────────────────
 
-    def _work_time_analytics(self, agent_id: str, now: datetime) -> WorkTimeAnalytics:
+    def _work_time_analytics(self, user_id: str, agent_id: str, now: datetime) -> WorkTimeAnalytics:
         agent_cron_ids = (
             self.db.query(CronOwnership.cron_id)
-            .filter(CronOwnership.agent_id == agent_id)
+            .filter(CronOwnership.agent_id == agent_id, CronOwnership.user_id == user_id)
         )
 
-        # Total duration across all runs (ms → hours)
         total_ms = (
             self.db.query(func.coalesce(func.sum(CronPipelineRun.duration_ms), 0))
             .filter(CronPipelineRun.cron_id.in_(agent_cron_ids))
@@ -214,7 +209,6 @@ class AnalyticsService:
         ) or 0
         total_hours = round(total_ms / 3_600_000, 1)
 
-        # This week
         week_start_epoch = int(
             (now - timedelta(days=now.weekday()))
             .replace(hour=0, minute=0, second=0, microsecond=0)
@@ -231,7 +225,6 @@ class AnalyticsService:
         ) or 0
         this_week = round(week_ms / 3_600_000, 1)
 
-        # Daily breakdown for the current week
         daily: List[DayHours] = []
         for i, name in enumerate(DAY_NAMES):
             day_start = (
@@ -268,20 +261,19 @@ class AnalyticsService:
     # ── Uptime ───────────────────────────────────────────────────────────────
 
     async def _uptime_analytics(
-        self, agent_id: str, now: datetime
+        self, user_id: str, agent_id: str, now: datetime
     ) -> UptimeAnalytics:
         # Check live status
         online = False
         try:
             status = await self.gateway.get_status()
-            online = True  # if the call succeeds, the gateway is up
+            online = True
         except Exception:
             pass
 
-        # Compute uptime from cron pipeline runs — success vs total per month
         agent_cron_ids = (
             self.db.query(CronOwnership.cron_id)
-            .filter(CronOwnership.agent_id == agent_id)
+            .filter(CronOwnership.agent_id == agent_id, CronOwnership.user_id == user_id)
         )
 
         six_months_ago_epoch = int(
@@ -303,7 +295,6 @@ class AnalyticsService:
             .all()
         )
 
-        # Bucket into months
         monthly_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0})
         last_failure_ts: Optional[int] = None
 
@@ -319,7 +310,6 @@ class AnalyticsService:
                     if last_failure_ts is None or ts > last_failure_ts:
                         last_failure_ts = ts
 
-        # Build monthly list (last 6 months in order)
         monthly: List[MonthUptime] = []
         for i in range(5, -1, -1):
             dt = now - timedelta(days=30 * i)
@@ -328,16 +318,15 @@ class AnalyticsService:
             if stats and stats["total"] > 0:
                 pct = round(stats["success"] / stats["total"] * 100, 1)
             else:
-                pct = 100.0  # no runs = no failures
+                pct = 100.0
             monthly.append(MonthUptime(month=key, uptime=pct))
 
-        # Aggregate uptime
         total_runs_all = sum(s["total"] for s in monthly_stats.values())
         total_success = sum(s["success"] for s in monthly_stats.values())
         uptime_pct = round(total_success / total_runs_all * 100, 1) if total_runs_all else 100.0
         downtime_hours = round(
             (total_runs_all - total_success) * 0.5, 1
-        )  # estimate ~30 min per failure
+        )
 
         last_downtime: Optional[str] = None
         if last_failure_ts:

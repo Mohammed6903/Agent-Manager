@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ..dependencies import get_analytics_service
 from ..schemas.analytics import AgentAnalyticsResponse
@@ -17,6 +17,7 @@ router = APIRouter(tags=["Analytics"])
 )
 async def get_agent_analytics(
     agent_id: str,
+    user_id: Annotated[str, Query(...)],
     analytics_service: Annotated[AnalyticsService, Depends(get_analytics_service)],
 ):
     """Return aggregated analytics for a single agent.
@@ -24,5 +25,5 @@ async def get_agent_analytics(
     Covers tasks, cron jobs, work time, uptime, token consumption,
     compute/storage, and interaction metrics.
     """
-    return await analytics_service.get_agent_analytics(agent_id)
+    return await analytics_service.get_agent_analytics(user_id=user_id, agent_id=agent_id)
 
