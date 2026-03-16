@@ -39,6 +39,8 @@ class TaskService:
     async def create_task(self, req: CreateTaskRequest) -> TaskResponse:
         task = AgentTask(
             agent_id=req.agent_id,
+            user_id=req.user_id,
+            session_id=req.session_id,
             title=req.title,
             description=req.description,
             status=req.status,
@@ -62,11 +64,14 @@ class TaskService:
     async def list_tasks(
         self,
         agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> List[TaskResponse]:
         q = self.db.query(AgentTask)
         if agent_id:
             q = q.filter(AgentTask.agent_id == agent_id)
+        if user_id:
+            q = q.filter(AgentTask.user_id == user_id)
         if status:
             q = q.filter(AgentTask.status == status)
         q = q.order_by(AgentTask.created_at.desc())

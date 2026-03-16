@@ -14,6 +14,9 @@ class AgentTask(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id = Column(String, nullable=False, index=True)
+    # Ownership / scoping
+    user_id = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
 

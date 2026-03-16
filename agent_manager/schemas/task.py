@@ -30,6 +30,8 @@ class TaskIssue(BaseModel):
 
 class CreateTaskRequest(BaseModel):
     agent_id: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
     title: str
     description: Optional[str] = None
     status: Literal["assigned", "in_progress", "completed", "error"] = "assigned"
@@ -41,6 +43,8 @@ class CreateTaskRequest(BaseModel):
 
 
 class UpdateTaskRequest(BaseModel):
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[Literal["assigned", "in_progress", "completed", "error"]] = None

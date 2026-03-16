@@ -106,8 +106,21 @@ class ChatService:
         req: ChatRequest,
         uploaded_file_paths: list[str] | None = None,
     ) -> list[dict]:
-        """Build the messages list, injecting recent_context for group @mentions."""
+        """Build the messages list, injecting recent_context and session metadata."""
         messages = [{"role": m.role, "content": m.content} for m in req.history]
+
+        # Always include a system-level session descriptor so the agent can
+        # reliably know who it's talking to and which session to use for
+        # downstream tools/logging.
+        session_meta_lines = [
+            "[SESSION METADATA]",
+            f"user_id: {req.user_id}",
+            f"session_id: {req.session_id or ''}",
+        ]
+        if req.room_id:
+            session_meta_lines.append(f"room_id: {req.room_id}")
+        session_meta = "\n".join(session_meta_lines)
+        messages.insert(0, {"role": "system", "content": session_meta})
 
         user_content = req.message
 

@@ -87,14 +87,11 @@ class AnalyticsService:
     # ── Tasks ────────────────────────────────────────────────────────────────
 
     def _task_analytics(self, user_id: str, agent_id: str, now: datetime) -> TaskAnalytics:
-        # Assuming AgentTask has user_id. Let's check the model if possible.
-        # If not, we filter by agent_id and assume agent is user-specific.
-        # However, the requirement said "fetch results for specific user_id, and agent_id's data".
-        query = self.db.query(AgentTask.status, func.count(AgentTask.id)).filter(AgentTask.agent_id == agent_id)
-        
-        # Check if AgentTask has user_id
-        if hasattr(AgentTask, "user_id"):
-            query = query.filter(AgentTask.user_id == user_id)
+        # Tasks are now explicitly scoped by both agent_id and user_id.
+        query = (
+            self.db.query(AgentTask.status, func.count(AgentTask.id))
+            .filter(AgentTask.agent_id == agent_id, AgentTask.user_id == user_id)
+        )
 
         rows = query.group_by(AgentTask.status).all()
         counts: Dict[str, int] = {r[0]: r[1] for r in rows}
@@ -106,16 +103,17 @@ class AnalyticsService:
         week_start = (now - timedelta(days=now.weekday())).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        trend_query = self.db.query(
+        trend_query = (
+            self.db.query(
                 extract("dow", AgentTask.created_at).label("dow"),
                 func.count(AgentTask.id),
-            ).filter(
+            )
+            .filter(
                 AgentTask.agent_id == agent_id,
+                AgentTask.user_id == user_id,
                 AgentTask.created_at >= week_start,
             )
-        
-        if hasattr(AgentTask, "user_id"):
-            trend_query = trend_query.filter(AgentTask.user_id == user_id)
+        )
 
         week_rows = trend_query.group_by("dow").all()
         dow_map: Dict[int, int] = {int(r[0]): r[1] for r in week_rows}

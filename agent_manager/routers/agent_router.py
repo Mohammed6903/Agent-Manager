@@ -558,10 +558,11 @@ async def create_task(
 async def list_tasks(
     task_service: Annotated[TaskService, Depends(get_task_service)],
     agent_id: str | None = None,
+    user_id: str | None = None,
     status: str | None = None,
 ):
-    """List tasks. Optionally filter by agent_id and/or status."""
-    return await task_service.list_tasks(agent_id=agent_id, status=status)
+    """List tasks. Filtered by user_id, and optionally agent_id and/or status."""
+    return await task_service.list_tasks(agent_id=agent_id, user_id=user_id, status=status)
 
 
 @router.get("/tasks/{task_id}", tags=["Tasks"], response_model=TaskResponse)
