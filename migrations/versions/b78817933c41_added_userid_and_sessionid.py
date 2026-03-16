@@ -20,7 +20,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_agent_tasks_session_id'), 'agent_tasks', ['session_id'], unique=False)
     op.create_index(op.f('ix_agent_tasks_user_id'), 'agent_tasks', ['user_id'], unique=False)
     op.execute(sa.text("DROP INDEX IF EXISTS ix_third_party_contexts_creator_user_id"))
-    op.drop_column('third_party_contexts', 'creator_user_id')
+    op.execute(sa.text("ALTER TABLE third_party_contexts DROP COLUMN IF EXISTS creator_user_id"))
 
 
 def downgrade() -> None:
