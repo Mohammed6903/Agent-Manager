@@ -484,6 +484,160 @@ class UsageService:
             for r in results
         ]
 
+    async def sync_cron_cost(self, agent_id: str, session_id: str, run_id: str) -> None:
+        """Update a CronPipelineRun's costs by reading the corresponding .jsonl session log."""
+        import asyncio
+        await asyncio.sleep(2)  # Wait for OpenClaw to finish writing to disk
+
+        jsonl_file = self.state_dir / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
+        if not jsonl_file.exists():
+            logger.warning("Session log not found for cron sync: %s", jsonl_file)
+            return
+
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_total_tokens = 0
+        total_input_cost = 0.0
+        total_output_cost = 0.0
+        total_cost = 0.0
+
+        try:
+            with open(jsonl_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if entry.get("type") != "message":
+                        continue
+
+                    message = entry.get("message") or {}
+                    if message.get("role") != "assistant":
+                        continue
+
+                    usage = message.get("usage") or {}
+                    cost = usage.get("cost") or {}
+
+                    total_input_tokens += int(usage.get("input") or 0)
+                    total_output_tokens += int(usage.get("output") or 0)
+                    total_total_tokens += int(usage.get("totalTokens") or 0)
+
+                    total_input_cost += float(cost.get("input") or 0.0)
+                    total_output_cost += float(cost.get("output") or 0.0)
+                    total_cost += float(cost.get("total") or 0.0)
+
+            from ..models.cron import CronPipelineRun
+            from ..database import SessionLocal
+
+            # Use a fresh session for background task to ensure it's not closed
+            db = SessionLocal()
+            try:
+                affected = db.query(CronPipelineRun).filter(CronPipelineRun.id == run_id).update({
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "input_cost": total_input_cost * 2,
+                    "output_cost": total_output_cost * 2,
+                    "total_cost": total_cost * 2
+                })
+                db.commit()
+                if affected == 0:
+                    logger.warning("No CronPipelineRun found to update for run_id '%s'", run_id)
+                else:
+                    logger.info("Synced costs for cron run %s (affected=%s): tokens=%s, total_cost=%s", 
+                                run_id, affected, total_total_tokens, total_cost * 2)
+            finally:
+                db.close()
+
+        except Exception as exc:
+            logger.error("Error syncing cron cost for run '%s': %s", run_id, exc)
+
+    def get_token_usage_for_agent(self, agent_id: str, now: datetime) -> Dict[str, Any]:
+        """Aggregate token usage for a specific agent from both chat and cron runs."""
+        from ..models.cron import CronOwnership, CronPipelineRun
+
+        agent_cron_ids = (
+            self.db.query(CronOwnership.cron_id)
+            .filter(CronOwnership.agent_id == agent_id)
+        )
+
+        # Lifetime totals from Crons
+        cron_totals = (
+            self.db.query(
+                func.coalesce(func.sum(CronPipelineRun.input_tokens), 0).label("inp"),
+                func.coalesce(func.sum(CronPipelineRun.output_tokens), 0).label("out"),
+                func.count(CronPipelineRun.id).label("cnt"),
+            )
+            .filter(CronPipelineRun.cron_id.in_(agent_cron_ids))
+            .first()
+        )
+
+        # Lifetime totals from Chat
+        chat_totals = (
+            self.db.query(
+                func.coalesce(func.sum(ChatUsageLog.prompt_tokens), 0).label("inp"),
+                func.coalesce(func.sum(ChatUsageLog.completion_tokens), 0).label("out"),
+                func.count(ChatUsageLog.id).label("cnt"),
+            )
+            .filter(ChatUsageLog.agent_id == agent_id)
+            .first()
+        )
+
+        input_total = (int(cron_totals.inp) if cron_totals else 0) + (int(chat_totals.inp) if chat_totals else 0)
+        output_total = (int(cron_totals.out) if cron_totals else 0) + (int(chat_totals.out) if chat_totals else 0)
+        run_count = (int(cron_totals.cnt) if cron_totals else 0) + (int(chat_totals.cnt) if chat_totals else 0)
+        total = input_total + output_total
+
+        # This month (Crons)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start_epoch = int(month_start.timestamp() * 1000)
+        
+        cron_month_row = (
+            self.db.query(
+                func.coalesce(
+                    func.sum(CronPipelineRun.input_tokens)
+                    + func.sum(CronPipelineRun.output_tokens),
+                    0,
+                )
+            )
+            .filter(
+                CronPipelineRun.cron_id.in_(agent_cron_ids),
+                CronPipelineRun.started_at >= month_start_epoch,
+            )
+            .scalar()
+        )
+        
+        # This month (Chat)
+        chat_month_row = (
+            self.db.query(
+                func.coalesce(
+                    func.sum(ChatUsageLog.total_tokens),
+                    0,
+                )
+            )
+            .filter(
+                ChatUsageLog.agent_id == agent_id,
+                ChatUsageLog.created_at >= month_start,
+            )
+            .scalar()
+        )
+
+        this_month = (int(cron_month_row) if cron_month_row else 0) + (int(chat_month_row) if chat_month_row else 0)
+        avg_per_task = total // run_count if run_count else 0
+
+        return {
+            "total_consumed": total,
+            "this_month": this_month,
+            "avg_per_task": avg_per_task,
+            "breakdown": [
+                {"type": "Input", "value": input_total},
+                {"type": "Output", "value": output_total},
+            ],
+        }
+
     def get_user_chat_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         records = (
             self.db.query(ChatUsageLog)

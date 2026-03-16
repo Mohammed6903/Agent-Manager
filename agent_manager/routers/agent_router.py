@@ -23,7 +23,7 @@ from ..schemas.task import CreateTaskRequest, UpdateTaskRequest, TaskResponse
 from ..chat_helpers import parse_chat_request
 from ..dependencies import (
     get_agent_service, get_session_service, get_chat_service, get_gateway,
-    get_cron_service, get_task_service,
+    get_cron_service, get_task_service, get_usage_service
 )
 from ..database import get_db
 from ..services.agent_service import AgentService
@@ -31,6 +31,7 @@ from ..services.session_service import SessionService
 from ..services.chat_service import ChatService
 from ..services.cron_service import CronService
 from ..services.task_service import TaskService
+from ..services.usage_service import UsageService
 from ..clients.gateway_client import GatewayClient
 
 logger = logging.getLogger("agent_manager")
@@ -429,20 +430,23 @@ async def get_cron_detail(
 @router.post("/internal/cron-webhook", tags=["Internal"])
 async def cron_webhook_receiver(
     req: Request,
+    background_tasks: BackgroundTasks,
+    usage_service: Annotated[UsageService, Depends(get_usage_service)],
     db: Session = Depends(get_db),
 ):
     """Receive webhook from OpenClaw when a cron job finishes."""
     payload = await req.json()
-    job_id = payload.get("jobId")
-    if not job_id:
-        return {"status": "ignored"}
-    
     logger.info(f"WEBHOOK PAYLOAD: {json.dumps(payload, indent=2)}")
+
+    job_id = payload.get("jobId") or payload.get("job_id") or payload.get("id")
+    if not job_id:
+        logger.warning("Cron webhook ignored: No jobId found in payload.")
+        return {"status": "ignored"}
         
-    status_raw = payload.get("status", "")
+    status_raw = payload.get("status") or payload.get("job_status", "")
     summary = payload.get("summary", "")
     
-    base_status = "success" if status_raw in ("ok", "success") else "error"
+    base_status = "success" if str(status_raw).lower() in ("ok", "success") else "error"
     
     tasks = []
     global_int = []
@@ -469,29 +473,45 @@ async def cron_webhook_receiver(
     from ..repositories.cron_pipeline_repository import CronPipelineRepository
     repo = CronPipelineRepository(db)
 
-    finished_at = payload.get("runAtMs", 0) + payload.get("durationMs", 0) or None
+    run_at = payload.get("runAtMs") or payload.get("run_at_ms") or 0
+    duration = payload.get("durationMs") or payload.get("duration_ms") or 0
+    finished_at = (int(run_at) + int(duration)) if run_at else None
     
-    run_id = f"{payload.get('sessionKey') or payload.get('sessionId') or job_id}-{finished_at}"
+    session_key = payload.get('sessionKey') or payload.get('sessionId') or payload.get('session_key') or payload.get('session_id') or job_id
+    run_id = f"{session_key}-{finished_at}"
     
+    usage = payload.get("usage", {})
     run_data = {
         "id": run_id,
         "cron_id": job_id,
         "status": pipeline_status,
-        "started_at": payload.get("runAtMs"),
+        "started_at": run_at,
         "finished_at": finished_at,
-        "duration_ms": payload.get("durationMs"),
+        "duration_ms": duration,
         "tasks": tasks,
         "global_integrations": global_int,
         "global_context_sources": global_ctx,
         "raw_summary": summary,
         "summary": run_summary,
         "model": payload.get("model"),
-        "input_tokens": payload.get("usage", {}).get("input_tokens"),
-        "output_tokens": payload.get("usage", {}).get("output_tokens"),
+        "input_tokens": usage.get("input_tokens") or usage.get("inputTokens"),
+        "output_tokens": usage.get("output_tokens") or usage.get("outputTokens"),
     }
     
     try:
         repo.insert_run(run_data)
+
+        # Trigger cost sync from session log
+        # sessionKey format: agent:<agent_id>:cron:...
+        agent_id = None
+        if str(session_key).startswith("agent:"):
+            parts = str(session_key).split(":")
+            if len(parts) > 1:
+                agent_id = parts[1]
+        
+        session_id = payload.get("sessionId") or payload.get("session_id")
+        if agent_id and session_id:
+            background_tasks.add_task(usage_service.sync_cron_cost, agent_id, session_id, run_id)
         
         # Broadcast the new run to Websocket if needed
         from ..ws_manager import cron_ws_manager
@@ -520,6 +540,7 @@ async def cron_webhook_receiver(
         logger.error(f"Failed to process cron webhook: {e}")
         
     return {"status": "ok"}
+
 
 
 # ── Tasks (AI Kanban) ──────────────────────────────────────────────────────────

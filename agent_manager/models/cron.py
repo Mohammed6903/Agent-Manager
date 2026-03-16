@@ -1,6 +1,6 @@
 """Cron ownership SQLAlchemy model."""
 
-from sqlalchemy import Column, String, DateTime, func, ForeignKey, BigInteger, Integer, JSON, Text
+from sqlalchemy import Column, String, DateTime, func, ForeignKey, BigInteger, Integer, JSON, Text, Float
 
 from ..database import Base
 
@@ -32,4 +32,7 @@ class CronPipelineRun(Base):
     model = Column(String, nullable=True)
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
+    input_cost = Column(Float, default=0.0)
+    output_cost = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
     created_at = Column(DateTime, default=func.now())

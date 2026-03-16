@@ -36,6 +36,8 @@ from ..schemas.analytics import (
     WorkTimeAnalytics,
 )
 
+from ..services.usage_service import UsageService
+
 logger = logging.getLogger("agent_manager.services.analytics_service")
 
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -51,10 +53,12 @@ class AnalyticsService:
         db: Session,
         gateway: GatewayClient,
         storage: StorageRepository,
+        usage_service: Optional[UsageService] = None,
     ):
         self.db = db
         self.gateway = gateway
         self.storage = storage
+        self.usage_service = usage_service
 
     # ── Public entry point ───────────────────────────────────────────────────
 
@@ -175,55 +179,23 @@ class AnalyticsService:
     # ── Tokens ───────────────────────────────────────────────────────────────
 
     def _token_analytics(self, agent_id: str, now: datetime) -> TokenAnalytics:
-        agent_cron_ids = (
-            self.db.query(CronOwnership.cron_id)
-            .filter(CronOwnership.agent_id == agent_id)
-        )
-
-        # Lifetime totals
-        totals = (
-            self.db.query(
-                func.coalesce(func.sum(CronPipelineRun.input_tokens), 0).label("inp"),
-                func.coalesce(func.sum(CronPipelineRun.output_tokens), 0).label("out"),
-                func.count(CronPipelineRun.id).label("cnt"),
+        if self.usage_service:
+            usage = self.usage_service.get_token_usage_for_agent(agent_id, now)
+            return TokenAnalytics(
+                total_consumed=usage["total_consumed"],
+                this_month=usage["this_month"],
+                avg_per_task=usage["avg_per_task"],
+                breakdown=[
+                    TokenBreakdown(type=b["type"], value=b["value"])
+                    for b in usage["breakdown"]
+                ],
             )
-            .filter(CronPipelineRun.cron_id.in_(agent_cron_ids))
-            .first()
-        )
-        input_total = int(totals.inp) if totals else 0
-        output_total = int(totals.out) if totals else 0
-        run_count = int(totals.cnt) if totals else 0
-        total = input_total + output_total
-
-        # This month
-        month_start_epoch = int(
-            now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
-        )
-        month_row = (
-            self.db.query(
-                func.coalesce(
-                    func.sum(CronPipelineRun.input_tokens)
-                    + func.sum(CronPipelineRun.output_tokens),
-                    0,
-                )
-            )
-            .filter(
-                CronPipelineRun.cron_id.in_(agent_cron_ids),
-                CronPipelineRun.started_at >= month_start_epoch,
-            )
-            .scalar()
-        )
-        this_month = int(month_row) if month_row else 0
-        avg_per_task = total // run_count if run_count else 0
 
         return TokenAnalytics(
-            total_consumed=total,
-            this_month=this_month,
-            avg_per_task=avg_per_task,
-            breakdown=[
-                TokenBreakdown(type="Input", value=input_total),
-                TokenBreakdown(type="Output", value=output_total),
-            ],
+            total_consumed=0,
+            this_month=0,
+            avg_per_task=0,
+            breakdown=[],
         )
 
     # ── Work Time ────────────────────────────────────────────────────────────

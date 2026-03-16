@@ -49,13 +49,6 @@ def get_cron_service(
 ) -> CronService:
     return CronService(gateway, db)
 
-def get_analytics_service(
-    db: Session = Depends(get_db),
-    gateway: Annotated[GatewayClient, Depends(get_gateway)] = None,
-    storage: Annotated[StorageRepository, Depends(get_storage)] = None,
-) -> AnalyticsService:
-    return AnalyticsService(db, gateway, storage)
-
 def get_task_service(
     db: Session = Depends(get_db),
 ) -> TaskService:
@@ -66,3 +59,11 @@ def get_usage_service(
     db: Session = Depends(get_db),
 ) -> UsageService:
     return UsageService(gateway, db)
+
+def get_analytics_service(
+    db: Session = Depends(get_db),
+    gateway: Annotated[GatewayClient, Depends(get_gateway)] = None,
+    storage: Annotated[StorageRepository, Depends(get_storage)] = None,
+    usage_service: Annotated[UsageService, Depends(get_usage_service)] = None,
+) -> AnalyticsService:
+    return AnalyticsService(db, gateway, storage, usage_service)
