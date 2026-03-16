@@ -91,11 +91,16 @@ class UsageService:
         total_updated = 0
         total_skipped = 0
         total_errors = 0
-        sessions_dir = sessions_file.parent
 
         with open(sessions_file, "rb") as file_obj:
             for session_key, meta in ijson.kvitems(file_obj, ""):
                 if not isinstance(meta, dict):
+                    continue
+
+                # Prefer the explicit sessionFile path written by OpenClaw.
+                session_file_path = meta.get("sessionFile")
+                if not session_file_path:
+                    total_skipped += 1
                     continue
 
                 session_id = meta.get("sessionId")
@@ -111,7 +116,7 @@ class UsageService:
                     total_skipped += 1
                     continue
 
-                jsonl_file = sessions_dir / f"{session_id}.jsonl"
+                jsonl_file = Path(session_file_path)
                 if not jsonl_file.exists():
                     total_skipped += 1
                     continue
@@ -143,37 +148,57 @@ class UsageService:
         sessions_file = self.state_dir / "agents" / agent_id / "sessions" / "sessions.json"
         if not sessions_file.exists():
             return
+
+        logger.info("Syncing single session for agent %s and session key %s", agent_id, session_key)
             
         try:
             import ijson
         except ImportError:
             logger.error("ijson is required for streaming sessions.json")
             return
-
-        target_session_id = None
+        
+        target_session_id: str | None = None
+        target_session_file: Path | None = None
         try:
             with open(sessions_file, "rb") as file_obj:
                 for key, meta in ijson.kvitems(file_obj, ""):
                     if key == session_key and isinstance(meta, dict):
-                        target_session_id = meta.get("sessionId")
+                        target_session_id = str(meta.get("sessionId") or "")
+                        session_file = meta.get("sessionFile")
+                        if session_file:
+                            target_session_file = Path(session_file)
+                        logger.info(
+                            "Found target session id %s and file %s for agent %s and session key %s",
+                            target_session_id,
+                            target_session_file,
+                            agent_id,
+                            session_key,
+                        )
                         break
         except Exception as exc:
             logger.error("Error reading sessions.json for agent %s: %s", agent_id, exc)
             return
 
-        if not target_session_id:
+        if not target_session_file:
             return
 
-        jsonl_file = self.state_dir / "agents" / agent_id / "sessions" / f"{target_session_id}.jsonl"
-        if not jsonl_file.exists():
+        logger.info(
+            "Looking for jsonl file: %s (exists: %s)",
+            target_session_file,
+            target_session_file.exists(),
+        )
+        if not target_session_file.exists():
+            logger.warning("JSONL file not found for session %s", target_session_id)
             return
             
         try:
             records = self._parse_jsonl_session(
-                jsonl_file, str(target_session_id), agent_id, user_id
+                target_session_file, str(target_session_id or ""), agent_id, user_id
             )
+            logger.info("Parsed %d records for session %s", len(records) if records else 0, target_session_id)
             if records:
                 self._upsert_turn_batch(records)
+                logger.info("Upserted %d records for session %s", len(records), target_session_id)
         except Exception as exc:
             logger.error(
                 "Error processing single session '%s' for agent '%s': %s",
@@ -256,23 +281,33 @@ class UsageService:
         self, records: list[dict[str, Any]]
     ) -> tuple[int, int]:
         """Batch-upsert turn records via PostgreSQL ``ON CONFLICT DO UPDATE``."""
-        stmt = pg_insert(ChatUsageLog).values(records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["message_id"],
-            set_={
-                "model": stmt.excluded.model,
-                "prompt_tokens": stmt.excluded.prompt_tokens,
-                "completion_tokens": stmt.excluded.completion_tokens,
-                "total_tokens": stmt.excluded.total_tokens,
-                "input_cost": stmt.excluded.input_cost,
-                "output_cost": stmt.excluded.output_cost,
-                "total_cost": stmt.excluded.total_cost,
-                "created_at": stmt.excluded.created_at,
-            },
-        )
-        self.db.execute(stmt)
-        self.db.commit()
-        return len(records), 0
+        try:
+            stmt = pg_insert(ChatUsageLog).values(records)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["message_id"],
+                set_={
+                    # Keep attribution consistent even if upstream message_id collides.
+                    "user_id": stmt.excluded.user_id,
+                    "session_id": stmt.excluded.session_id,
+                    "agent_id": stmt.excluded.agent_id,
+                    "model": stmt.excluded.model,
+                    "prompt_tokens": stmt.excluded.prompt_tokens,
+                    "completion_tokens": stmt.excluded.completion_tokens,
+                    "total_tokens": stmt.excluded.total_tokens,
+                    "input_cost": stmt.excluded.input_cost,
+                    "output_cost": stmt.excluded.output_cost,
+                    "total_cost": stmt.excluded.total_cost,
+                    "created_at": stmt.excluded.created_at,
+                },
+            )
+            logger.info("Upserting %d records", len(records))
+            self.db.execute(stmt)
+            self.db.commit()
+            return len(records), 0
+        except Exception as e:
+            logger.error("Failed to upsert turn batch: %s", e)
+            self.db.rollback()
+            return 0, len(records)
 
     @staticmethod
     def _parse_updated_at_ms(value: Any) -> int | None:
