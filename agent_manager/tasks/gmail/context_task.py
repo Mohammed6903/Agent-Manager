@@ -23,6 +23,7 @@ from .ingest_task import (
     register_active_task,
     unregister_active_task,
 )
+from agent_manager.integrations.google.gmail import pipeline_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,8 @@ def _set_ctx_status(db: Any, ctx_id: uuid.UUID, status: str) -> None:
 
 @celery_app.task(bind=True, base=AbortableTask, max_retries=3)
 def ingest_and_pipeline_gmail(
-    self, agent_id: str, context_id: str, force_full_sync: bool = False
+    self, agent_id: str, context_id: str, force_full_sync: bool = False,
+    is_daily_sync: bool = False,
 ) -> dict[str, object]:
     """Ingest Gmail emails to S3, then run the embedding pipeline to Qdrant.
 
@@ -84,7 +86,14 @@ def ingest_and_pipeline_gmail(
         register_active_task(agent_id, task_id, task_type="ingest")
         ctx_repo = ThirdPartyContextRepository(db)
         sync_repo = GmailSyncRepository(db)
-        ctx_repo.update_task(ctx_id, task_id, "ingesting")
+
+        # Don't change status during daily sync — keep it 'complete'
+        # so the frontend can still use the context while sync runs in background
+        if not is_daily_sync:
+            ctx_repo.update_task(ctx_id, task_id, "ingesting")
+        else:
+            # Just update the task_id so we can track it, leave status alone
+            ctx_repo.update_celery_task_id(ctx_id, task_id)
 
         if force_full_sync:
             logger.info("force_full_sync=True: clearing sync state for agent %s.", agent_id)
@@ -270,7 +279,7 @@ def ingest_and_pipeline_gmail(
             s3_misses = len(batch_ids) - len(raws)
             failed += s3_misses
             try:
-                gmail_pipeline_service.process_messages_batch(raws, agent_id, account_email)
+                pipeline_service.process_messages_batch(raws, agent_id, account_email)
                 processed += len(raws)
             except Exception:
                 logger.exception(
@@ -280,7 +289,7 @@ def ingest_and_pipeline_gmail(
                 )
                 for raw in raws:
                     try:
-                        gmail_pipeline_service.process_message(raw, agent_id, account_email)
+                        pipeline_service.process_message(raw, agent_id, account_email)
                         processed += 1
                     except Exception:
                         failed += 1
@@ -313,7 +322,8 @@ def ingest_and_pipeline_gmail(
         }
 
     except Exception as exc:
-        _set_ctx_status(db, ctx_id, "failed")
+        if not is_daily_sync:
+            _set_ctx_status(db, ctx_id, "failed")
         _update_progress(
             "FAILED",
             {"stage": "error", "message": str(exc), "task_id": task_id},

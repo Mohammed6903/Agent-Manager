@@ -34,6 +34,7 @@ def daily_gmail_sync(self) -> dict:
                     "agent_id":        str(ctx.agent_id),
                     "context_id":      str(ctx.id),
                     "force_full_sync": False,
+                    "is_daily_sync": True
                 },
                 queue="ingest",
                 countdown=len(task_ids) * 15,  # stagger 15s apart — thundering herd prevention

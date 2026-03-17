@@ -52,6 +52,19 @@ class ThirdPartyContextRepository:
         self.db.refresh(row)
         return row
 
+    def update_celery_task_id(
+            self, context_id: uuid.UUID, celery_task_id: str
+    ) -> Optional[ThirdPartyContext]:
+        """Update only the celery_task_id, leaving status unchanged."""
+        row = self.get(context_id)
+        if not row:
+            return None
+        row.celery_task_id = celery_task_id
+        row.updated_at = datetime.now(timezone.utc)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
     def update_status(
         self, context_id: uuid.UUID, status: str
     ) -> Optional[ThirdPartyContext]:
