@@ -13,7 +13,6 @@ from ..repositories.third_party_context_repository import ThirdPartyContextRepos
 from ..repositories.third_party_context_assignment_repository import (
     ThirdPartyContextAssignmentRepository,
 )
-from ..services import gmail_service
 from ..services.agent_service import AgentService
 
 logger = logging.getLogger(__name__)
@@ -97,7 +96,7 @@ class ThirdPartyContextService:
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         assign_repo.assign(ctx.id, agent_id)
 
-        from ..tasks.gmail_context_task import ingest_and_pipeline_gmail  # noqa: PLC0415
+        from agent_manager.tasks.gmail.context_task import ingest_and_pipeline_gmail  # noqa: PLC0415
         task = ingest_and_pipeline_gmail.delay(agent_id, str(ctx.id), force_full_sync)
         ctx_repo.update_task(ctx.id, task.id, "ingesting")
 
@@ -114,7 +113,7 @@ class ThirdPartyContextService:
         if not context:
             raise HTTPException(status_code=404, detail="Context not found")
 
-        from ..tasks.gmail_context_task import delete_gmail_context  # noqa: PLC0415
+        from agent_manager.tasks.gmail.context_task import delete_gmail_context  # noqa: PLC0415
         task = delete_gmail_context.delay(context.agent_id, str(context_id))
         ctx_repo.update_task(context_id, task.id, "deleting")
 

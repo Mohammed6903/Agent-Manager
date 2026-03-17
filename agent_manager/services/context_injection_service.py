@@ -11,7 +11,7 @@ from ..repositories.third_party_context_assignment_repository import (
     ThirdPartyContextAssignmentRepository,
 )
 from ..services import embed_service, qdrant_service
-from ..services.gmail_search_service import snapshot as gmail_snapshot
+from agent_manager.integrations.google.gmail.search_service import snapshot as gmail_snapshot
 
 logger = logging.getLogger(__name__)
 

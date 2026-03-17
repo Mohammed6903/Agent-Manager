@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.gmail import AgentSecret
 from ..security import encrypt, decrypt
-from ..schemas.google import SecretUpsertRequest
+from agent_manager.integrations.google.schemas import SecretUpsertRequest
 
 router = APIRouter()
 

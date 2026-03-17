@@ -10,18 +10,18 @@ from fastapi.responses import JSONResponse
 
 from agent_manager.config import settings
 from agent_manager.routers.agent_router import router as agent_router
-from agent_manager.routers.google_auth_router import router as google_auth_router
-from agent_manager.routers.gmail_router import router as gmail_router
-from agent_manager.routers.calendar_router import router as calendar_router
-from agent_manager.routers.drive_router import router as drive_router
-from agent_manager.routers.sheets_router import router as sheets_router
-from agent_manager.routers.docs_router import router as docs_router
+from agent_manager.integrations.google.auth.router import router as google_auth_router
+from agent_manager.integrations.google.gmail.router import router as gmail_router
+from agent_manager.integrations.google.calendar.router import router as calendar_router
+from agent_manager.integrations.google.drive.router import router as drive_router
+from agent_manager.integrations.google.sheets.router import router as sheets_router
+from agent_manager.integrations.google.docs.router import router as docs_router
 from agent_manager.routers.secrets_router import router as secrets_router
 from agent_manager.routers.garage_router import router as garage_router
 from agent_manager.routers.context_router import router as context_router
 from agent_manager.routers.integration_router import router as integration_router
-from agent_manager.routers.twitter_router import router as twitter_router
-from agent_manager.routers.linkedin_router import router as linkedin_router
+from agent_manager.integrations.twitter.router import router as twitter_router
+from agent_manager.integrations.linkedin.router import router as linkedin_router
 from agent_manager.routers.cron_template_router import router as cron_template_router
 from agent_manager.routers.analytics_router import router as analytics_router
 from agent_manager.routers.billing_router import router as billing_router

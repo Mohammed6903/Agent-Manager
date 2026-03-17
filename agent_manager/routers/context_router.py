@@ -21,7 +21,7 @@ from ..schemas.context import (
 )
 from ..services.context_service import ContextService
 from ..services.third_party_context_service import ThirdPartyContextService
-from ..tasks.gmail_ingest_task import get_active_tasks
+from agent_manager.tasks.gmail.ingest_task import get_active_tasks
 
 router = APIRouter(tags=["Context Management"])
 

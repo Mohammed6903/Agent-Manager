@@ -3,8 +3,8 @@ from typing import Dict, Type, List
 from .base import BaseIntegration, AuthFlowType
 # from .notion import NotionIntegration  # temporarily hidden
 from .google import GmailIntegration, GoogleCalendarIntegration, GoogleDriveIntegration, GoogleSheetsIntegration, GoogleDocsIntegration, GoogleMeetIntegration
-from .twitter import TwitterIntegration
-from .linkedin import LinkedInIntegration
+from .twitter.twitter import TwitterIntegration
+from .linkedin.linkedin import LinkedInIntegration
 
 # Registry of all available integrations
 INTEGRATION_REGISTRY: Dict[str, Type[BaseIntegration]] = {

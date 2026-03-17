@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 
 from ..base import BaseSDKIntegration
-from ..auth.google_flow import GoogleOAuth2Flow
+from agent_manager.integrations.google.auth.flow import GoogleOAuth2Flow
 from ..base import AuthFlowType
 
 

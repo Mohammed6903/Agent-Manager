@@ -10,9 +10,9 @@ celery_app = Celery(
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
     include=[
-        "agent_manager.tasks.gmail_context_task",
-        "agent_manager.tasks.gmail_ingest_task",
-        "agent_manager.tasks.daily_sync_task",
+        "agent_manager.tasks.gmail.context_task",
+        "agent_manager.tasks.gmail.ingest_task",
+        "agent_manager.tasks.gmail.sync_task",
     ],
 )
 
@@ -43,15 +43,15 @@ celery_app.conf.update(
     ],
     task_default_queue="default",
     task_routes={
-        "agent_manager.tasks.gmail_context_task.ingest_and_pipeline_gmail": {"queue": "ingest"},
-        "agent_manager.tasks.gmail_context_task.delete_gmail_context":      {"queue": "ingest"},
-        "agent_manager.tasks.daily_sync_task.daily_gmail_sync":             {"queue": "beat"},
+        "agent_manager.tasks.gmail.context_task.ingest_and_pipeline_gmail": {"queue": "ingest"},
+        "agent_manager.tasks.gmail.context_task.delete_gmail_context":      {"queue": "ingest"},
+        "agent_manager.tasks.gmail.sync_task.daily_gmail_sync":             {"queue": "beat"},
     },
     
     # Beat configuration
     beat_schedule={
         "daily-gmail-sync": {
-            "task": "agent_manager.tasks.daily_sync_task.daily_gmail_sync",
+            "task": "agent_manager.tasks.gmail.sync_task.daily_gmail_sync",
             "schedule": crontab(hour=2, minute=0),  # 2 AM UTC daily
             "options": {"queue": "beat"},
         },

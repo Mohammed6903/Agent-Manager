@@ -1,6 +1,6 @@
-from .google_flow import GoogleOAuth2Flow
-from .twitter_flow import TwitterOAuth2Flow
-from .linkedin_flow import LinkedInOAuth2Flow
+from agent_manager.integrations.google.auth.flow import GoogleOAuth2Flow
+from agent_manager.integrations.twitter.flow import TwitterOAuth2Flow
+from agent_manager.integrations.linkedin.linkedin import LinkedInOAuth2Flow
 from .oauth2_flow import OAuth2FlowProvider
 
 OAUTH2_PROVIDERS: dict[str, OAuth2FlowProvider] = {

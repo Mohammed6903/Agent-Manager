@@ -1,10 +1,10 @@
 from .base_google import BaseGoogleIntegration
-from .gmail import GmailIntegration
-from .calendar import GoogleCalendarIntegration
-from .drive import GoogleDriveIntegration
-from .sheets import GoogleSheetsIntegration
-from .docs import GoogleDocsIntegration
-from .meet import GoogleMeetIntegration
+from .gmail.gmail import GmailIntegration
+from .calendar.calendar import GoogleCalendarIntegration
+from .drive.drive import GoogleDriveIntegration
+from .sheets.sheets import GoogleSheetsIntegration
+from .docs.docs import GoogleDocsIntegration
+from .meet.meet import GoogleMeetIntegration
 
 __all__ = [
     "BaseGoogleIntegration",
