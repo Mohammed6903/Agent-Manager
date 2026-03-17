@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -54,18 +54,18 @@ async def delete_context(
 async def list_contexts(
     agent_id: str,
     svc: ThirdPartyContextService = Depends(_get_service),
+    org_id: Optional[str] = Query(default=None),
 ):
-    """List all third-party contexts assigned to an agent."""
-    contexts = await svc.list_contexts_for_agent(agent_id)
+    contexts = await svc.list_contexts_for_agent(agent_id, org_id=org_id)
     return ThirdPartyContextListResponse(contexts=contexts)
 
 
 @router.get("/completed", response_model=ThirdPartyContextListResponse)
 async def list_completed_contexts(
     svc: ThirdPartyContextService = Depends(_get_service),
+    org_id: Optional[str] = Query(default=None),
 ):
-    """List all third-party contexts whose ingestion task completed successfully."""
-    contexts = await svc.get_all_complete_contexts()
+    contexts = await svc.get_all_complete_contexts(org_id=org_id)
     return ThirdPartyContextListResponse(contexts=contexts)
 
 
@@ -73,9 +73,9 @@ async def list_completed_contexts(
 async def get_context(
     context_id: uuid.UUID,
     svc: ThirdPartyContextService = Depends(_get_service),
+    org_id: Optional[str] = Query(default=None),
 ):
-    """Get a single third-party context with its status."""
-    return await svc.get_context(context_id)
+    return await svc.get_context(context_id, org_id=org_id)
 
 
 # ── Assignment ───────────────────────────────────────────────────────────────
@@ -88,25 +88,18 @@ async def get_context(
 async def get_available_agents(
     context_id: uuid.UUID,
     svc: ThirdPartyContextService = Depends(_get_service),
+    org_id: Optional[str] = Query(default=None, description="Filter candidates to agents in this org"),
 ):
-    """List all agents NOT yet assigned to this context.
-
-    Use this to populate the dropdown in the UI.
-    """
-    agents = await svc.get_available_agents(context_id)
+    agents = await svc.get_available_agents(context_id, org_id=org_id)
     return AvailableAgentsResponse(agents=agents)
 
 
-@router.post(
-    "/{context_id}/assign",
-    response_model=ThirdPartyContextResponse,
-)
+@router.post("/{context_id}/assign", response_model=ThirdPartyContextResponse)
 async def assign_context(
     context_id: uuid.UUID,
     req: ThirdPartyContextAssignRequest,
     svc: ThirdPartyContextService = Depends(_get_service),
 ):
-    """Assign a context to an agent. Returns the updated context with mappings."""
     return await svc.assign_context(context_id, req.agent_id)
 
 

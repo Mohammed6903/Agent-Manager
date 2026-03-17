@@ -27,7 +27,7 @@ class IntegrationService:
         self.repo = IntegrationRepository(db)
         self.agent_svc = agent_svc
 
-    async def list_available_integrations(self) -> List[dict]:
+    async def list_available_integrations(self, org_id: str | None = None) -> List[dict]:
         """Return a list of all defined integration dicts, with connected agents (name and id)."""
         from collections import defaultdict
         
@@ -37,7 +37,7 @@ class IntegrationService:
         # Fetch agent names from AgentService
         agent_names = {}
         if self.agent_svc:
-            all_agents = await self.agent_svc.list_agents()
+            all_agents = await self.agent_svc.list_agents(org_id=org_id)
             agent_names = {a["id"]: a["name"] for a in all_agents}
         
         agents_map: dict[str, list] = defaultdict(list)
@@ -192,7 +192,7 @@ class IntegrationService:
             creds=creds
         )
 
-    async def get_unconnected_agents(self, integration_name: str) -> List[dict]:
+    async def get_unconnected_agents(self, integration_name: str, org_id: str | None = None) -> List[dict]:
         """Return agents that are NOT yet connected to the given integration."""
         try:
             get_integration(integration_name)
@@ -203,7 +203,7 @@ class IntegrationService:
 
         all_agents = []
         if self.agent_svc:
-            all_agents = await self.agent_svc.list_agents()
+            all_agents = await self.agent_svc.list_agents(org_id=org_id)
 
         return [a for a in all_agents if a["id"] not in connected_ids]
 

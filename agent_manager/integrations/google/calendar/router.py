@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from agent_manager.database import get_db
 from agent_manager.integrations.google.schemas import CreateEventRequest, UpdateEventRequest
 
+from . import service as calendar_service
+
 router = APIRouter()
 
 @router.get("/events", tags=["Google Calendar"])

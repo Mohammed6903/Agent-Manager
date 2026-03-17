@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, Response, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -30,10 +30,11 @@ def get_integration_service(
 
 @router.get("", response_model=List[IntegrationDefResponse])
 async def list_available_integrations(
+    org_id: Optional[str] = None,  # <- added query param
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """List all available hardcoded integrations."""
-    return await svc.list_available_integrations()
+    """List all available hardcoded integrations, optionally filtered by organization."""
+    return await svc.list_available_integrations(org_id=org_id)
 
 @router.get("/oauth/callback/{provider}")
 async def generic_oauth_callback(
@@ -213,10 +214,11 @@ def get_integration_credentials(
 @router.get("/{integration_name}/unconnected-agents", response_model=List[Dict[str, Any]])
 async def get_unconnected_agents(
     integration_name: str,
+    org_id: Optional[str] = None,
     svc: IntegrationService = Depends(get_integration_service),
 ):
-    """Return all agents that are NOT yet connected to the given integration."""
-    return await svc.get_unconnected_agents(integration_name)
+    """Return all agents that are NOT yet connected to the given integration, optionally filtered by organization."""
+    return await svc.get_unconnected_agents(integration_name, org_id=org_id)
 
 @router.get("/{integration_name}/logs", response_model=IntegrationLogListResponse)
 def get_integration_logs(

@@ -33,4 +33,5 @@ dependencies = [
     "ijson>=3.4.0",
     "ruff>=0.15.5",
     "celery-types>=0.26.0",
+    "cron-validator>=1.0.8",
 ]

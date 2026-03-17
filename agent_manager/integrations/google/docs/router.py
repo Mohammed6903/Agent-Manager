@@ -10,6 +10,8 @@ from agent_manager.integrations.google.schemas import (
     BatchUpdateRequest,
 )
 
+from . import service as docs_service
+
 router = APIRouter()
 
 @router.post("/documents", tags=["Google Docs"])

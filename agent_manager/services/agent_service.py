@@ -15,6 +15,7 @@ from ..config import settings
 from ..schemas.chat import AgentResponse, CreateAgentRequest, UpdateAgentRequest
 from ..repositories.storage import StorageRepository
 from ..clients.gateway_client import GatewayClient
+from ..repositories.agent_registry_repository import AgentRegistryRepository
 
 logger = logging.getLogger("agent_manager.services.agent_service")
 
@@ -28,6 +29,10 @@ class AgentService:
         self.storage = storage
         self.gateway = gateway
         self.db = db
+
+    @property
+    def _registry(self) -> AgentRegistryRepository | None:
+        return AgentRegistryRepository(self.db) if self.db else None
 
     def _workspace(self, agent_id: str) -> str:
         return str(Path(settings.OPENCLAW_STATE_DIR) / f"workspace-{agent_id}")
@@ -222,6 +227,11 @@ class AgentService:
 
         if any(a.get("id") == agent_id for a in existing):
             raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
+        
+        # Also reject if this org already has an agent with the same id in DB
+        if self._registry and req.org_id:
+            if self._registry.get(agent_id, org_id=req.org_id):
+                raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists in this org")
 
         config_hash = config_data.get("hash")
         if not config_hash:
@@ -278,6 +288,17 @@ class AgentService:
                     "gateway_response": result,
                 },
             )
+        
+        # PHASE 5: Write to DB registry for instant future lookups
+        if self._registry:
+            self._registry.create(
+                agent_id=agent_id,
+                name=req.name,
+                workspace=workspace,
+                agent_dir=agent_dir,
+                org_id=req.org_id,       # None for unscoped agents
+                user_id=req.user_id,
+            )
 
         logger.info("Agent '%s' created successfully", agent_id)
         return AgentResponse(
@@ -286,20 +307,50 @@ class AgentService:
             workspace=workspace,
             agent_dir=agent_dir,
             status="created",
+            org_id=req.org_id,
         )
 
-    async def list_agents(self) -> List[dict[str, Any]]:
-        return await self.gateway.list_agents()
+    async def list_agents(self, org_id: str | None = None) -> List[dict[str, Any]]:
+        if self._registry:
+            rows = self._registry.list(org_id=org_id)
+            return [
+                {
+                    "id": r.agent_id,
+                    "name": r.name,
+                    "workspace": r.workspace,
+                    "agentDir": r.agent_dir,
+                    "org_id": r.org_id,
+                }
+                for r in rows
+            ]
+        # Fallback: no DB — hit gateway (org filtering not possible here)
+        agents = await self.gateway.list_agents()
+        return agents
 
-    async def get_agent(self, agent_id: str) -> dict[str, Any]:
+    async def get_agent(self, agent_id: str, org_id: str | None = None) -> dict[str, Any]:
+        # Fast path: DB registry
+        if self._registry:
+            row = self._registry.get(agent_id, org_id=org_id)
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+            return {
+                "id": row.agent_id,
+                "name": row.name,
+                "workspace": row.workspace,
+                "agentDir": row.agent_dir,
+                "org_id": row.org_id,
+            }
+        # Fallback: gateway scan
         agents = await self.gateway.list_agents()
         for a in agents:
             if a.get("id") == agent_id:
                 return a
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
-    async def update_agent(self, agent_id: str, req: UpdateAgentRequest) -> AgentResponse:
-        agent = await self.get_agent(agent_id)
+    async def update_agent(
+        self, agent_id: str, req: UpdateAgentRequest, org_id: str | None = None
+    ) -> AgentResponse:
+        agent = await self.get_agent(agent_id, org_id=org_id)
         workspace = self._workspace(agent_id)
 
         if not await self.storage.exists(workspace):
@@ -314,17 +365,14 @@ class AgentService:
             identity_path = str(Path(workspace) / "IDENTITY.md")
             current_name = agent.get("name", "")
             current_role = ""
-
             if await self.storage.exists(identity_path):
                 content = await self.storage.read_text(identity_path)
                 for line in content.splitlines():
                     if line.startswith("Role:"):
                         current_role = line.split(":", 1)[1].strip()
-
             new_name = req.name if req.name is not None else current_name
             new_role = req.role if req.role is not None else current_role
-            identity_content = self._default_identity(agent_id, new_name, new_role)
-            await self.storage.write_text(identity_path, identity_content)
+            await self.storage.write_text(identity_path, self._default_identity(agent_id, new_name, new_role))
 
         if req.name is not None:
             config_data = await self.gateway.get_config()
@@ -334,8 +382,11 @@ class AgentService:
                 if a.get("id") == agent_id:
                     a["name"] = req.name
                     break
-            raw = self._build_agents_raw(existing)
-            await self.gateway.patch_config(config_hash, raw)
+            await self.gateway.patch_config(config_hash, self._build_agents_raw(existing))
+
+            # Keep DB registry in sync
+            if self._registry:
+                self._registry.update_name(agent_id, req.name)
 
         return AgentResponse(
             agent_id=agent_id,
@@ -343,26 +394,39 @@ class AgentService:
             workspace=workspace,
             agent_dir=self._agent_dir(agent_id),
             status="updated",
+            org_id=org_id,
         )
 
-    async def delete_agent(self, agent_id: str) -> dict[str, str]:
-        # ── 1. Gateway: remove the agent and all its cron jobs ──────────────────
+
+    async def delete_agent(self, agent_id: str, org_id: str | None = None) -> dict[str, str]:
+        # Verify ownership before deletion if org_id is supplied
+        if self._registry and org_id:
+            row = self._registry.get(agent_id, org_id=org_id)
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Agent '{agent_id}' not found in org '{org_id}'",
+                )
+
+        # 1. Gateway removal
         try:
             await self.gateway.delete_agent(agent_id)
         except Exception as exc:
-            logger.warning("Gateway delete_agent failed: %s", str(exc))
+            logger.warning("Gateway delete_agent failed: %s", exc)
 
+        # 2. DB cleanup (existing + registry row)
         if self.db:
             await self._delete_agent_db_data(agent_id)
+            if self._registry:
+                self._registry.delete(agent_id)
 
-        # ── 2. Filesystem ────────────────────────────────────────────────────────
+        # 3. Filesystem cleanup
         workspace = self._workspace(agent_id)
         agent_base = str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id)
-
         await self.storage.delete_dir(workspace)
         await self.storage.delete_dir(agent_base)
 
-        logger.info("Agent '%s' deleted", agent_id)
+        logger.info("Agent '%s' deleted (org=%s)", agent_id, org_id)
         return {"status": "deleted", "agent_id": agent_id}
 
     async def _delete_agent_db_data(self, agent_id: str) -> None:
@@ -435,3 +499,55 @@ class AgentService:
             except Exception:
                 pass
         return count
+    
+    async def sync_agents_to_registry(self, org_id: str | None = None) -> dict[str, Any]:
+        """
+        One-time (idempotent) migration: pull all agents from the gateway and
+        upsert them into the DB registry.  Safe to call repeatedly.
+
+        If org_id is provided it is stamped on every row that doesn't already
+        have one — useful when you know all agents on disk belong to one org.
+        """
+        if not self._registry:
+            raise HTTPException(status_code=500, detail="DB not available for registry sync")
+
+        agents = await self.gateway.list_agents()
+        created, updated, skipped = [], [], []
+
+        for a in agents:
+            agent_id = a.get("id")
+            if not agent_id:
+                skipped.append({"agent": a, "reason": "missing id"})
+                continue
+
+            workspace = a.get("workspace") or self._workspace(agent_id)
+            agent_dir = a.get("agentDir") or self._agent_dir(agent_id)
+
+            existing = self._registry.get(agent_id)   # intentionally unscoped — check by agent_id only
+            if existing:
+                # Only backfill org_id if it's currently unset and caller supplied one
+                if org_id and not existing.org_id:
+                    self._registry.db.query(__import__(
+                        "..models.agent_registry", fromlist=["AgentRegistry"]
+                    ).AgentRegistry).filter_by(agent_id=agent_id).update({"org_id": org_id})
+                    self._registry.db.commit()
+                    updated.append(agent_id)
+                else:
+                    skipped.append({"agent_id": agent_id, "reason": "already in registry"})
+                continue
+
+            self._registry.create(
+                agent_id=agent_id,
+                name=a.get("name", agent_id),
+                workspace=workspace,
+                agent_dir=agent_dir,
+                org_id=org_id,
+            )
+            created.append(agent_id)
+            logger.info("sync_agents_to_registry: registered '%s' (org=%s)", agent_id, org_id)
+
+        logger.info(
+            "Registry sync complete — created=%d updated=%d skipped=%d",
+            len(created), len(updated), len(skipped),
+        )
+        return {"created": created, "updated": updated, "skipped": skipped}

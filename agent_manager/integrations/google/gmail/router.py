@@ -12,6 +12,7 @@ from agent_manager.integrations.google.schemas import (
     ModifyLabelsRequest,
     BatchReadRequest,
 )
+from . import service as gmail_service
 
 router = APIRouter()
 

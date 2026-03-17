@@ -11,8 +11,8 @@ class GoogleOAuth2Flow(OAuth2FlowProvider):
             # are included even though it's not yet in the DB.
             scopes = get_required_scopes(agent_id, db, include_integration=integration_name)
         else:
-            from ..schemas.base_google import BaseGoogleIntegration
-            from .. import INTEGRATION_REGISTRY
+            from ..schemas import BaseGoogleIntegration
+            from ... import INTEGRATION_REGISTRY
             target_cls = INTEGRATION_REGISTRY.get(integration_name)
             if target_cls and issubclass(target_cls, BaseGoogleIntegration):
                 scopes = getattr(target_cls, "scopes", ["https://www.googleapis.com/auth/userinfo.email"])

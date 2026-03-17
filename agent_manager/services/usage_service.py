@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, cast, Date, extract
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -45,24 +45,25 @@ class UsageService:
             ) from exc
 
         try:
-            agents = await self.gateway.list_agents()
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            agents = AgentRegistryRepository(self.db).list()
         except Exception as exc:
             logger.error("Failed to fetch agents from gateway: %s", exc)
             agents = []
 
         for agent in agents:
-            agent_id = agent.get("id")
+            agent_id = agent.agent_id
             if not agent_id:
                 continue
 
             sessions_file = (
-                self.state_dir / "agents" / agent_id / "sessions" / "sessions.json"
+                self.state_dir / "agents" / str(agent_id) / "sessions" / "sessions.json"
             )
             if not sessions_file.exists():
                 continue
 
             try:
-                a, u, s, e = self._sync_agent(ijson, agent_id, sessions_file)
+                a, u, s, e = self._sync_agent(ijson, str(agent_id), sessions_file)
                 added += a
                 updated += u
                 skipped += s
@@ -206,6 +207,18 @@ class UsageService:
                 agent_id,
                 exc,
             )
+
+    def _get_org_agent_ids(self, org_id: str) -> set[str] | None:
+        """
+        Resolve org_id to a set of agent_ids via the registry.
+        Returns None if org_id is not provided.
+        Returns empty set if org has no agents (caller should return [] immediately).
+        """
+        if not org_id:
+            return None
+        from ..repositories.agent_registry_repository import AgentRegistryRepository
+        rows = AgentRegistryRepository(self.db).list(org_id=org_id)
+        return {r.agent_id for r in rows}
 
     def _get_session_max_created_at(self, session_id: str) -> datetime | None:
         """Return the latest ``created_at`` stored for a session, or ``None``."""
@@ -370,8 +383,12 @@ class UsageService:
 
     # ── Usage Analytics ──────────────────────────────────────────────────────────
 
-    def get_usage_per_user(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+    def get_usage_per_user(self, user_id: str | None = None, agent_id: str | None = None, org_id: str | None = None) -> List[Dict[str, Any]]:
         """Aggregate usage per user, filtering by user_id and agent_id if provided."""
+        org_agent_ids = None if agent_id else self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
+        
         # Chat Usage
         chat_query = self.db.query(
             ChatUsageLog.user_id,
@@ -385,6 +402,8 @@ class UsageService:
             chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
         if agent_id:
             chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
         
         chat_results = chat_query.group_by(ChatUsageLog.user_id).all()
 
@@ -402,6 +421,8 @@ class UsageService:
             cron_query = cron_query.filter(CronOwnership.user_id == user_id)
         if agent_id:
             cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
 
         cron_results = cron_query.group_by(CronOwnership.user_id).all()
 
@@ -437,39 +458,43 @@ class UsageService:
 
         return list(merged.values())
 
-    async def get_usage_per_agent_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+    async def get_usage_per_agent_for_user(self, user_id: str, org_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Aggregate usage per agent for a given user, including agent_name."""
+        org_agent_ids = self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
+
         # Chat Usage
-        chat_results = (
-            self.db.query(
-                ChatUsageLog.agent_id,
-                func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
-                func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
-                func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
-                func.sum(ChatUsageLog.total_cost).label("total_cost"),
-                func.count(ChatUsageLog.id).label("total_requests")
-            )
-            .filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None))
-            .group_by(ChatUsageLog.agent_id)
-            .all()
-        )
+        chat_query = self.db.query(
+            ChatUsageLog.agent_id,
+            func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
+            func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+            func.sum(ChatUsageLog.total_cost).label("total_cost"),
+            func.count(ChatUsageLog.id).label("total_requests")
+        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None))
+
+        if org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
+
+        chat_results = chat_query.group_by(ChatUsageLog.agent_id).all()
 
         # Cron Usage
-        cron_results = (
-            self.db.query(
-                CronOwnership.agent_id,
-                func.sum(CronPipelineRun.input_tokens).label("total_prompt"),
-                func.sum(CronPipelineRun.output_tokens).label("total_completion"),
-                func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
-                func.sum(CronPipelineRun.total_cost).label("total_cost"),
-                func.count(CronPipelineRun.id).label("total_requests")
-            )
-            .join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)
-            .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None))
-            .group_by(CronOwnership.agent_id)
-            .all()
+        cron_query = self.db.query(
+            CronOwnership.agent_id,
+            func.sum(CronPipelineRun.input_tokens).label("total_prompt"),
+            func.sum(CronPipelineRun.output_tokens).label("total_completion"),
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
+            func.sum(CronPipelineRun.total_cost).label("total_cost"),
+            func.count(CronPipelineRun.id).label("total_requests")
+        ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id).filter(
+            CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None)
         )
-
+        if org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
+        
+        cron_results = cron_query.group_by(CronOwnership.agent_id).all()
+        
         # Merge results by agent_id
         merged: Dict[str, Dict[str, Any]] = {}
 
@@ -505,8 +530,9 @@ class UsageService:
         # Fetch agent names from gateway
         agent_name_map: Dict[str, str] = {}
         try:
-            all_agents = await self.gateway.list_agents()
-            agent_name_map = {str(a.get("id")): a.get("name", "Unknown Agent") for a in all_agents if "id" in a}
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            rows = AgentRegistryRepository(self.db).list(org_id=org_id)
+            agent_name_map = {r.agent_id: r.name for r in rows}
         except Exception as exc:
             logger.warning("Failed to fetch agents from gateway for usage mapping: %s", exc)
 
@@ -519,8 +545,12 @@ class UsageService:
         final_results.sort(key=lambda x: x["total_cost"], reverse=True)
         return final_results
 
-    def get_usage_per_model(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+    def get_usage_per_model(self, user_id: str | None = None, agent_id: str | None = None, org_id: str | None = None) -> List[Dict[str, Any]]:
         """Aggregate usage per model, filtering by user_id and agent_id."""
+        org_agent_ids = None if agent_id else self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
+        
         # Chat Usage
         chat_query = self.db.query(
             ChatUsageLog.model,
@@ -533,6 +563,8 @@ class UsageService:
             chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
         if agent_id:
             chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
         
         chat_results = chat_query.group_by(ChatUsageLog.model).all()
 
@@ -549,6 +581,9 @@ class UsageService:
             cron_query = cron_query.filter(CronOwnership.user_id == user_id)
         if agent_id:
             cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
+
 
         cron_results = cron_query.group_by(CronPipelineRun.model).all()
 
@@ -583,11 +618,19 @@ class UsageService:
 
         return list(merged.values())
 
-    def get_current_month_usage(self, user_id: str | None = None, agent_id: str | None = None) -> Dict[str, Any]:
+    def get_current_month_usage(self, user_id: str | None = None, agent_id: str | None = None, org_id: str | None = None) -> Dict[str, Any]:
         """Aggregate usage for current month, filtering by user_id and agent_id."""
         now = datetime.now(timezone.utc)
         start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
         start_of_month_ms = int(start_of_month.timestamp() * 1000)
+        org_agent_ids = None if agent_id else self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return {
+                "total_cost": 0.0,
+                "total_tokens": 0,
+                "total_models_used": 0,
+                "models": []
+            }
         
         # Chat
         chat_query = self.db.query(
@@ -600,6 +643,8 @@ class UsageService:
             chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
         if agent_id:
             chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
         
         chat_results = chat_query.group_by(ChatUsageLog.model).all()
 
@@ -614,6 +659,8 @@ class UsageService:
             cron_query = cron_query.filter(CronOwnership.user_id == user_id)
         if agent_id:
             cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
 
         cron_results = cron_query.group_by(CronPipelineRun.model).all()
 
@@ -649,11 +696,14 @@ class UsageService:
             "models": list(models_data.values())
         }
 
-    def get_daily_usage_last_7_days(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+    def get_daily_usage_last_7_days(self, user_id: str | None = None, agent_id: str | None = None, org_id: str | None = None) -> List[Dict[str, Any]]:
         """Aggregate daily usage for last 7 days, filtering by user_id and agent_id."""
         now = datetime.now(timezone.utc)
         start_date = now - timedelta(days=7)
         start_date_ms = int(start_date.timestamp() * 1000)
+        org_agent_ids = None if agent_id else self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
         
         # Chat
         chat_query = self.db.query(
@@ -666,6 +716,8 @@ class UsageService:
             chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
         if agent_id:
             chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
         
         chat_results = chat_query.group_by(cast(ChatUsageLog.created_at, Date)).all()
 
@@ -680,6 +732,8 @@ class UsageService:
             cron_query = cron_query.filter(CronOwnership.user_id == user_id)
         if agent_id:
             cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
 
         cron_results = cron_query.group_by(cast(func.to_timestamp(CronPipelineRun.started_at / 1000), Date)).all()
 
@@ -708,7 +762,7 @@ class UsageService:
 
         return sorted(list(merged.values()), key=lambda x: x["date"])
 
-    def get_monthly_usage_last_12_months(self, user_id: str | None = None, agent_id: str | None = None) -> List[Dict[str, Any]]:
+    def get_monthly_usage_last_12_months(self, user_id: str | None = None, agent_id: str | None = None, org_id: str | None = None) -> List[Dict[str, Any]]:
         """Aggregate monthly usage for last 12 months, filtering by user_id and agent_id."""
         now = datetime.now(timezone.utc)
         month = now.month - 11
@@ -718,6 +772,10 @@ class UsageService:
             year -= 1
         start_date = datetime(year, month, 1, tzinfo=timezone.utc)
         start_date_ms = int(start_date.timestamp() * 1000)
+
+        org_agent_ids = None if agent_id else self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
         
         # Chat
         chat_query = self.db.query(
@@ -731,6 +789,8 @@ class UsageService:
             chat_query = chat_query.filter(ChatUsageLog.user_id == user_id)
         if agent_id:
             chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
         
         chat_results = chat_query.group_by("year", "month").all()
 
@@ -746,6 +806,8 @@ class UsageService:
             cron_query = cron_query.filter(CronOwnership.user_id == user_id)
         if agent_id:
             cron_query = cron_query.filter(CronOwnership.agent_id == agent_id)
+        elif org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
 
         cron_results = cron_query.group_by("year", "month").all()
 
@@ -925,7 +987,7 @@ class UsageService:
             ],
         }
 
-    async def get_agents_monthly_usage_chart(self, user_id: str) -> List[Dict[str, Any]]:
+    async def get_agents_monthly_usage_chart(self, user_id: str, org_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Return 12-month token/cost usage grouped by month and agent_id."""
         now = datetime.now(timezone.utc)
         month = now.month - 11
@@ -936,6 +998,10 @@ class UsageService:
         start_date = datetime(year, month, 1, tzinfo=timezone.utc)
         start_date_ms = int(start_date.timestamp() * 1000)
 
+        org_agent_ids = self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
+
         # Chat
         chat_query = self.db.query(
             ChatUsageLog.agent_id,
@@ -944,7 +1010,11 @@ class UsageService:
             func.sum(ChatUsageLog.total_cost).label("total_cost"),
             func.sum(ChatUsageLog.total_tokens).label("total_tokens")
         ).filter(ChatUsageLog.created_at >= start_date, ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None))
-        chat_results = chat_query.group_by("year", "month", ChatUsageLog.agent_id).all()
+
+        if org_agent_ids is not None:
+            chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
+
+        chat_results = chat_query.group_by("year", "month", ChatUsageLog.agent_id).all()  # ← moved here
 
         # Cron
         cron_query = self.db.query(
@@ -954,7 +1024,11 @@ class UsageService:
             func.sum(CronPipelineRun.total_cost).label("total_cost"),
             func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens")
         ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
-         .filter(CronPipelineRun.started_at >= start_date_ms, CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None))
+        .filter(CronPipelineRun.started_at >= start_date_ms, CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None))
+
+        if org_agent_ids is not None:
+            cron_query = cron_query.filter(CronOwnership.agent_id.in_(org_agent_ids))
+
         cron_results = cron_query.group_by("year", "month", CronOwnership.agent_id).all()
 
         merged: Dict[str, Dict[str, Any]] = {}
@@ -982,8 +1056,9 @@ class UsageService:
 
         agent_name_map = {}
         try:
-            all_agents = await self.gateway.list_agents()
-            agent_name_map = {str(a.get("id")): a.get("name", "Unknown Agent") for a in all_agents if "id" in a}
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            rows = AgentRegistryRepository(self.db).list(org_id=org_id)   # unscoped — all agents
+            agent_name_map = {r.agent_id: r.name for r in rows}
         except Exception:
             pass
 
@@ -994,7 +1069,7 @@ class UsageService:
             
         return sorted(final_results, key=lambda x: x["month"])
 
-    async def get_agents_summary(self, user_id: str) -> List[Dict[str, Any]]:
+    async def get_agents_summary(self, user_id: str, org_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Return lifetime and current month summary for all agents of a user."""
         from ..models.agent_task import AgentTask
         now = datetime.now(timezone.utc)
@@ -1002,59 +1077,98 @@ class UsageService:
         start_of_month_ms = int(start_of_month.timestamp() * 1000)
         from collections import defaultdict
 
+        org_agent_ids = self._get_org_agent_ids(org_id)
+        if org_agent_ids is not None and not org_agent_ids:
+            return []
+
         # 1. Fetch lifetime costs per agent
-        lifetime_chat = self.db.query(
+        lifetime_chat_q = self.db.query(
             ChatUsageLog.agent_id,
             func.sum(ChatUsageLog.total_cost).label("cost")
-        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None)).group_by(ChatUsageLog.agent_id).all()
+        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None))
+        if org_agent_ids is not None:
+            lifetime_chat_q = lifetime_chat_q.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
+        lifetime_chat = lifetime_chat_q.group_by(ChatUsageLog.agent_id).all()
         
-        lifetime_cron = self.db.query(
+        lifetime_cron_q = self.db.query(
             CronOwnership.agent_id,
             func.sum(CronPipelineRun.total_cost).label("cost"),
             func.count(CronPipelineRun.id).label("jobs_ran")
         ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
-         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None)).group_by(CronOwnership.agent_id).all()
+         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None))
+        if org_agent_ids is not None:
+            lifetime_cron_q = lifetime_cron_q.filter(CronOwnership.agent_id.in_(org_agent_ids))
+        lifetime_cron = lifetime_cron_q.group_by(CronOwnership.agent_id).all()
 
         # 2. Fetch current month metrics per agent
-        month_chat = self.db.query(
+        month_chat_q = self.db.query(
             ChatUsageLog.agent_id,
             func.sum(ChatUsageLog.total_cost).label("cost"),
             func.sum(ChatUsageLog.total_tokens).label("tokens")
-        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None), ChatUsageLog.created_at >= start_of_month).group_by(ChatUsageLog.agent_id).all()
-        
-        month_cron = self.db.query(
+        ).filter(
+            ChatUsageLog.user_id == user_id,
+            ChatUsageLog.agent_id.isnot(None),
+            ChatUsageLog.created_at >= start_of_month
+        )
+        if org_agent_ids is not None:
+            month_chat_q = month_chat_q.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
+        month_chat = month_chat_q.group_by(ChatUsageLog.agent_id).all()
+
+        month_cron_q = self.db.query(
             CronOwnership.agent_id,
             func.sum(CronPipelineRun.total_cost).label("cost"),
             func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("tokens")
         ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
-         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None), CronPipelineRun.started_at >= start_of_month_ms).group_by(CronOwnership.agent_id).all()
+         .filter(
+             CronOwnership.user_id == user_id,
+             CronOwnership.agent_id.isnot(None),
+             CronPipelineRun.started_at >= start_of_month_ms
+         )
+        if org_agent_ids is not None:
+            month_cron_q = month_cron_q.filter(CronOwnership.agent_id.in_(org_agent_ids))
+        month_cron = month_cron_q.group_by(CronOwnership.agent_id).all()
 
         # 3. Discover agents the user has usage for
         agent_ids = set()
         for r in lifetime_chat: agent_ids.add(r.agent_id)
         for r in lifetime_cron: agent_ids.add(r.agent_id)
-        
+
         tasks_data = []
         if agent_ids:
-            tasks_data = self.db.query(
+            tasks_q = self.db.query(
                 AgentTask.agent_id,
                 func.count(AgentTask.id).label("tasks_ran")
-            ).filter(AgentTask.agent_id.in_(agent_ids)).group_by(AgentTask.agent_id).all()
+            ).filter(AgentTask.agent_id.in_(agent_ids))
+            tasks_data = tasks_q.group_by(AgentTask.agent_id).all()
 
         # 4. Top model for current month
-        top_models_chat = self.db.query(
+        top_chat_q = self.db.query(
             ChatUsageLog.agent_id,
             ChatUsageLog.model,
             func.count(ChatUsageLog.id).label("usage_count")
-        ).filter(ChatUsageLog.user_id == user_id, ChatUsageLog.agent_id.isnot(None), ChatUsageLog.created_at >= start_of_month).group_by(ChatUsageLog.agent_id, ChatUsageLog.model).all()
-        
-        top_models_cron = self.db.query(
+        ).filter(
+            ChatUsageLog.user_id == user_id,
+            ChatUsageLog.agent_id.isnot(None),
+            ChatUsageLog.created_at >= start_of_month
+        )
+        if org_agent_ids is not None:
+            top_chat_q = top_chat_q.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
+        top_models_chat = top_chat_q.group_by(ChatUsageLog.agent_id, ChatUsageLog.model).all()
+
+        top_cron_q = self.db.query(
             CronOwnership.agent_id,
             CronPipelineRun.model,
             func.count(CronPipelineRun.id).label("usage_count")
         ).join(CronPipelineRun, CronOwnership.cron_id == CronPipelineRun.cron_id)\
-         .filter(CronOwnership.user_id == user_id, CronOwnership.agent_id.isnot(None), CronPipelineRun.started_at >= start_of_month_ms).group_by(CronOwnership.agent_id, CronPipelineRun.model).all()
-
+         .filter(
+             CronOwnership.user_id == user_id,
+             CronOwnership.agent_id.isnot(None),
+             CronPipelineRun.started_at >= start_of_month_ms
+         )
+        if org_agent_ids is not None:
+            top_cron_q = top_cron_q.filter(CronOwnership.agent_id.in_(org_agent_ids))
+        top_models_cron = top_cron_q.group_by(CronOwnership.agent_id, CronPipelineRun.model).all()
+        
         agent_models = defaultdict(lambda: defaultdict(int))
         for r in top_models_chat: agent_models[r.agent_id][r.model or "unknown"] += r.usage_count
         for r in top_models_cron: agent_models[r.agent_id][r.model or "unknown"] += r.usage_count
@@ -1097,8 +1211,9 @@ class UsageService:
         # Get Agent Names
         agent_name_map = {}
         try:
-            all_agents = await self.gateway.list_agents()
-            agent_name_map = {str(a.get("id")): a.get("name", "Unknown Agent") for a in all_agents if "id" in a}
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            rows = AgentRegistryRepository(self.db).list(org_id=org_id)
+            agent_name_map = {r.agent_id: r.name for r in rows}
         except Exception:
             pass
 

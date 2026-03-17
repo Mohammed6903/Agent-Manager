@@ -11,6 +11,8 @@ from agent_manager.integrations.google.schemas import (
     CreateSpreadsheetRequest,
 )
 
+from . import service as sheets_service
+
 router = APIRouter()
 
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Annotated
+from typing import Any, Annotated, Optional
 
-from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -96,25 +96,31 @@ async def create_agent(
     req: CreateAgentRequest,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
 ):
-    """Create a new OpenClaw agent (filesystem + gateway registration)."""
+    """Create a new OpenClaw agent (filesystem + gateway registration).
+    
+    Pass `org_id` in the request body to scope the agent to a specific
+    organisation. Omit it to create an unscoped (legacy) agent.
+    """
     return await agent_service.create_agent(req)
 
 
 @router.get("/agents", tags=["Agents"])
 async def list_agents(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    org_id: Optional[str] = Query(default=None, description="Filter agents by organisation ID"),
 ):
-    """List all registered agents."""
-    return await agent_service.list_agents()
+    """List registered agents. Pass ?org_id= to return only agents for that org."""
+    return await agent_service.list_agents(org_id=org_id)
 
 
 @router.get("/agents/{agent_id}", tags=["Agents"])
 async def get_agent(
     agent_id: str,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org"),
 ):
-    """Get details for a single agent."""
-    return await agent_service.get_agent(agent_id)
+    """Get details for a single agent. Pass ?org_id= to enforce org ownership check."""
+    return await agent_service.get_agent(agent_id, org_id=org_id)
 
 
 @router.patch("/agents/{agent_id}", tags=["Agents"])
@@ -122,18 +128,24 @@ async def update_agent(
     agent_id: str,
     req: UpdateAgentRequest,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org before updating"),
 ):
     """Update an agent's identity, role, or personality files."""
-    return await agent_service.update_agent(agent_id, req)
+    return await agent_service.update_agent(agent_id, req, org_id=org_id)
 
 
 @router.delete("/agents/{agent_id}", tags=["Agents"])
 async def delete_agent(
     agent_id: str,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org before deleting"),
 ):
-    """Delete an agent (gateway de-registration + filesystem cleanup)."""
-    return await agent_service.delete_agent(agent_id)
+    """Delete an agent (gateway de-registration + filesystem cleanup).
+    
+    Pass ?org_id= to enforce that the agent belongs to the org before deletion.
+    """
+    return await agent_service.delete_agent(agent_id, org_id=org_id)
+
 
 
 # ── Admin — shared workspace files ─────────────────────────────────────────────
@@ -179,6 +191,18 @@ async def migrate_symlinks(
     times.
     """
     return await agent_service.migrate_symlinks()
+
+@router.post("/admin/agents/sync-registry", tags=["Admin"])
+async def sync_agents_to_registry(
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    org_id: Optional[str] = Query(default=None, description="Stamp this org_id on synced rows that have none"),
+):
+    """Sync all gateway/disk agents into the DB registry.
+    
+    Idempotent — skips agents already present. Pass ?org_id= to backfill
+    org ownership on unscoped legacy agents.
+    """
+    return await agent_service.sync_agents_to_registry(org_id=org_id)
 
 
 # ── Chat ────────────────────────────────────────────────────────────────────────
@@ -344,11 +368,19 @@ async def create_cron(
 @router.get("/crons", tags=["Cron Jobs"], response_model=list[CronResponse])
 async def list_crons(
     cron_service: Annotated[CronService, Depends(get_cron_service)],
+    db: Session = Depends(get_db),
     user_id: str | None = None,
     session_id: str | None = None,
+    agent_id: Optional[str] = Query(default=None, description="Filter by a specific agent"),
+    org_id: Optional[str] = Query(default=None, description="Filter by org (ignored if agent_id is set)"),
 ):
-    """List cron jobs. Optionally filter by user_id and/or session_id."""
-    return await cron_service.list_crons(user_id=user_id, session_id=session_id)
+    return await cron_service.list_crons(
+        user_id=user_id,
+        session_id=session_id,
+        org_id=org_id,
+        agent_id=agent_id,
+        db=db,
+    )
 
 
 @router.get("/crons/{job_id}", tags=["Cron Jobs"], response_model=CronResponse)
@@ -560,9 +592,9 @@ async def list_tasks(
     agent_id: str | None = None,
     user_id: str | None = None,
     status: str | None = None,
+    org_id: Optional[str] = Query(default=None, description="Filter tasks by org (ignored if agent_id is set)"),
 ):
-    """List tasks. Filtered by user_id, and optionally agent_id and/or status."""
-    return await task_service.list_tasks(agent_id=agent_id, user_id=user_id, status=status)
+    return await task_service.list_tasks(agent_id=agent_id, user_id=user_id, status=status, org_id=org_id)
 
 
 @router.get("/tasks/{task_id}", tags=["Tasks"], response_model=TaskResponse)

@@ -12,6 +12,7 @@ from ..repositories.cron_pipeline_repository import CronPipelineRepository
 from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
 from ..config import settings
 from ..ws_manager import cron_ws_manager
+from ..utils.cron_utils import sanitize_cron_expr
 
 logger = logging.getLogger("agent_manager.services.cron_service")
 
@@ -26,12 +27,19 @@ class CronService:
         """Create a cron job in OpenClaw and store ownership."""
         # Build the OpenClaw job dict
         schedule = {"kind": req.schedule_kind, "expr": req.schedule_expr}
-        if req.schedule_kind == "cron" and req.schedule_tz:
-            schedule["tz"] = req.schedule_tz
+        if req.schedule_kind == "cron":
+            if not req.schedule_expr:
+                raise HTTPException(status_code=400, detail="schedule_expr is required for cron schedule_kind")
+            sanitized = sanitize_cron_expr(req.schedule_expr)
+            schedule = {"kind": "cron", "expr": sanitized}
+            if req.schedule_tz:
+                schedule["tz"] = req.schedule_tz
         elif req.schedule_kind == "at":
             schedule = {"kind": "at", "at": req.schedule_expr}
         elif req.schedule_kind == "every":
             schedule = {"kind": "every", "every": req.schedule_expr}
+        else:
+            schedule = {"kind": req.schedule_kind, "expr": req.schedule_expr}
 
         payload_msg = req.payload_message
         if req.pipeline_template:
@@ -153,35 +161,55 @@ class CronService:
             state.get("lastStatus") or job.get("lastRunStatus"),
         )
 
-    async def list_crons(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[CronResponse]:
-        """List and enrich cron jobs from OpenClaw."""
+    async def list_crons(
+        self,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        db: Session = None,
+    ) -> List[CronResponse]:
         jobs = await self.gateway.cron_list()
         ownership_map = self.ownership.list_all()
-        
+
+        # Resolve org → agent_ids once, before the loop
+        org_agent_ids: set[str] | None = None
+        if agent_id:
+            pass  # agent_id is specific enough, org_id ignored
+        elif org_id and db:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            registry = AgentRegistryRepository(db)
+            org_agents = registry.list(org_id=org_id)
+            if not org_agents:
+                return []
+            org_agent_ids = {a.agent_id for a in org_agents}
+
         cron_ids = [job.get("id") or job.get("jobId") for job in jobs if (job.get("id") or job.get("jobId"))]
         stats_map = self.pipelines.aggregate_stats(cron_ids)
         summary_map = self.pipelines.get_latest_summaries(cron_ids)
 
         enriched = []
         for job in jobs:
-            # CLI returns "id", not "jobId"
             job_id = job.get("id") or job.get("jobId")
             if not job_id:
                 continue
 
             owner = ownership_map.get(job_id)
-
-            # Only show cron jobs that exist in the database
             if not owner:
                 continue
 
-            # Filter by ownership if requested
-            if user_id:
-                if owner["user_id"] != user_id:
-                    continue
-            if session_id:
-                if owner["session_id"] != session_id:
-                    continue
+            # agent_id filter
+            if agent_id and job.get("agentId") != agent_id:
+                continue
+
+            # org_id filter — check resolved agent set
+            if org_agent_ids is not None and job.get("agentId") not in org_agent_ids:
+                continue
+
+            if user_id and owner["user_id"] != user_id:
+                continue
+            if session_id and owner["session_id"] != session_id:
+                continue
 
             last_run_at, next_run_at, last_run_status = self._extract_state(job)
             stats = stats_map.get(job_id, {})
@@ -203,7 +231,7 @@ class CronService:
                 last_run_summary=last_summary,
                 total_runs=stats.get("total_runs"),
                 success_rate=stats.get("success_rate"),
-                avg_duration_ms=stats.get("avg_duration_ms")
+                avg_duration_ms=stats.get("avg_duration_ms"),
             ))
         return enriched
 

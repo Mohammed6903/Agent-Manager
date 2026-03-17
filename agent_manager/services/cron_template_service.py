@@ -1,3 +1,4 @@
+import re
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
@@ -9,12 +10,45 @@ from ..repositories.cron_template_repository import CronTemplateRepository
 from ..services.cron_service import CronService
 from ..schemas.cron import CreateCronRequest
 from ..clients.gateway_client import GatewayClient
+from cron_validator import CronValidator
 
 class CronTemplateService:
     def __init__(self, db: Session, gateway_client: GatewayClient):
         self.db = db
         self.repo = CronTemplateRepository(db)
         self.cron_service = CronService(gateway_client, db)
+
+    def _sanitize_cron_expr(self, expr: str) -> str:
+        """
+        Normalize a cron expression for OpenClaw CLI:
+        - Strip seconds/year fields (Quartz 6-7 field → Unix 5 field)
+        - Convert N/step stepping to */step
+        - Replace ? with *
+        """
+        parts = expr.strip().split()
+
+        # Strip to 5 fields
+        if len(parts) == 7:
+            parts = parts[1:6]   # drop seconds and year
+        elif len(parts) == 6:
+            parts = parts[1:6]   # drop seconds
+
+        def sanitize_field(field: str) -> str:
+            field = re.sub(r'^\d+/1$', '*', field)          # 1/1 → *
+            field = re.sub(r'^\d+/(\d+)$', r'*/\1', field)  # 0/5 → */5
+            field = field.replace('?', '*')                   # ? → *
+            return field
+
+        sanitized = " ".join(sanitize_field(p) for p in parts)
+
+        # Validate the result — raise early with a clear error if unsupported
+        if CronValidator.parse(sanitized) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported cron expression '{expr}' — please use a standard 5-field Unix cron or an interval schedule (e.g. every 1h)."
+            )
+
+        return sanitized
 
     def create_template(self, user_id: str, data: CronTemplateCreate) -> CronTemplate:
         return self.repo.create(user_id, data)
@@ -27,8 +61,8 @@ class CronTemplateService:
             raise HTTPException(status_code=403, detail="Not authorized to view this template")
         return template
 
-    def list_templates(self, user_id: str) -> List[CronTemplate]:
-        return self.repo.list_templates(user_id)
+    def list_templates(self, user_id: str, org_id: Optional[str]) -> List[CronTemplate]:
+        return self.repo.list_templates(user_id, org_id)
 
     def update_template(self, template_id: str, user_id: str, data: CronTemplateUpdate) -> CronTemplate:
         try:
@@ -176,6 +210,11 @@ class CronTemplateService:
             pipeline_template = self._replace_variables_recursive(pipeline_template, final_values)
 
         # 4. Create actual cron job
+        schedule_expr = template.schedule_expr
+        
+        if template.schedule_kind == "cron" and schedule_expr:
+            schedule_expr = self._sanitize_cron_expr(schedule_expr)
+
         cron_req = CreateCronRequest(
             name=f"{template.name}",
             agent_id=req.agent_id,

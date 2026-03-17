@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, and_
 from sqlalchemy.orm import Session
 from ..models.cron_template import CronTemplate
 from ..schemas.cron_template import CronTemplateCreate, CronTemplateUpdate
@@ -12,6 +12,7 @@ class CronTemplateRepository:
     def create(self, user_id: str, data: CronTemplateCreate) -> CronTemplate:
         template = CronTemplate(
             created_by_user_id=user_id,
+            org_id=data.org_id,
             is_public=data.is_public,
             name=data.name,
             description=data.description,
@@ -41,12 +42,16 @@ class CronTemplateRepository:
             select(CronTemplate).where(CronTemplate.id == template_id)
         ).scalar_one_or_none()
 
-    def list_templates(self, user_id: str) -> List[CronTemplate]:
-        # Return templates the user owns OR templates that are public
+    def list_templates(self, user_id: str, org_id: str | None = None) -> List[CronTemplate]:
         stmt = select(CronTemplate).where(
             or_(
+                # Always see your own templates regardless of anything
                 CronTemplate.created_by_user_id == user_id,
-                CronTemplate.is_public == True
+                # See org templates only if public=True AND org matches
+                and_(
+                    CronTemplate.is_public == True,
+                    CronTemplate.org_id == org_id,
+                ) if org_id else False,
             )
         )
         return list(self.db.execute(stmt).scalars().all())

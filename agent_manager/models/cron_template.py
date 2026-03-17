@@ -48,6 +48,8 @@ class CronTemplate(Base):
     # Job execution blueprint
     payload_message = Column(Text, nullable=False)      # prompt containing {variable_key}
     pipeline_template = Column(JSON)                    # JSON array containing {variable_key}
+
+    org_id = Column(String, index=True, nullable=True)  # None = personal, set = org-shared
     
     # Timestamps
     created_at = Column(DateTime, default=func.now())

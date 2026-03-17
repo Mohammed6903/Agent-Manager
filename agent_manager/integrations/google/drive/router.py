@@ -7,6 +7,7 @@ import base64
 
 from agent_manager.database import get_db
 from agent_manager.integrations.google.schemas import ShareFileRequest, MoveFileRequest, RenameFileRequest, CreateFolderRequest
+from . import service as drive_service
 
 router = APIRouter()
 

@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from agent_manager.database import get_db
 from agent_manager.integrations.google.schemas import CreateMeetSpaceRequest
 
+from . import service as meet_service
+
 router = APIRouter()
 
 @router.post("/spaces", tags=["Google Meet"])

@@ -14,6 +14,7 @@ import os
 import json
 import datetime
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,10 @@ IDENTITY_SCOPES = {
 }
 
 # Get the directory of the current file
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+CURRENT_DIR = Path(__file__).resolve().parent
+BASE_DIR = CURRENT_DIR.parents[2]
 # credentials file is in the parent (agent_manager/) directory
-CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(CURRENT_DIR), "credentials_for_local.json")
+CLIENT_SECRETS_FILE = BASE_DIR / "google_credentials.json"
 
 REDIRECT_URI = f"{settings.SERVER_URL}/api/integrations/google/auth/callback"
 
@@ -46,8 +48,8 @@ def get_required_scopes(agent_id: str, db: Session, include_integration: str = N
     agent_integrations = db.query(AgentIntegration).filter(AgentIntegration.agent_id == agent_id).all()
     scopes = set()
     
-    from ..integrations import INTEGRATION_REGISTRY
-    from ..integrations.google.base_google import BaseGoogleIntegration
+    from ....integrations import INTEGRATION_REGISTRY
+    from ....integrations.google.base_google import BaseGoogleIntegration
     
     for record in agent_integrations:
         integration_cls = INTEGRATION_REGISTRY.get(record.integration_name)

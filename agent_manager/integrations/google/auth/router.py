@@ -44,14 +44,14 @@ def callback(request: Request, db: Session = Depends(get_db)):
     user_metadata = auth_service.fetch_google_user_info(creds) if creds else None
 
     # OAuth succeeded — assign only the specific requested integration
-    from ..repositories.integration_repository import IntegrationRepository
+    from ....repositories.integration_repository import IntegrationRepository
     repo = IntegrationRepository(db)
     if integration_name:
         repo.assign_to_agent(agent_id, integration_name, metadata=user_metadata)
     else:
         # Legacy fallback: assign all Google integrations
-        from ..integrations import INTEGRATION_REGISTRY
-        from ..integrations.google.base_google import BaseGoogleIntegration
+        from ... import INTEGRATION_REGISTRY
+        from ....integrations.google.base_google import BaseGoogleIntegration
         for name, cls in INTEGRATION_REGISTRY.items():
             if issubclass(cls, BaseGoogleIntegration):
                 repo.assign_to_agent(agent_id, name, metadata=user_metadata)
@@ -141,7 +141,7 @@ async def manual_callback(body: ManualCallbackRequest, db: Session = Depends(get
 
     try:
         if body.code:
-            from ..integrations.auth.oauth2_registry import get_oauth2_provider
+            from ....integrations.auth.oauth2_registry import get_oauth2_provider
             provider = get_oauth2_provider("google")
             await provider.handle_callback(db=db, agent_id=body.agent_id, integration_name="google", code=body.code)
         else:

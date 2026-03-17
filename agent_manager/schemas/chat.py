@@ -17,6 +17,8 @@ class CreateAgentRequest(BaseModel):
     role: Optional[str] = None
     soul: Optional[str] = None
     identity: Optional[str] = None
+    org_id: str | None = None
+    user_id: str | None = None
 
     @field_validator("agent_id")
     @classmethod
@@ -39,6 +41,7 @@ class AgentResponse(BaseModel):
     workspace: str
     agent_dir: str
     status: str
+    org_id: str | None = None
 
 
 # ── Chat ────────────────────────────────────────────────────────────────────────

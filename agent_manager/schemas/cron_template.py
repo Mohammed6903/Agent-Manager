@@ -14,6 +14,7 @@ class CronTemplateCreate(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     is_public: bool = False
+    org_id: Optional[str] = None
 
     required_integrations: List[str] = Field(default_factory=list)
     variables: List[TemplateVariable] = Field(default_factory=list)

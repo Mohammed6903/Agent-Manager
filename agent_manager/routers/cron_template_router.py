@@ -1,5 +1,5 @@
-from typing import List
-from fastapi import APIRouter, Depends
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -25,18 +25,17 @@ def get_cron_template_service(
 def create_cron_template(
     req: CronTemplateCreate,
     user_id: str,
-    svc: CronTemplateService = Depends(get_cron_template_service)
+    svc: CronTemplateService = Depends(get_cron_template_service),
 ):
-    """Create a new cron template."""
     return svc.create_template(user_id, req)
 
 @router.get("", response_model=List[CronTemplateResponse])
 def list_cron_templates(
     user_id: str | None = None,
-    svc: CronTemplateService = Depends(get_cron_template_service)
+    svc: CronTemplateService = Depends(get_cron_template_service),
+    org_id: Optional[str] = Query(default=None),
 ):
-    """List all cron templates available to the user (owned + public)."""
-    return svc.list_templates(user_id)
+    return svc.list_templates(user_id, org_id)
 
 @router.get("/{template_id}", response_model=CronTemplateResponse)
 def get_cron_template(

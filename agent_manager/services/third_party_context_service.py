@@ -25,7 +25,7 @@ class ThirdPartyContextService:
         self.db = db
         self.agent_service = agent_service
 
-    async def _enrich_context(self, ctx: any) -> dict:
+    async def _enrich_context(self, ctx: any, org_id: str | None = None) -> dict:
         """Add mapped_agents (ID + Name) to a context object/row."""
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         mappings = assign_repo.get_assignments_for_context(ctx.id)
@@ -35,7 +35,7 @@ class ThirdPartyContextService:
         agent_map = {}
         if self.agent_service:
             try:
-                all_agents = await self.agent_service.list_agents()
+                all_agents = await self.agent_service.list_agents(org_id=org_id)
                 agent_map = {a["id"]: a["name"] for a in all_agents}
             except Exception as e:
                 logger.warning("Could not fetch agent names for enrichment: %s", e)
@@ -123,32 +123,40 @@ class ThirdPartyContextService:
             "message": "Background delete started.",
         }
 
-    async def get_context(self, context_id: uuid.UUID) -> dict:
+    async def get_context(self, context_id: uuid.UUID, org_id: str | None = None) -> dict:
         """Fetch a single ThirdPartyContext by ID with its mappings."""
         ctx_repo = ThirdPartyContextRepository(self.db)
         ctx = ctx_repo.get(context_id)
         if not ctx:
             raise HTTPException(status_code=404, detail="Context not found")
-        return await self._enrich_context(ctx)
+        return await self._enrich_context(ctx, org_id=org_id)
 
-    async def list_contexts_for_agent(self, agent_id: str) -> list:
+    async def list_contexts_for_agent(self, agent_id: str, org_id: str | None = None) -> list:
         """Return all ThirdPartyContext rows assigned to an agent."""
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         contexts = assign_repo.get_contexts_for_agent(agent_id)
-        return [await self._enrich_context(c) for c in contexts]
+        return [await self._enrich_context(c, org_id=org_id) for c in contexts]
 
-    async def get_all_complete_contexts(self) -> list:
-        """Return all ThirdPartyContext rows whose status is 'complete'."""
+    async def get_all_complete_contexts(self, org_id: str | None = None) -> list:
         ctx_repo = ThirdPartyContextRepository(self.db)
         contexts = ctx_repo.get_all_complete()
-        return [await self._enrich_context(c) for c in contexts]
 
-    async def get_available_agents(self, context_id: uuid.UUID) -> list[dict]:
+        # Filter to only contexts whose creator agent belongs to the org
+        if org_id:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            org_agent_ids = {
+                r.agent_id for r in AgentRegistryRepository(self.db).list(org_id=org_id)
+            }
+            contexts = [c for c in contexts if c.agent_id in org_agent_ids]
+
+        return [await self._enrich_context(c, org_id=org_id) for c in contexts]
+
+    async def get_available_agents(self, context_id: uuid.UUID, org_id: str | None = None) -> list[dict]:
         """Return agents NOT yet assigned to this context."""
         if not self.agent_service:
             return []
         
-        all_agents = await self.agent_service.list_agents()
+        all_agents = await self.agent_service.list_agents(org_id=org_id)
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         mappings = assign_repo.get_assignments_for_context(context_id)
         mapped_ids = {m.agent_id for m in mappings}
@@ -180,8 +188,8 @@ class ThirdPartyContextService:
         if not deleted:
             raise HTTPException(status_code=404, detail="Assignment not found")
 
-    async def get_complete_contexts_for_agent(self, agent_id: str) -> list:
+    async def get_complete_contexts_for_agent(self, agent_id: str, org_id: str | None = None) -> list:
         """Return only 'complete' ThirdPartyContext rows assigned to an agent."""
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         contexts = assign_repo.get_contexts_for_agent(agent_id, status="complete")
-        return [await self._enrich_context(c) for c in contexts]
+        return [await self._enrich_context(c, org_id=org_id) for c in contexts]

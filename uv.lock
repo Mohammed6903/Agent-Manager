@@ -380,6 +380,19 @@ wheels = [
 ]
 
 [[package]]
+name = "cron-validator"
+version = "1.0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/55/d3d8e7acad9dc3f54133df0972c79d38f2c6fc4be41f281a396c3afe4411/cron-validator-1.0.8.tar.gz", hash = "sha256:dd485257adb6f590b3e9433f641440c801d307015259c1ee3eb6e21c964c8026", size = 9657, upload-time = "2023-06-19T10:09:48.434Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/0c/d6bf9d572fb2ce3404fe37b794cf10dd44566368f7084c71b6028d3818ff/cron_validator-1.0.8-py3-none-any.whl", hash = "sha256:6477fcc3d60bfbd1ec00a708f0b8b5136c1fef8140c10effea1f45b79d778653", size = 7830, upload-time = "2023-06-19T10:09:44.881Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1442,6 +1455,7 @@ dependencies = [
     { name = "boto3-stubs" },
     { name = "celery" },
     { name = "celery-types" },
+    { name = "cron-validator" },
     { name = "cryptography" },
     { name = "fastapi", extra = ["standard"] },
     { name = "google-api-python-client" },
@@ -1474,6 +1488,7 @@ requires-dist = [
     { name = "boto3-stubs", specifier = ">=1.42.64" },
     { name = "celery", specifier = ">=5.6.2" },
     { name = "celery-types", specifier = ">=0.26.0" },
+    { name = "cron-validator", specifier = ">=1.0.8" },
     { name = "cryptography", specifier = ">=43.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.129.0" },
     { name = "google-api-python-client", specifier = ">=2.155.0" },
@@ -1970,6 +1985,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/01/979e98d542a70714b0cb2b6728ed0b7c46792b695e3eaec3e20711271ca3/python_multipart-0.0.22.tar.gz", hash = "sha256:7340bef99a7e0032613f56dc36027b959fd3b30a787ed62d310e951f7c3a3a58", size = 37612, upload-time = "2026-01-25T10:15:56.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1b/d0/397f9626e711ff749a95d96b7af99b9c566a9bb5129b8e4c10fc4d100304/python_multipart-0.0.22-py3-none-any.whl", hash = "sha256:2b2cd894c83d21bf49d702499531c7bafd057d730c201782048f7945d82de155", size = 24579, upload-time = "2026-01-25T10:15:54.811Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.1.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/db/b8721d71d945e6a8ac63c0fc900b2067181dbb50805958d4d4661cf7d277/pytz-2026.1.post1.tar.gz", hash = "sha256:3378dde6a0c3d26719182142c56e60c7f9af7e968076f31aae569d72a0358ee1", size = 321088, upload-time = "2026-03-03T07:47:50.683Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl", hash = "sha256:f2fd16142fda348286a75e1a524be810bb05d444e5a081f37f7affc635035f7a", size = 510489, upload-time = "2026-03-03T07:47:49.167Z" },
 ]
 
 [[package]]

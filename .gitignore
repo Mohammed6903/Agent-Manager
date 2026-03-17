@@ -10,3 +10,4 @@ wheels/
 .venv
 .env
 credentials_*.json
+google_credentials.json
