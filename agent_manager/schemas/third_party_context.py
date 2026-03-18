@@ -12,7 +12,7 @@ class ThirdPartyContextCreate(BaseModel):
     agent_id: str = Field(..., description="The owning agent ID")
     integration_name: str = Field(
         default="gmail",
-        description="Integration to ingest (currently only 'gmail')",
+        description="Integration to ingest ('gmail' or 'google_calendar')",
     )
     force_full_sync: bool = Field(
         default=False,

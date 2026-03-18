@@ -38,7 +38,7 @@ async def create_context(
     svc: ThirdPartyContextService = Depends(_get_service),
 ):
     """Create a new third-party context and trigger ingestion."""
-    return await svc.create_gmail_context(req.agent_id, req.force_full_sync)
+    return await svc.create_context(req.integration_name, req.agent_id, req.force_full_sync)
 
 
 @router.delete("/{context_id}", status_code=202)
@@ -47,7 +47,7 @@ async def delete_context(
     svc: ThirdPartyContextService = Depends(_get_service),
 ):
     """Enqueue background deletion of a context and all associated data."""
-    return await svc.purge_gmail_context_data(context_id)
+    return await svc.purge_context_data(context_id)
 
 
 @router.get("", response_model=ThirdPartyContextListResponse)

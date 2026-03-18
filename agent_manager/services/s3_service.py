@@ -17,13 +17,103 @@ def _client():
         region_name=settings.AWS_REGION,
     )
 
-# ── Key Helpers ──────────────────────────────────────────────────────────────
+# ── Generic Key / CRUD ──────────────────────────────────────────────────────
+
+def raw_key(agent_id: str, integration: str, item_id: str) -> str:
+    """Build the S3 key for any integration's raw item."""
+    return f"{agent_id}/{integration}/raw/{item_id}.json"
+
+
+def save_raw(agent_id: str, integration: str, item_id: str, data: dict) -> bool:
+    """Save a raw item dict to S3 under the integration namespace."""
+    return upload_json(raw_key(agent_id, integration, item_id), data)
+
+
+def load_raw(agent_id: str, integration: str, item_id: str) -> dict | None:
+    """Load a raw item from S3. Returns None if not found."""
+    return download_json(raw_key(agent_id, integration, item_id))
+
+
+def list_item_ids(agent_id: str, integration: str) -> list[str]:
+    """Return all item IDs stored in S3 for agent + integration."""
+    prefix = f"{agent_id}/{integration}/raw/"
+    keys = list_keys(prefix)
+    return [k.replace(prefix, "").replace(".json", "") for k in keys]
+
+
+def delete_namespace(agent_id: str, integration: str) -> int:
+    """Delete all S3 objects for agent + integration. Returns count."""
+    prefix = f"{agent_id}/{integration}/"
+    keys = list_keys(prefix)
+    for key in keys:
+        delete_key(key)
+    return len(keys)
+
+
+# ── Backwards-compat aliases ────────────────────────────────────────────────
+# Kept so existing callers (ingest_task, pipeline_service, etc.) don't break.
 
 def gmail_raw_key(agent_id: str, message_id: str) -> str:
-    return f"{agent_id}/gmail/raw/{message_id}.json"
+    return raw_key(agent_id, "gmail", message_id)
 
 def calendar_raw_key(agent_id: str, event_id: str) -> str:
-    return f"{agent_id}/calendar/raw/{event_id}.json"
+    return raw_key(agent_id, "calendar", event_id)
+
+def save_gmail_raw(agent_id: str, message_id: str, raw_data: dict) -> bool:
+    return save_raw(agent_id, "gmail", message_id, raw_data)
+
+def load_gmail_raw(agent_id: str, message_id: str) -> dict | None:
+    """Load a stored email from S3, returning None if it is expired."""
+    key = gmail_raw_key(agent_id, message_id)
+    if _is_expired(key):
+        return None
+    return download_json(key)
+
+def save_calendar_raw(agent_id: str, event_id: str, raw_data: dict) -> bool:
+    return save_raw(agent_id, "calendar", event_id, raw_data)
+
+def load_calendar_raw(agent_id: str, event_id: str) -> dict | None:
+    return load_raw(agent_id, "calendar", event_id)
+
+def list_gmail_message_ids(agent_id: str) -> list[str]:
+    """Return message IDs in S3 for this agent, excluding expired objects."""
+    prefix = f"{agent_id}/gmail/raw/"
+    keys = list_keys(prefix)
+    if not keys:
+        return []
+
+    def _keep(key: str) -> tuple[str, bool]:
+        return (key, not _is_expired(key))
+
+    active_keys: list[str] = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for key, keep in executor.map(_keep, keys):
+            if keep:
+                active_keys.append(key)
+
+    return [k.replace(prefix, "").replace(".json", "") for k in active_keys]
+
+def list_calendar_event_ids(agent_id: str) -> list[str]:
+    return list_item_ids(agent_id, "calendar")
+
+def delete_gmail_namespace(agent_id: str) -> int:
+    return delete_namespace(agent_id, "gmail")
+
+def delete_calendar_namespace(agent_id: str) -> int:
+    return delete_namespace(agent_id, "calendar")
+
+def gmail_message_exists(agent_id: str, message_id: str) -> bool:
+    key = gmail_raw_key(agent_id, message_id)
+    if not key_exists(key):
+        return False
+    return not _is_expired(key)
+
+def delete_all_gmail_raw(agent_id: str) -> int:
+    prefix = f"{agent_id}/gmail/raw/"
+    keys = list_keys(prefix)
+    for key in keys:
+        delete_key(key)
+    return len(keys)
 
 # ── Core Operations ──────────────────────────────────────────────────────────
 
@@ -82,7 +172,10 @@ def delete_key(key: str) -> bool:
         print(f"S3 delete failed for {key}: {e}")
         return False
 
-# ── Gmail Helpers ────────────────────────────────────────────────────────────
+# ── Gmail Soft-Delete (Gmail-specific) ───────────────────────────────────────
+
+_EXPIRED_TAG_KEY = "status"
+_EXPIRED_TAG_VALUE = "expired"
 
 
 def _is_expired(key: str) -> bool:
@@ -99,56 +192,8 @@ def _is_expired(key: str) -> bool:
         return False
 
 
-def save_gmail_raw(agent_id: str, message_id: str, raw: dict) -> bool:
-    return upload_json(gmail_raw_key(agent_id, message_id), raw)
-
-
-def load_gmail_raw(agent_id: str, message_id: str) -> dict | None:
-    """Load a stored email from S3, returning None if it is expired."""
-    key = gmail_raw_key(agent_id, message_id)
-    if _is_expired(key):
-        return None
-    return download_json(key)
-
-
-def gmail_message_exists(agent_id: str, message_id: str) -> bool:
-    """Return True only if the message exists in S3 and is NOT expired."""
-    key = gmail_raw_key(agent_id, message_id)
-    if not key_exists(key):
-        return False
-    return not _is_expired(key)
-
-
-def list_gmail_message_ids(agent_id: str) -> list[str]:
-    """Return message IDs stored in S3 for this agent, excluding expired objects.
-
-    Tag checks are performed in parallel to keep the listing fast even for
-    large mailboxes.
-    """
-    prefix = f"{agent_id}/gmail/raw/"
-    keys = list_keys(prefix)
-    if not keys:
-        return []
-
-    # Check expired tags in parallel
-    def _keep(key: str) -> tuple[str, bool]:
-        return (key, not _is_expired(key))
-
-    active_keys: list[str] = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        for key, keep in executor.map(_keep, keys):
-            if keep:
-                active_keys.append(key)
-
-    return [k.replace(prefix, "").replace(".json", "") for k in active_keys]
-
-
 def list_all_gmail_message_ids_with_status(agent_id: str) -> dict[str, bool]:
-    """Return all message IDs in S3 for this agent mapped to their expired status.
-
-    Returns:
-        dict[str, bool]: Mapping of message_id to True if expired, False if active.
-    """
+    """Return all message IDs mapped to expired status (True=expired)."""
     prefix = f"{agent_id}/gmail/raw/"
     keys = list_keys(prefix)
     if not keys:
@@ -166,58 +211,10 @@ def list_all_gmail_message_ids_with_status(agent_id: str) -> dict[str, bool]:
     return results
 
 
-def delete_all_gmail_raw(agent_id: str) -> int:
-    """Delete all stored Gmail messages for an agent from S3.
-
-    Use before re-ingesting with the new parsed format so stale raw objects
-    don't linger alongside clean ones.
-
-    Returns:
-        Number of objects deleted.
-    """
-    prefix = f"{agent_id}/gmail/raw/"
-    keys = list_keys(prefix)
-    for key in keys:
-        delete_key(key)
-    return len(keys)
-
-
-def delete_gmail_namespace(agent_id: str) -> int:
-    """Delete all Gmail S3 objects for an agent.
-
-    This includes every object under ``{agent_id}/gmail/``.
-
-    Returns:
-        Number of deleted objects.
-    """
-    prefix = f"{agent_id}/gmail/"
-    keys = list_keys(prefix)
-    for key in keys:
-        delete_key(key)
-    return len(keys)
-
-
-_EXPIRED_TAG_KEY = "status"
-_EXPIRED_TAG_VALUE = "expired"
-
-
 def tag_gmail_as_expired(
     agent_id: str, progress_callback: Callable[[int, int], None] | None = None
 ) -> int:
-    """Tag all Gmail raw objects as expired for soft-delete.
-
-    Applies the tag ``status=expired`` to every object under
-    ``{agent_id}/gmail/raw/`` in parallel. A bucket lifecycle rule
-    (see ``_ensure_lifecycle_rule``) will auto-delete tagged objects
-    after 30 days.
-
-    Args:
-        agent_id: Owner namespace.
-        progress_callback: Optional callable(tagged, total) for progress updates.
-
-    Returns:
-        Number of objects successfully tagged.
-    """
+    """Tag all Gmail raw objects as expired for soft-delete."""
     prefix = f"{agent_id}/gmail/raw/"
     keys = list_keys(prefix)
 
@@ -256,15 +253,7 @@ def tag_gmail_as_expired(
 
 
 def untag_gmail_as_expired(agent_id: str, message_ids: list[str]) -> int:
-    """Restore soft-deleted Gmail raw objects by removing their tags.
-
-    Args:
-        agent_id: Owner namespace.
-        message_ids: List of message IDs to restore.
-
-    Returns:
-        Number of objects successfully restored.
-    """
+    """Restore soft-deleted Gmail raw objects by removing their tags."""
     if not message_ids:
         return 0
 
@@ -273,7 +262,6 @@ def untag_gmail_as_expired(agent_id: str, message_ids: list[str]) -> int:
     def _untag_key(msg_id: str) -> bool:
         key = gmail_raw_key(agent_id, msg_id)
         try:
-            # Removing all tags effectively removes the status=expired tag
             client.delete_object_tagging(
                 Bucket=settings.S3_BUCKET_NAME,
                 Key=key,
@@ -293,18 +281,13 @@ def untag_gmail_as_expired(agent_id: str, message_ids: list[str]) -> int:
 
 
 def _ensure_lifecycle_rule() -> None:
-    """Set up S3 lifecycle rule to auto-delete status=expired objects after 30 days.
-
-    Filters by the ``status=expired`` tag so only explicitly expired objects
-    are cleaned up — unrelated objects in the bucket are not affected.
-    Idempotent: safe to call multiple times.
-    """
+    """Set up S3 lifecycle rule to auto-delete status=expired objects after 30 days."""
     client = _client()
     try:
         lifecycle_config = {
             "Rules": [
                 {
-                    "ID": "DeleteExpiredGmailData",
+                    "ID": "DeleteExpiredData",
                     "Filter": {
                         "Tag": {
                             "Key": _EXPIRED_TAG_KEY,
@@ -323,11 +306,3 @@ def _ensure_lifecycle_rule() -> None:
         print(f"[S3] Lifecycle rule set: delete objects tagged status=expired after 30 days")
     except Exception as e:
         print(f"[S3] Failed to set lifecycle rule: {e}")
-
-# ── Calendar Helpers ─────────────────────────────────────────────────────────
-
-def save_calendar_raw(agent_id: str, event_id: str, raw: dict) -> bool:
-    return upload_json(calendar_raw_key(agent_id, event_id), raw)
-
-def load_calendar_raw(agent_id: str, event_id: str) -> dict | None:
-    return download_json(calendar_raw_key(agent_id, event_id))

@@ -306,7 +306,7 @@ class ChatService:
                 )
                 if context_block:
                     messages.insert(
-                        0, {"role": "system", "content": context_block}
+                        1, {"role": "system", "content": context_block}
                     )
             except Exception as exc:
                 logger.warning(
@@ -567,7 +567,7 @@ class ChatService:
                 )
                 if context_block:
                     messages.insert(
-                        0, {"role": "system", "content": context_block}
+                        1, {"role": "system", "content": context_block}
                     )
             except Exception as exc:
                 logger.warning(

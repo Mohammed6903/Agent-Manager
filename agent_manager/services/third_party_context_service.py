@@ -14,6 +14,7 @@ from ..repositories.third_party_context_assignment_repository import (
     ThirdPartyContextAssignmentRepository,
 )
 from ..services.agent_service import AgentService
+from ..services.context_providers import get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -61,34 +62,53 @@ class ThirdPartyContextService:
         ]
         return data
 
-    async def create_gmail_context(self, agent_id: str, force_full_sync: bool = False) -> dict:
-        """Validate credentials, create a tracking row, and enqueue the sync task."""
+    # ── Generic context creation / deletion ───────────────────────────────
+
+    async def create_context(
+        self, integration_name: str, agent_id: str, force_full_sync: bool = False,
+    ) -> dict:
+        """Validate credentials, create a tracking row, and enqueue the sync task.
+
+        Works for any registered integration — no per-integration methods needed.
+        """
+        provider = get_provider(integration_name)
+        if not provider:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown integration: {integration_name}",
+            )
+
         ctx_repo = ThirdPartyContextRepository(self.db)
 
         # Check for a truly active task for THIS integration/agent pair
-        active_ctx = ctx_repo.get_active_by_agent_and_integration(agent_id, "gmail")
+        active_ctx = ctx_repo.get_active_by_agent_and_integration(agent_id, integration_name)
         if active_ctx and active_ctx.celery_task_id:
             state = celery_app.AsyncResult(active_ctx.celery_task_id).state
-            if state not in ("SUCCESS", "FAILURE", "FAILED", "REVOKED"):
+            if state not in ("SUCCESS", "FAILURE", "REVOKED", "TASK_ERROR", "TASK_CANCELLED"):
                 return {
                     "task_id": active_ctx.celery_task_id,
                     "context_id": str(active_ctx.id),
-                    "message": "Gmail sync already in progress. Resuming view.",
+                    "message": f"{provider.display_name} sync already in progress. Resuming view.",
                 }
 
-        # Verify Gmail assignment
-        assignment = IntegrationRepository(self.db).get_assignment(agent_id, "gmail")
+        # Verify integration assignment
+        assignment = IntegrationRepository(self.db).get_assignment(agent_id, integration_name)
         if not assignment:
-            raise HTTPException(status_code=400, detail="Gmail integration not assigned to agent.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"{provider.display_name} integration not assigned to agent.",
+            )
 
         # Verify credentials
-        svc = gmail_service.get_service(self.db, agent_id)
-        if not svc:
-            raise HTTPException(status_code=400, detail="Gmail credentials invalid/expired.")
+        if not provider.verify_credentials(self.db, agent_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{provider.display_name} credentials invalid/expired.",
+            )
 
         ctx = ctx_repo.create(
             agent_id=agent_id,
-            integration_name="gmail",
+            integration_name=integration_name,
             metadata=assignment.integration_metadata,
         )
 
@@ -96,25 +116,36 @@ class ThirdPartyContextService:
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         assign_repo.assign(ctx.id, agent_id)
 
-        from agent_manager.tasks.gmail.context_task import ingest_and_pipeline_gmail  # noqa: PLC0415
-        task = ingest_and_pipeline_gmail.delay(agent_id, str(ctx.id), force_full_sync)
+        task = provider.get_ingest_task().delay(
+            agent_id, str(ctx.id), force_full_sync,
+            integration_name=integration_name,
+        )
         ctx_repo.update_task(ctx.id, task.id, "ingesting")
 
         return {
             "task_id": task.id,
             "context_id": str(ctx.id),
-            "message": "Background Gmail sync started.",
+            "message": f"Background {provider.display_name} sync started.",
         }
 
-    async def purge_gmail_context_data(self, context_id: uuid.UUID) -> dict:
-        """Enqueue background deletion of all Gmail data."""
+    async def purge_context_data(self, context_id: uuid.UUID) -> dict:
+        """Enqueue background deletion of context data for any integration."""
         ctx_repo = ThirdPartyContextRepository(self.db)
         context = ctx_repo.get(context_id)
         if not context:
             raise HTTPException(status_code=404, detail="Context not found")
 
-        from agent_manager.tasks.gmail.context_task import delete_gmail_context  # noqa: PLC0415
-        task = delete_gmail_context.delay(context.agent_id, str(context_id))
+        provider = get_provider(context.integration_name)
+        if not provider:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown integration: {context.integration_name}",
+            )
+
+        task = provider.get_delete_task().delay(
+            context.agent_id, str(context_id),
+            integration_name=context.integration_name,
+        )
         ctx_repo.update_task(context_id, task.id, "deleting")
 
         return {
@@ -122,6 +153,8 @@ class ThirdPartyContextService:
             "context_id": str(context_id),
             "message": "Background delete started.",
         }
+
+    # ── Read / list / assign ──────────────────────────────────────────────
 
     async def get_context(self, context_id: uuid.UUID, org_id: str | None = None) -> dict:
         """Fetch a single ThirdPartyContext by ID with its mappings."""
@@ -155,7 +188,7 @@ class ThirdPartyContextService:
         """Return agents NOT yet assigned to this context."""
         if not self.agent_service:
             return []
-        
+
         all_agents = await self.agent_service.list_agents(org_id=org_id)
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         mappings = assign_repo.get_assignments_for_context(context_id)
@@ -165,7 +198,7 @@ class ThirdPartyContextService:
         for a in all_agents:
             if a["id"] not in mapped_ids:
                 available.append({"agent_id": a["id"], "name": a["name"]})
-        
+
         return available
 
     async def assign_context(self, context_id: uuid.UUID, agent_id: str) -> dict:
@@ -177,7 +210,7 @@ class ThirdPartyContextService:
 
         assign_repo = ThirdPartyContextAssignmentRepository(self.db)
         assign_repo.assign(context_id, agent_id)
-        
+
         # Return the ENTIRE context object so the frontend updates immediately
         return await self._enrich_context(ctx)
 

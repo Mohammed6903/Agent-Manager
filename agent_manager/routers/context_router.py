@@ -149,7 +149,7 @@ def list_active_tasks():
 
 
 @router.post("/ram/context/gmail")
-def create_gmail_context(
+async def create_gmail_context(
     agent_id: str,
     force_full_sync: bool = False,
     db: Session = Depends(get_db),
@@ -162,45 +162,55 @@ def create_gmail_context(
     Set ``force_full_sync=true`` to discard any stored sync checkpoint and
     re-ingest the entire mailbox from scratch.
     """
-    return ThirdPartyContextService(db).create_gmail_context(agent_id, force_full_sync)
+    return await ThirdPartyContextService(db).create_context("gmail", agent_id, force_full_sync)
 
 
 @router.delete("/ram/context/{context_id}/data")
-def purge_context_data(
+async def purge_context_data(
     context_id: uuid.UUID,
     db: Session = Depends(get_db),
 ):
     """Delete context data from S3, Qdrant, and remove the context DB row."""
-    return ThirdPartyContextService(db).purge_gmail_context_data(context_id)
+    return await ThirdPartyContextService(db).purge_context_data(context_id)
 
 
 @router.get("/ram/task/{task_id}/progress")
 async def task_progress(task_id: str):
-    """SSE stream — connect here to watch progress for any background task."""
+    """SSE stream — connect here to watch progress for any background task.
+
+    Emits events every 0.5s so the frontend always sees liveness.
+    Each event includes ``heartbeat`` (monotonic counter) and
+    ``elapsed_seconds`` so the UI can show a running timer even when
+    the underlying task state hasn't changed.
+    """
+    import time as _time
 
     async def event_stream():
+        start = _time.monotonic()
+        heartbeat = 0
         while True:
             result = celery_app.AsyncResult(task_id)
             try:
                 state = result.state
                 info = result.info or {}
             except Exception:
-                # Celery couldn't deserialize the stored failure result (e.g. missing
-                # exc_type on a retry exception). Emit a clean FAILURE event and stop.
-                yield f'data: {json.dumps({"task_id": task_id, "status": "FAILED", "message": "Task failed — check worker logs for details."})}\n\n'
+                yield f'data: {json.dumps({"task_id": task_id, "status": "FAILURE", "message": "Task failed — check worker logs for details."})}\n\n'
                 break
 
+            heartbeat += 1
             data = {
                 "task_id": task_id,
                 "status": state,
+                "heartbeat": heartbeat,
+                "elapsed_seconds": round(_time.monotonic() - start, 1),
                 **(info if isinstance(info, dict) else {"message": str(info)}),
             }
             yield f"data: {json.dumps(data)}\n\n"
 
-            if state in ("SUCCESS", "FAILURE", "FAILED", "REVOKED"):
+            if state in ("SUCCESS", "FAILURE", "REVOKED", "TASK_ERROR", "TASK_CANCELLED"):
                 break
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
     return StreamingResponse(
         event_stream(),
