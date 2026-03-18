@@ -14,6 +14,7 @@ from fastapi import HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ..clients.wallet_client import WalletClient, InsufficientBalanceError
 from ..config import settings
 from ..database import SessionLocal
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post
@@ -26,13 +27,15 @@ logger = logging.getLogger("agent_manager.services.chat_service")
 
 
 async def _sync_usage_after_delay(agent_id: str, session_key: str, user_id: str) -> None:
-    """Wait for OpenClaw to flush its local disk write, then sync to DB."""
+    """Wait for OpenClaw to flush its local disk write, then sync to DB and deduct wallet."""
     await asyncio.sleep(2.0)
     try:
         # Note: we use a new sync Session for the background task
         with SessionLocal() as db:
             usage_service = UsageService(gateway=None, db=db)  # type: ignore
             await usage_service.sync_single_session(agent_id, session_key, user_id)
+            # Deduct cost from wallet after syncing
+            await usage_service.deduct_session_cost(user_id, session_key)
     except Exception as exc:
         logger.error("Failed to background sync usage for %s: %s", session_key, exc)
 
@@ -43,6 +46,68 @@ _HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=3000.0, write=10.0, pool=10.0)
 # For streaming: no read timeout — reasoning models may think silently for
 # several minutes before emitting the first token.
 _HTTPX_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+
+
+async def _check_wallet_balance(user_id: str) -> None:
+    """Pre-flight balance + debt check. Raises HTTPException 402 if blocked."""
+    if not settings.WALLET_INTERNAL_API_KEY:
+        return  # Wallet integration not configured, skip check
+
+    try:
+        wallet = WalletClient()
+        result = await wallet.check_balance(user_id)
+        data = result.get("data", {})
+        balance_cents = data.get("balanceCents", 0)
+        debt_cents = data.get("debtCents", 0)
+
+        # Block if debt has hit the cap ($2)
+        if debt_cents >= settings.MAX_DEBT_CENTS:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "debt_limit_reached",
+                    "message": (
+                        f"Debt limit reached (${debt_cents / 100:.2f}/${settings.MAX_DEBT_CENTS / 100:.2f}). "
+                        "Please add credits to clear your debt and continue."
+                    ),
+                    "balanceCents": balance_cents,
+                    "debtCents": debt_cents,
+                    "maxDebtCents": settings.MAX_DEBT_CENTS,
+                },
+            )
+
+        # Block if no balance and already in debt
+        if balance_cents < settings.MIN_BALANCE_CENTS and debt_cents > 0:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_balance",
+                    "message": (
+                        f"Insufficient balance (${balance_cents / 100:.2f}) with outstanding debt "
+                        f"(${debt_cents / 100:.2f}). Please add credits."
+                    ),
+                    "balanceCents": balance_cents,
+                    "debtCents": debt_cents,
+                },
+            )
+
+        # Block if balance is zero (no debt yet)
+        if balance_cents < settings.MIN_BALANCE_CENTS:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_balance",
+                    "message": "Insufficient wallet balance to use agents. Please add credits.",
+                    "balanceCents": balance_cents,
+                    "balanceDollars": f"{balance_cents / 100:.2f}",
+                    "minBalanceCents": settings.MIN_BALANCE_CENTS,
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Wallet service unreachable — allow request to proceed (graceful degradation)
+        logger.warning("Wallet pre-flight check failed (allowing request): %s", exc)
 
 
 class ChatService:
@@ -454,6 +519,8 @@ class ChatService:
         db: Session | None = None,
     ) -> StreamingResponse:
         """Return a streaming SSE response proxied from the gateway."""
+        await _check_wallet_balance(req.user_id)
+
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
             session_id=req.session_id, room_id=req.room_id,
@@ -480,6 +547,8 @@ class ChatService:
         db: Session | None = None,
     ) -> dict:
         """Send a non-streaming chat request and return the full response."""
+        await _check_wallet_balance(req.user_id)
+
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
             session_id=req.session_id, room_id=req.room_id,
