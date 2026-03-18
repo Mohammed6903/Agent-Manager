@@ -544,13 +544,7 @@ async def cron_webhook_receiver(
         session_id = payload.get("sessionId") or payload.get("session_id")
         if agent_id and session_id:
             background_tasks.add_task(usage_service.sync_cron_cost, agent_id, session_id, run_id)
-
-        # Deduct cost from wallet after cron cost sync
-        from ..repositories.cron_ownership_repository import CronOwnershipRepository as OwnerRepoWallet
-        _owner_wallet = OwnerRepoWallet(db).get(job_id)
-        if _owner_wallet:
-            background_tasks.add_task(usage_service.deduct_cron_run_cost, run_id, _owner_wallet["user_id"])
-
+        
         # Broadcast the new run to Websocket if needed
         from ..ws_manager import cron_ws_manager
         import asyncio
