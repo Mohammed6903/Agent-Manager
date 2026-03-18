@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class GlobalContextCreate(BaseModel):
     name: str = Field(..., description="Unique name for the context")
     content: str = Field(..., description="The knowledge content")
+    org_id: Optional[str] = None
 
 class GlobalContextResponse(BaseModel):
     id: UUID

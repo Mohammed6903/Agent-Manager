@@ -13,22 +13,24 @@ class ContextService:
         self.db = db
         self.repo = ContextRepository(db)
 
-    def create_global_context(self, req: GlobalContextCreate) -> GlobalContext:
-        existing = self.repo.get_global_context_by_name(req.name)
+    def create_global_context(self, req: GlobalContextCreate, org_id: str | None = None) -> GlobalContext:
+        existing = self.repo.get_global_context_by_name(req.name, org_id=org_id)
         if existing:
             raise HTTPException(status_code=409, detail=f"Context with name '{req.name}' already exists.")
-        
-        return self.repo.create_global_context(req.name, req.content)
+        return self.repo.create_global_context(req.name, req.content, org_id=org_id)
 
     def update_global_context(self, context_id: uuid.UUID, req: GlobalContextUpdate) -> GlobalContext:
         if req.name is not None:
-             existing = self.repo.get_global_context_by_name(req.name)
-             if existing and existing.id != context_id:
-                  raise HTTPException(status_code=409, detail=f"Context with name '{req.name}' already exists.")
-
+            # Fetch the context first to get its org_id for scoped uniqueness check
+            ctx = self.repo.get_global_context_by_id(context_id)
+            if not ctx:
+                raise HTTPException(status_code=404, detail="Context not found.")
+            existing = self.repo.get_global_context_by_name(req.name, org_id=ctx.org_id)
+            if existing and existing.id != context_id:
+                raise HTTPException(status_code=409, detail=f"Context with name '{req.name}' already exists.")
         ctx = self.repo.update_global_context(context_id, name=req.name, content=req.content)
         if not ctx:
-             raise HTTPException(status_code=404, detail="Context not found.")
+            raise HTTPException(status_code=404, detail="Context not found.")
         return ctx
 
     def delete_global_context(self, context_id: uuid.UUID):
@@ -36,8 +38,8 @@ class ContextService:
         if not success:
             raise HTTPException(status_code=404, detail="Context not found.")
 
-    def list_global_contexts(self) -> List[GlobalContext]:
-        return self.repo.list_global_contexts()
+    def list_global_contexts(self, org_id: str | None = None) -> List[GlobalContext]:
+        return self.repo.list_global_contexts(org_id)
 
     def get_global_context_by_id(self, context_id: uuid.UUID) -> GlobalContext:
         ctx = self.repo.get_global_context_by_id(context_id)
@@ -45,8 +47,8 @@ class ContextService:
             raise HTTPException(status_code=404, detail="Context not found.")
         return ctx
 
-    def get_global_context_by_name(self, name: str) -> GlobalContext:
-        ctx = self.repo.get_global_context_by_name(name)
+    def get_global_context_by_name(self, name: str, org_id: str | None = None) -> GlobalContext:
+        ctx = self.repo.get_global_context_by_name(name, org_id)
         if not ctx:
             raise HTTPException(status_code=404, detail="Context not found.")
         return ctx

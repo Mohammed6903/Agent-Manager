@@ -1,10 +1,10 @@
 import asyncio
 import json
 import uuid
-from typing import List
+from typing import List, Optional
 
 from celery.contrib.abortable import AbortableAsyncResult
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -30,20 +30,21 @@ def get_context_service(db: Session = Depends(get_db)) -> ContextService:
 
 # -- Global CRUD --
 
+
 @router.post("", response_model=GlobalContextResponse)
 def create_global_context(
     req: GlobalContextCreate,
     svc: ContextService = Depends(get_context_service),
+    org_id: Optional[str] = Query(default=None),
 ):
-    """Create a new global context."""
-    return svc.create_global_context(req)
+    return svc.create_global_context(req, org_id=org_id)
 
 @router.get("", response_model=List[GlobalContextResponse])
 def list_global_contexts(
     svc: ContextService = Depends(get_context_service),
+    org_id: Optional[str] = Query(default=None),
 ):
-    """List all available global contexts."""
-    return svc.list_global_contexts()
+    return svc.list_global_contexts(org_id=org_id)
 
 @router.get("/{context_id}", response_model=GlobalContextResponse)
 def get_global_context(
