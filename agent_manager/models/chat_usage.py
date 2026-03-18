@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, String, Integer, DateTime, Float
+from sqlalchemy import Column, String, Integer, DateTime, Float
 from sqlalchemy.dialects.postgresql import UUID
 
 from ..database import Base
@@ -28,6 +28,4 @@ class ChatUsageLog(Base):
     output_cost = Column(Float, default=0.0, nullable=False)
     total_cost = Column(Float, default=0.0, nullable=False)
     
-    billed = Column(Boolean, default=False, nullable=False)
-
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
