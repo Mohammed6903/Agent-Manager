@@ -11,8 +11,8 @@ class ContextRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_global_context(self, name: str, content: str) -> GlobalContext:
-        ctx = GlobalContext(name=name, content=content)
+    def create_global_context(self, name: str, content: str, org_id: str | None = None) -> GlobalContext:
+        ctx = GlobalContext(name=name, content=content, org_id=org_id)
         self.db.add(ctx)
         self.db.commit()
         self.db.refresh(ctx)
@@ -45,13 +45,19 @@ class ContextRepository:
             select(GlobalContext).where(GlobalContext.id == context_id)
         ).scalar_one_or_none()
 
-    def get_global_context_by_name(self, name: str) -> Optional[GlobalContext]:
+    def get_global_context_by_name(self, name: str, org_id: str | None = None) -> Optional[GlobalContext]:
         return self.db.execute(
-            select(GlobalContext).where(GlobalContext.name == name)
+            select(GlobalContext).where(
+                GlobalContext.name == name,
+                GlobalContext.org_id == org_id,  # scoped lookup
+            )
         ).scalar_one_or_none()
 
-    def list_global_contexts(self) -> List[GlobalContext]:
-        return list(self.db.execute(select(GlobalContext)).scalars().all())
+    def list_global_contexts(self, org_id: str | None = None) -> List[GlobalContext]:
+        stmt = select(GlobalContext)
+        if org_id is not None:
+            stmt = stmt.where(GlobalContext.org_id == org_id)
+        return list(self.db.execute(stmt).scalars().all())
 
     def delete_agent_context_assignments(self, agent_id: str) -> None:
         """Remove all context assignments for an agent (does not delete the global contexts)."""
