@@ -19,6 +19,35 @@ from ..config import settings
 from ..models.chat_usage import ChatUsageLog
 from ..models.cron import CronOwnership, CronPipelineRun
 
+# ── Model pricing (per token in USD) ─────────────────────────────────────────
+# Fallback pricing used when session metadata has token counts but no cost data.
+# Format: { model_prefix: (input_price_per_token, output_price_per_token) }
+MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "gpt-4o":       (2.50 / 1_000_000, 10.00 / 1_000_000),
+    "gpt-4o-mini":  (0.15 / 1_000_000, 0.60 / 1_000_000),
+    "gpt-4.1":      (2.00 / 1_000_000, 8.00 / 1_000_000),
+    "gpt-4.1-mini": (0.40 / 1_000_000, 1.60 / 1_000_000),
+    "gpt-4.1-nano": (0.10 / 1_000_000, 0.40 / 1_000_000),
+    "gpt-5.1":      (2.00 / 1_000_000, 8.00 / 1_000_000),  # estimated, same as 4.1
+    "o3":           (2.00 / 1_000_000, 8.00 / 1_000_000),
+    "o3-mini":      (1.10 / 1_000_000, 4.40 / 1_000_000),
+    "o4-mini":      (1.10 / 1_000_000, 4.40 / 1_000_000),
+}
+_DEFAULT_PRICING = (2.00 / 1_000_000, 8.00 / 1_000_000)  # safe fallback
+
+
+def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Estimate cost in USD from token counts using MODEL_PRICING."""
+    # Match longest prefix first
+    pricing = _DEFAULT_PRICING
+    for prefix, p in MODEL_PRICING.items():
+        if model.startswith(prefix):
+            pricing = p
+            break
+    input_cost = input_tokens * pricing[0]
+    output_cost = output_tokens * pricing[1]
+    return input_cost + output_cost
+
 logger = logging.getLogger("agent_manager.services.usage_service")
 
 
@@ -161,11 +190,13 @@ class UsageService:
         
         target_session_id: str | None = None
         target_session_file: Path | None = None
+        target_session_meta: dict | None = None
         try:
             with open(sessions_file, "rb") as file_obj:
                 for key, meta in ijson.kvitems(file_obj, ""):
                     if key == session_key and isinstance(meta, dict):
                         target_session_id = str(meta.get("sessionId") or "")
+                        target_session_meta = meta
                         session_file = meta.get("sessionFile")
                         if session_file:
                             target_session_file = Path(session_file)
@@ -181,33 +212,95 @@ class UsageService:
             logger.error("Error reading sessions.json for agent %s: %s", agent_id, exc)
             return
 
-        if not target_session_file:
-            return
+        # Fallback: if sessionFile not in metadata, try default JSONL path
+        if not target_session_file and target_session_id:
+            default_jsonl = self.state_dir / "agents" / agent_id / "sessions" / f"{target_session_id}.jsonl"
+            if default_jsonl.exists():
+                target_session_file = default_jsonl
+                logger.info("Found JSONL at default path: %s", default_jsonl)
 
-        logger.info(
-            "Looking for jsonl file: %s (exists: %s)",
-            target_session_file,
-            target_session_file.exists(),
-        )
-        if not target_session_file.exists():
-            logger.warning("JSONL file not found for session %s", target_session_id)
-            return
-            
-        try:
-            records = self._parse_jsonl_session(
-                target_session_file, str(target_session_id or ""), agent_id, user_id
+        if target_session_file:
+            logger.info(
+                "Looking for jsonl file: %s (exists: %s)",
+                target_session_file,
+                target_session_file.exists(),
             )
-            logger.info("Parsed %d records for session %s", len(records) if records else 0, target_session_id)
-            if records:
-                self._upsert_turn_batch(records)
-                logger.info("Upserted %d records for session %s", len(records), target_session_id)
-        except Exception as exc:
-            logger.error(
-                "Error processing single session '%s' for agent '%s': %s",
-                target_session_id,
-                agent_id,
-                exc,
+            if not target_session_file.exists():
+                logger.warning("JSONL file not found for session %s", target_session_id)
+                return
+
+            try:
+                records = self._parse_jsonl_session(
+                    target_session_file, str(target_session_id or ""), agent_id, user_id
+                )
+                logger.info("Parsed %d records for session %s", len(records) if records else 0, target_session_id)
+                if records:
+                    self._upsert_turn_batch(records)
+                    logger.info("Upserted %d records for session %s", len(records), target_session_id)
+            except Exception as exc:
+                logger.error(
+                    "Error processing single session '%s' for agent '%s': %s",
+                    target_session_id,
+                    agent_id,
+                    exc,
+                )
+        elif target_session_meta:
+            # No JSONL file — estimate cost from session metadata token counts.
+            # Metadata has cumulative totals, so compute delta vs what's already in DB.
+            input_tokens = int(target_session_meta.get("inputTokens") or 0)
+            output_tokens = int(target_session_meta.get("outputTokens") or 0)
+            total_tokens = int(target_session_meta.get("totalTokens") or 0)
+            model = str(target_session_meta.get("model") or "unknown")
+            sid = str(target_session_id or session_key)
+
+            if total_tokens <= 0:
+                logger.info("No tokens found in session metadata for %s", sid)
+                return
+
+            # Sum tokens already recorded for this session to get the delta
+            already = self.db.query(
+                func.coalesce(func.sum(ChatUsageLog.prompt_tokens), 0),
+                func.coalesce(func.sum(ChatUsageLog.completion_tokens), 0),
+            ).filter(
+                ChatUsageLog.session_id == sid,
+                ChatUsageLog.user_id == user_id,
+            ).one()
+            prev_input, prev_output = int(already[0]), int(already[1])
+
+            delta_input = max(0, input_tokens - prev_input)
+            delta_output = max(0, output_tokens - prev_output)
+            delta_total = delta_input + delta_output
+
+            if delta_total <= 0:
+                logger.info("No new tokens to sync for session %s (cumulative in=%d, out=%d, prev in=%d, out=%d)",
+                            sid, input_tokens, output_tokens, prev_input, prev_output)
+                return
+
+            estimated_cost = _estimate_cost(model, delta_input, delta_output)
+            logger.info(
+                "Estimating cost from metadata delta: model=%s, delta_in=%d, delta_out=%d, cost=$%.6f",
+                model, delta_input, delta_output, estimated_cost,
             )
+
+            record = {
+                "id": uuid.uuid4(),
+                "message_id": f"meta-{sid}-{total_tokens}",
+                "user_id": user_id,
+                "session_id": sid,
+                "agent_id": agent_id,
+                "model": model,
+                "prompt_tokens": delta_input,
+                "completion_tokens": delta_output,
+                "total_tokens": delta_total,
+                "input_cost": _estimate_cost(model, delta_input, 0) * settings.COST_MULTIPLIER,
+                "output_cost": _estimate_cost(model, 0, delta_output) * settings.COST_MULTIPLIER,
+                "total_cost": estimated_cost * settings.COST_MULTIPLIER,
+                "created_at": datetime.now(timezone.utc),
+            }
+            self._upsert_turn_batch([record])
+            logger.info("Upserted metadata-based record for session %s (cost=$%.6f)", sid, estimated_cost * settings.COST_MULTIPLIER)
+        else:
+            logger.info("No session file or metadata for session %s", target_session_id)
 
     def _get_org_agent_ids(self, org_id: str) -> set[str] | None:
         """
