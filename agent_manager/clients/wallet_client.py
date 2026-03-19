@@ -73,6 +73,11 @@ class WalletClient:
                 headers=self._headers,
             )
 
+            logger.info(
+                "Deducting %d cents from user %s's wallet for: %s",
+                amount_cents,
+            )
+
             if resp.status_code == 200:
                 logger.info(
                     f"Successfully deducted {amount_cents} cents from user {user_id}'s wallet."
