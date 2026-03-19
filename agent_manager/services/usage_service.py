@@ -128,15 +128,21 @@ class UsageService:
                 if not isinstance(meta, dict):
                     continue
 
-                # Prefer the explicit sessionFile path written by OpenClaw.
-                session_file_path = meta.get("sessionFile")
-                if not session_file_path:
-                    total_skipped += 1
-                    continue
-
                 session_id = meta.get("sessionId")
                 updated_at_ms = self._parse_updated_at_ms(meta.get("updatedAt"))
                 if not session_id or updated_at_ms is None:
+                    total_skipped += 1
+                    continue
+
+                # Prefer the explicit sessionFile path written by OpenClaw.
+                # Fallback: derive from sessionId if sessionFile is absent.
+                session_file_path = meta.get("sessionFile")
+                if not session_file_path and session_id:
+                    default_path = sessions_file.parent / f"{session_id}.jsonl"
+                    if default_path.exists():
+                        session_file_path = str(default_path)
+
+                if not session_file_path:
                     total_skipped += 1
                     continue
 

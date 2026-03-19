@@ -35,7 +35,6 @@ async def _sync_usage_after_delay(agent_id: str, session_key: str, user_id: str)
             usage_service = UsageService(gateway=None, db=db)  # type: ignore
             await usage_service.sync_single_session(agent_id, session_key, user_id)
             # Deduct cost from wallet after syncing
-            logger.info("Attempting to deduct wallet credits for session %s", session_key)
             await usage_service.deduct_session_cost(user_id, session_key)
     except Exception as exc:
         logger.error("Failed to background sync usage for %s: %s", session_key, exc)
