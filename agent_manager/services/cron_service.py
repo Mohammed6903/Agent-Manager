@@ -82,7 +82,7 @@ class CronService:
         "global_integrations": [],
         "global_context_sources": [],
         "pipeline_status": "success" | "partial" | "error",
-        "summary": "<A concise human-readable message for the user summarising any problems, warnings, or noteworthy outcomes from this run. If everything succeeded with no issues, set to null.>"
+        "summary": "<REQUIRED. A concise human-readable summary of what was done and any outcomes. This is shown directly to the user. Never set to null.>"
         }}
         ```
 

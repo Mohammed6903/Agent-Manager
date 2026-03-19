@@ -561,9 +561,12 @@ async def cron_webhook_receiver(
         from ..repositories.cron_ownership_repository import CronOwnershipRepository as OwnerRepo
         owner_repo = OwnerRepo(db)
         owner = owner_repo.get(job_id)
-        if owner and run_summary:
+        if not owner:
+            logger.warning("No cron ownership found for job %s — skipping chat delivery", job_id)
+        elif owner:
             clean_summary = re.sub(r"```pipeline_result\n.*?\n```", "", summary, flags=re.DOTALL).strip()
-            chat_msg = f"---\n🤖 **Scheduled Task Report**\n\n{clean_summary or run_summary}"
+            chat_msg = f"{clean_summary or run_summary or 'Task completed.'}"
+            logger.info("Sending cron summary to chat for job %s (user=%s, agent=%s)", job_id, owner["user_id"], owner["agent_id"])
             asyncio.create_task(
                 send_cron_summary_to_chat(
                     user_id=owner["user_id"],
@@ -572,7 +575,6 @@ async def cron_webhook_receiver(
                     summary=chat_msg,
                 )
             )
-            logger.info("Sent cron summary to chat.")
 
     except Exception as e:
         logger.error(f"Failed to process cron webhook: {e}")
