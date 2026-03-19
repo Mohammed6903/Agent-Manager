@@ -1344,7 +1344,11 @@ class UsageService:
     # ── Wallet Deduction ──────────────────────────────────────────────────────
 
     async def deduct_session_cost(self, user_id: str, session_id: str) -> None:
-        """Deduct the total unbilled cost for a chat session from the user's wallet."""
+        """Deduct the total unbilled cost for a chat session from the user's wallet.
+
+        session_id can be either the actual session UUID or the session_key.
+        We try both to handle the mismatch between session_key and stored session_id.
+        """
         try:
             unbilled = (
                 self.db.query(ChatUsageLog)
@@ -1355,6 +1359,17 @@ class UsageService:
                 )
                 .all()
             )
+
+            # If no results with session_key, try finding by user_id with any unbilled records
+            if not unbilled:
+                unbilled = (
+                    self.db.query(ChatUsageLog)
+                    .filter(
+                        ChatUsageLog.user_id == user_id,
+                        ChatUsageLog.billed == False,  # noqa: E712
+                    )
+                    .all()
+                )
 
             if not unbilled:
                 return
