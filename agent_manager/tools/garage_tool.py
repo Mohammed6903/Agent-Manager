@@ -45,7 +45,7 @@ async def send_cron_summary_to_chat(
     summary: str,
 ) -> dict:
     """Send a cron-run summary to the Garage chat via POST /api/chat/message."""
-    url = f"{settings.GARAGE_CHAT_INTERNAL_URL.rstrip('/')}/api/chat/message"
+    url = f"{settings.GARAGE_CHAT_INTERNAL_URL.rstrip('/')}/internal/chat/message"
     body = {
         "userId": user_id,
         "sessionId": session_id,
