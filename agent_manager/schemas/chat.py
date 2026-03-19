@@ -61,6 +61,7 @@ class ChatRequest(BaseModel):
     # Group chat fields — set room_id for @mention in a group room
     room_id: Optional[str] = None
     recent_context: Optional[str] = None
+    bypass_payment: bool = False
 
 
 class ChatResponse(BaseModel):
