@@ -75,7 +75,7 @@ class WalletClient:
 
             logger.info(
                 "Deducting %d cents from user %s's wallet for: %s",
-                amount_cents,
+                amount_cents, user_id, description,
             )
 
             if resp.status_code == 200:
