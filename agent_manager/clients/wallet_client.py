@@ -73,6 +73,11 @@ class WalletClient:
                 headers=self._headers,
             )
 
+            if resp.status_code == 200:
+                logger.info(
+                    f"Successfully deducted {amount_cents} cents from user {user_id}'s wallet."
+                )
+
             if resp.status_code == 402:
                 data = resp.json()
                 error_type = data.get("error", "")
