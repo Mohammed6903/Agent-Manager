@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -84,7 +85,27 @@ class ThirdPartyContextService:
         active_ctx = ctx_repo.get_active_by_agent_and_integration(agent_id, integration_name)
         if active_ctx and active_ctx.celery_task_id:
             state = celery_app.AsyncResult(active_ctx.celery_task_id).state
-            if state not in ("SUCCESS", "FAILURE", "REVOKED", "TASK_ERROR", "TASK_CANCELLED"):
+            terminal = ("SUCCESS", "FAILURE", "REVOKED", "TASK_ERROR", "TASK_CANCELLED")
+
+            # Celery returns "PENDING" for unknown/lost tasks — treat a
+            # PENDING task older than 10 minutes as dead so we don't deadlock.
+            _STALE_THRESHOLD = timedelta(minutes=10)
+            is_stale = (
+                state == "PENDING"
+                and active_ctx.updated_at is not None
+                and (datetime.now(timezone.utc) - active_ctx.updated_at.replace(tzinfo=timezone.utc))
+                > _STALE_THRESHOLD
+            )
+
+            if is_stale:
+                logger.warning(
+                    "Marking stale %s context %s (task %s) as failed — "
+                    "Celery state PENDING for >%s.",
+                    integration_name, active_ctx.id,
+                    active_ctx.celery_task_id, _STALE_THRESHOLD,
+                )
+                ctx_repo.update_status(active_ctx.id, "failed")
+            elif state not in terminal:
                 return {
                     "task_id": active_ctx.celery_task_id,
                     "context_id": str(active_ctx.id),
