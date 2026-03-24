@@ -141,6 +141,7 @@ class ThirdPartyContextRepository:
                 ThirdPartyContext.status.in_(active_statuses),
             )
             .order_by(ThirdPartyContext.created_at.desc())
+            .limit(1)
         ).scalar_one_or_none()
 
     def delete(self, context_id: uuid.UUID) -> bool:
