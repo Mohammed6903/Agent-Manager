@@ -57,6 +57,12 @@ async def _check_wallet_balance(user_id: str) -> None:
         wallet = WalletClient()
         result = await wallet.check_balance(user_id)
         data = result.get("data", {})
+
+        # If no wallet exists for this user, they're from another platform — skip check
+        if data.get("exists") is False:
+            logger.info("No wallet for user %s — skipping billing (non-networkchain user)", user_id)
+            return
+
         balance_cents = data.get("balanceCents", 0)
         debt_cents = data.get("debtCents", 0)
 

@@ -1395,6 +1395,16 @@ class UsageService:
             )
 
             wallet = WalletClient()
+
+            # Check if user has a wallet (non-networkchain users won't)
+            try:
+                balance_result = await wallet.check_balance(user_id)
+                if balance_result.get("data", {}).get("exists") is False:
+                    logger.info("No wallet for user %s — skipping deduction", user_id)
+                    return
+            except Exception:
+                pass  # If check fails, try deduction anyway
+
             await wallet.deduct_credits(user_id, amount_cents, description)
 
             # Mark as billed
