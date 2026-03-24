@@ -172,17 +172,24 @@ class CronService:
         jobs = await self.gateway.cron_list()
         ownership_map = self.ownership.list_all()
 
-        # Resolve org → agent_ids once, before the loop
-        org_agent_ids: set[str] | None = None
+        # Resolve org/user → agent_ids once, before the loop
+        scoped_agent_ids: set[str] | None = None
         if agent_id:
-            pass  # agent_id is specific enough, org_id ignored
+            pass  # agent_id is specific enough, org_id/user_id ignored
         elif org_id and db:
             from ..repositories.agent_registry_repository import AgentRegistryRepository
             registry = AgentRegistryRepository(db)
             org_agents = registry.list(org_id=org_id)
             if not org_agents:
                 return []
-            org_agent_ids = {a.agent_id for a in org_agents}
+            scoped_agent_ids = {a.agent_id for a in org_agents}
+        elif user_id and db:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            registry = AgentRegistryRepository(db)
+            user_agents = registry.list(user_id=user_id)
+            if not user_agents:
+                return []
+            scoped_agent_ids = {a.agent_id for a in user_agents}
 
         cron_ids = [job.get("id") or job.get("jobId") for job in jobs if (job.get("id") or job.get("jobId"))]
         stats_map = self.pipelines.aggregate_stats(cron_ids)
@@ -202,8 +209,8 @@ class CronService:
             if agent_id and job.get("agentId") != agent_id:
                 continue
 
-            # org_id filter — check resolved agent set
-            if org_agent_ids is not None and job.get("agentId") not in org_agent_ids:
+            # org_id / user_id filter — check resolved agent set
+            if scoped_agent_ids is not None and job.get("agentId") not in scoped_agent_ids:
                 continue
 
             if user_id and owner["user_id"] != user_id:

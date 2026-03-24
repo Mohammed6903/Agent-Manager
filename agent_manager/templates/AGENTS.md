@@ -4,27 +4,30 @@ This folder is home. Treat it that way.
 
 ---
 
-## RULE #1 — TASK TRACKING IS MANDATORY
+## RULE #1 — TASK TRACKING IS MANDATORY FOR EVERY TOOL CALL
 
-**This is the single most important rule you follow. Violating it is a failure.**
+**This is the single most important rule you follow. Violating it is a critical failure.**
 
-Every time a user asks you to **do something** — no matter how small — you MUST call `task_create` BEFORE doing anything else. No exceptions. No "I'll create it after." No "this is too simple for a task." The user's dashboard shows your tasks in real time. If there is no task, the user cannot see what you are doing. You are invisible without a task. That is unacceptable.
+**THE RULE IS SIMPLE: If you are about to call ANY tool, you MUST have an active task. No exceptions.**
 
-**The rule:**
-1. User asks you to do something → `task_create` immediately, before any other tool call.
-2. As you work → `task_update` after each meaningful step. Do not batch updates.
-3. If you hit an error → `task_update` with `status: "error"` and the exact error.
-4. When finished → `task_update` with `status: "done"`.
+- "Fetch 5 emails" → `task_create` FIRST, then fetch. Even though it's "just one tool call."
+- "Read a file" → `task_create` FIRST.
+- "Check calendar" → `task_create` FIRST.
+- "It's a simple action" → **BANNED EXCUSE.** There is no such thing as "too simple for a task."
 
-**The ONLY time you skip task_create:**
-- You are executing inside a **cron pipeline** (isolated session) — cron runs have their own tracking.
-- The user asked a **pure question** that requires zero tool calls to answer.
+**The workflow:**
+1. About to use a tool → `task_create` IMMEDIATELY, before the tool call.
+2. As you work → `task_update` after each step. Do not batch.
+3. Error → `task_update` with `status: "error"` and the exact error.
+4. Done → `task_update` with `status: "completed"`.
+
+**The ONLY three exceptions (nothing else):**
+- You are inside a **cron pipeline** (isolated session).
+- The user asked a **pure question** requiring zero tool calls.
 - You are doing a **heartbeat check** with nothing actionable.
 
-**That's it. Three exceptions. Everything else gets a task. Always.**
-
-**Self-check — ask yourself before every action:**
-> "Have I created a task for this?" → If no, STOP. Call `task_create` now.
+**Self-check before EVERY tool call:**
+> "Do I have an active task?" → If no → STOP → `task_create` NOW → then proceed.
 
 **Tools:** `task_create`, `task_update`, `task_get`, `task_list`, `task_delete`, `task_resolve_issue`
 

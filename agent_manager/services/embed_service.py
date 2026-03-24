@@ -1,8 +1,14 @@
-"""Embedding service — supports OpenAI (text-embedding-3-small) and Gemini (gemini-embedding-001)."""
+"""Embedding service — supports OpenAI (text-embedding-3-small) and Gemini (gemini-embedding-001).
+
+Uses a Redis-based global TPM counter so multiple Celery workers share one
+budget instead of each tracking independently.
+"""
 from __future__ import annotations
 
 import logging
 import time
+
+import redis
 
 from ..config import settings
 
@@ -10,25 +16,75 @@ logger = logging.getLogger(__name__)
 
 # ── Shared constants ─────────────────────────────────────────────────────────
 
-_TOKENS_PER_WORD = 1.5  # was 10 — English prose averages ~1.3 tokens/word; 1.5 adds safety headroom
+_TOKENS_PER_WORD = 1.5
 _MAX_429_RETRIES = 5
 
 # ── OpenAI: text-embedding-3-small ───────────────────────────────────────────
 
-# Stay well under the 1M TPM hard limit; leave headroom for concurrent workers
-_OPENAI_TPM_BUDGET = 800_000
-# OpenAI allows up to 2048 inputs per call — use a conservative cap
+# Global budget across ALL workers — 75% of OpenAI's 1M TPM hard limit
+_OPENAI_TPM_BUDGET = 750_000
 _OPENAI_MAX_INPUTS = 500
 
 # ── Gemini: gemini-embedding-001 ─────────────────────────────────────────────
 
-# Gemini's batch embed endpoint accepts up to 100 inputs per request
 _GEMINI_MAX_INPUTS = 100
 
-# ── Module-level state ───────────────────────────────────────────────────────
+# ── Redis-based global TPM tracking ──────────────────────────────────────────
 
-# OpenAI sliding-window — persists for the lifetime of the worker process so
-# token usage accumulates correctly across successive embed_texts() calls.
+_REDIS_TPM_KEY = "openclaw:embed:tpm_tokens"
+_REDIS_TPM_WINDOW_SECS = 60
+_redis_client: redis.Redis | None = None
+
+
+def _get_redis() -> redis.Redis:
+    """Lazy Redis client for TPM tracking."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _redis_client
+
+
+def _global_tpm_add(tokens: int) -> int:
+    """Atomically add tokens to the global counter. Returns new total."""
+    r = _get_redis()
+    pipe = r.pipeline()
+    pipe.incrby(_REDIS_TPM_KEY, tokens)
+    pipe.expire(_REDIS_TPM_KEY, _REDIS_TPM_WINDOW_SECS)
+    result = pipe.execute()
+    return result[0]
+
+
+def _global_tpm_get() -> int:
+    """Read current global token count."""
+    r = _get_redis()
+    val = r.get(_REDIS_TPM_KEY)
+    return int(val) if val else 0
+
+
+def _wait_for_global_budget(needed_tokens: int) -> None:
+    """Block until the global TPM budget has room for needed_tokens."""
+    max_wait = 120  # seconds — don't block forever
+    waited = 0.0
+    while waited < max_wait:
+        current = _global_tpm_get()
+        if current + needed_tokens <= _OPENAI_TPM_BUDGET:
+            return
+        # Check TTL to know how long until the counter resets
+        r = _get_redis()
+        ttl = r.ttl(_REDIS_TPM_KEY)
+        sleep_for = min(max(ttl, 2), 30)  # sleep 2-30s
+        logger.info(
+            "Global TPM budget: %d/%d used, need %d more. Waiting %ds (TTL=%d).",
+            current, _OPENAI_TPM_BUDGET, needed_tokens, sleep_for, ttl,
+        )
+        time.sleep(sleep_for)
+        waited += sleep_for
+
+    logger.warning("Global TPM wait exceeded %ds — proceeding anyway.", max_wait)
+
+
+# ── Module-level state (fallback for non-Redis environments) ─────────────────
+
 _window_start: float = 0.0
 _window_tokens: int = 0
 
@@ -96,6 +152,15 @@ def _sleep_until_window_resets() -> None:
     _window_tokens = 0
 
 
+def _check_global_budget(batch_tokens: int) -> None:
+    """Pre-check global Redis TPM budget before making an API call.
+    Falls back to local-only tracking if Redis is unavailable."""
+    try:
+        _wait_for_global_budget(batch_tokens)
+    except Exception as exc:
+        logger.debug("Redis TPM check failed (using local-only): %s", exc)
+
+
 def _embed_openai_batch(texts: list[str]) -> list[list[float]]:
     """Single OpenAI embeddings API call with exponential backoff on 429."""
     from openai import RateLimitError  # noqa: PLC0415
@@ -133,11 +198,19 @@ def _embed_texts_openai(texts: list[str]) -> list[list[float]]:
 
     def _flush(b: list[str], indices: list[int], b_tokens: int) -> None:
         global _window_tokens
+        # Global pre-check (Redis) — waits if cross-worker budget is full
+        _check_global_budget(b_tokens)
+        # Local per-worker window check
         _maybe_reset_window()
         if _window_tokens + b_tokens > _OPENAI_TPM_BUDGET:
             _sleep_until_window_resets()
         result = _embed_openai_batch(b)
         _window_tokens += b_tokens
+        # Record in global counter
+        try:
+            _global_tpm_add(b_tokens)
+        except Exception:
+            pass  # Redis failure is non-fatal
         for idx, vec in zip(indices, result):
             vectors[idx] = vec
 

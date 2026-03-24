@@ -46,6 +46,7 @@ class IntegrationSyncState(Base):
     sync_cursor = Column(String, nullable=True)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     total_fetched = Column(Integer, default=0)
+    version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

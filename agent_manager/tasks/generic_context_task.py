@@ -209,7 +209,8 @@ def ingest_and_pipeline(
             )
             return {"stage": "cancelled", "message": "Ingestion cancelled.", "task_id": task_id, **counters}
 
-        sync_repo.save_cursor(agent_id, new_cursor, fetched_count=counters["fetched"])
+        # NOTE: cursor is saved AFTER pipeline completes (not here) to prevent
+        # data loss if pipeline crashes — see end of Phase 2.
         ingest_result = dict(counters)
 
         # ── Phase 2: Pipeline ─────────────────────────────────────────────
@@ -257,13 +258,22 @@ def ingest_and_pipeline(
                     "Pipeline batch failed for agent %s (batch starting at %d), retrying individually...",
                     agent_id, i,
                 )
+                from ..repositories.failed_ingestion_repository import FailedIngestionRepository
+                dlq = FailedIngestionRepository(db)
                 for raw in raws:
                     try:
                         provider.pipeline_single(raw, agent_id, account_email)
                         processed += 1
-                    except Exception:
+                    except Exception as item_exc:
                         failed += 1
                         logger.exception("Single item failed: %s", raw.get("id"))
+                        dlq.add(
+                            agent_id=agent_id,
+                            integration_name=integration_name,
+                            message_id=str(raw.get("id", "")),
+                            phase="pipeline",
+                            error=str(item_exc),
+                        )
 
             percentage = int((processed / total_pipeline * 100) if total_pipeline else 0)
             _update_progress(
@@ -277,6 +287,15 @@ def ingest_and_pipeline(
                     "failed": failed,
                     "task_id": task_id,
                 },
+            )
+
+        # Save cursor only AFTER both ingest AND pipeline succeed.
+        # This ensures failed pipeline runs will re-process those emails on next sync.
+        if new_cursor:
+            sync_repo.save_cursor(agent_id, new_cursor, fetched_count=counters["fetched"])
+            logger.info(
+                "Cursor saved for agent %s after successful pipeline (fetched=%d, processed=%d, failed=%d)",
+                agent_id, counters["fetched"], processed, failed,
             )
 
         ctx_repo.update_status(ctx_id, "complete")

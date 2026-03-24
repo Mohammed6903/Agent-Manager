@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # ── Cost Configuration ──────────────────────────────────────────────────────
     COST_MULTIPLIER: float = 2.0
 
-    # ── Wallet (NetworkChain) ─────────────────────────────────────────────────
+    # ── Wallet ─────────────────────────────────────────────────────────────────
     WALLET_SERVICE_URL: str = "http://localhost:4001"
     WALLET_INTERNAL_API_KEY: str = ""
     MIN_BALANCE_CENTS: int = 10  # Minimum balance required to use agents ($0.10)
