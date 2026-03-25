@@ -62,7 +62,6 @@ class ChatRequest(BaseModel):
     # Group chat fields — set room_id for @mention in a group room
     room_id: Optional[str] = None
     recent_context: Optional[str] = None
-    bypass_payment: bool = False  # Deprecated: use settings.BYPASS_PAYMENT via PRODUCT_TYPE config instead
 
 
 class ChatResponse(BaseModel):
