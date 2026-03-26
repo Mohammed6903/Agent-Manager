@@ -518,13 +518,21 @@ class AgentService:
         if self.db:
             from .subscription_service import SubscriptionService
             sub_svc = SubscriptionService(self.db)
-            await sub_svc.cancel_subscription(agent_id)
 
-            # Disable cron jobs so they don't run while soft-deleted
-            await sub_svc.lock_agent(agent_id)
-            # Override status to deleted (lock_agent sets it to locked)
+            # Disable cron jobs
+            from ..models.cron import CronOwnership
+            cron_ids = [c.cron_id for c in self.db.query(CronOwnership).filter(CronOwnership.agent_id == agent_id).all()]
+            for cron_id in cron_ids:
+                try:
+                    await self.gateway.cron_remove(cron_id)
+                except Exception as exc:
+                    logger.warning("cron_remove(%s) failed during soft-delete: %s", cron_id, exc)
+
+            # Mark subscription as deleted
             if self._sub_repo:
-                self._sub_repo.soft_delete(agent_id)
+                sub = self._sub_repo.get_by_agent_id(agent_id)
+                if sub:
+                    self._sub_repo.soft_delete(agent_id)
 
         # Remove from gateway so agent stops serving requests
         try:

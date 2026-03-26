@@ -299,6 +299,6 @@ class SubscriptionService:
         """Return the subscription for an agent, or None."""
         return self.sub_repo.get_by_agent_id(agent_id)
 
-    def list_org_subscriptions(self, org_id: str) -> List[AgentSubscription]:
-        """Return all non-deleted subscriptions for an org/workspace."""
-        return self.sub_repo.list_by_org(org_id)
+    def list_org_subscriptions(self, org_id: str, include_deleted: bool = False) -> List[AgentSubscription]:
+        """Return subscriptions for an org/workspace."""
+        return self.sub_repo.list_by_org(org_id, include_deleted=include_deleted)

@@ -119,9 +119,10 @@ async def get_monthly_usage_last_12_months(
 async def list_subscriptions(
     org_id: Annotated[str, Query(...)],
     sub_service: Annotated[SubscriptionService, Depends(get_subscription_service)],
+    include_deleted: Annotated[bool, Query()] = False,
 ):
-    """List all active/locked subscriptions for a workspace."""
-    subs = sub_service.list_org_subscriptions(org_id)
+    """List subscriptions for a workspace. Includes deleted if requested."""
+    subs = sub_service.list_org_subscriptions(org_id, include_deleted=include_deleted)
     return [
         {
             "agent_id": s.agent_id,
