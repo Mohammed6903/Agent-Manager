@@ -24,6 +24,8 @@ celery_app = Celery(
         "agent_manager.tasks.sheets.sync_task",
         # Dead Letter Queue retry
         "agent_manager.tasks.dlq_retry_task",
+        # Subscription billing
+        "agent_manager.tasks.subscription_billing_task",
     ],
 )
 
@@ -61,6 +63,7 @@ celery_app.conf.update(
         "agent_manager.tasks.docs.sync_task.daily_docs_sync":           {"queue": "beat"},
         "agent_manager.tasks.sheets.sync_task.daily_sheets_sync":       {"queue": "beat"},
         "agent_manager.tasks.dlq_retry_task.retry_failed_ingestions": {"queue": "beat"},
+        "agent_manager.tasks.subscription_billing_task.process_subscription_renewals": {"queue": "beat"},
     },
 
     # Beat configuration
@@ -88,6 +91,11 @@ celery_app.conf.update(
         "hourly-dlq-retry": {
             "task": "agent_manager.tasks.dlq_retry_task.retry_failed_ingestions",
             "schedule": crontab(minute=15),  # Every hour at :15
+            "options": {"queue": "beat"},
+        },
+        "daily-subscription-renewals": {
+            "task": "agent_manager.tasks.subscription_billing_task.process_subscription_renewals",
+            "schedule": crontab(hour=4, minute=0),  # 4 AM UTC daily
             "options": {"queue": "beat"},
         },
     },

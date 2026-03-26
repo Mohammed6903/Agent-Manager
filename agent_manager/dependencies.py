@@ -16,6 +16,7 @@ from .services.cron_service import CronService
 from .services.task_service import TaskService
 from .services.analytics_service import AnalyticsService
 from .services.usage_service import UsageService
+from .services.subscription_service import SubscriptionService
 
 # Singletons for storage and gateway client (can be swapped based on config)
 _storage = FileSystemStorage()
@@ -59,6 +60,11 @@ def get_usage_service(
     db: Session = Depends(get_db),
 ) -> UsageService:
     return UsageService(gateway, db)
+
+def get_subscription_service(
+    db: Session = Depends(get_db),
+) -> SubscriptionService:
+    return SubscriptionService(db)
 
 def get_analytics_service(
     db: Session = Depends(get_db),

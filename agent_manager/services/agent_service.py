@@ -16,6 +16,7 @@ from ..schemas.chat import AgentResponse, CreateAgentRequest, UpdateAgentRequest
 from ..repositories.storage import StorageRepository
 from ..clients.gateway_client import GatewayClient
 from ..repositories.agent_registry_repository import AgentRegistryRepository
+from ..repositories.subscription_repository import SubscriptionRepository
 
 logger = logging.getLogger("agent_manager.services.agent_service")
 
@@ -33,6 +34,10 @@ class AgentService:
     @property
     def _registry(self) -> AgentRegistryRepository | None:
         return AgentRegistryRepository(self.db) if self.db else None
+
+    @property
+    def _sub_repo(self) -> SubscriptionRepository | None:
+        return SubscriptionRepository(self.db) if self.db else None
 
     def _workspace(self, agent_id: str) -> str:
         return str(Path(settings.OPENCLAW_STATE_DIR) / f"workspace-{agent_id}")
@@ -316,6 +321,25 @@ class AgentService:
                 user_id=req.user_id,
             )
 
+        # PHASE 6: Create subscription and deduct initial $24
+        if self.db and req.org_id and req.user_id:
+            from .subscription_service import SubscriptionService
+            sub_svc = SubscriptionService(self.db)
+            try:
+                await sub_svc.create_subscription(agent_id, req.org_id, req.user_id)
+            except Exception as exc:
+                # Rollback: remove registry entry, gateway agent, and filesystem
+                logger.error("Subscription creation failed for '%s', rolling back: %s", agent_id, exc)
+                if self._registry:
+                    self._registry.delete(agent_id)
+                try:
+                    await self.gateway.delete_agent(agent_id)
+                except Exception:
+                    pass
+                await self.storage.delete_dir(workspace)
+                await self.storage.delete_dir(str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id))
+                raise
+
         logger.info("Agent '%s' created successfully", agent_id)
         return AgentResponse(
             agent_id=agent_id,
@@ -330,8 +354,20 @@ class AgentService:
     async def list_agents(self, org_id: str | None = None, user_id: str | None = None) -> List[dict[str, Any]]:
         if self._registry:
             rows = self._registry.list(org_id=org_id, user_id=user_id)
-            return [
-                {
+
+            # Build set of agent_ids with deleted subscriptions to filter out
+            deleted_agent_ids: set[str] = set()
+            if self._sub_repo:
+                for r in rows:
+                    sub = self._sub_repo.get_by_agent_id(r.agent_id)
+                    if sub and sub.status == "deleted":
+                        deleted_agent_ids.add(r.agent_id)
+
+            result = []
+            for r in rows:
+                if r.agent_id in deleted_agent_ids:
+                    continue
+                entry: dict[str, Any] = {
                     "id": r.agent_id,
                     "name": r.name,
                     "workspace": r.workspace,
@@ -339,8 +375,13 @@ class AgentService:
                     "org_id": r.org_id,
                     "user_id": r.user_id,
                 }
-                for r in rows
-            ]
+                # Include subscription status so frontend can show locked state
+                if self._sub_repo:
+                    sub = self._sub_repo.get_by_agent_id(r.agent_id)
+                    if sub:
+                        entry["subscription_status"] = sub.status
+                result.append(entry)
+            return result
         # Fallback: no DB — hit gateway (org/user filtering not possible here)
         agents = await self.gateway.list_agents()
         return agents
@@ -351,7 +392,14 @@ class AgentService:
             row = self._registry.get(agent_id, org_id=org_id, user_id=user_id)
             if not row:
                 raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-            return {
+
+            # Check subscription status — deleted agents are invisible
+            if self._sub_repo:
+                sub = self._sub_repo.get_by_agent_id(agent_id)
+                if sub and sub.status == "deleted":
+                    raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+            result: dict[str, Any] = {
                 "id": row.agent_id,
                 "name": row.name,
                 "workspace": row.workspace,
@@ -359,6 +407,11 @@ class AgentService:
                 "org_id": row.org_id,
                 "user_id": row.user_id,
             }
+            if self._sub_repo:
+                sub = self._sub_repo.get_by_agent_id(agent_id)
+                if sub:
+                    result["subscription_status"] = sub.status
+            return result
         # Fallback: gateway scan
         agents = await self.gateway.list_agents()
         for a in agents:
@@ -370,6 +423,21 @@ class AgentService:
         self, agent_id: str, req: UpdateAgentRequest, org_id: str | None = None, user_id: str | None = None
     ) -> AgentResponse:
         agent = await self.get_agent(agent_id, org_id=org_id, user_id=user_id)
+
+        # Block updates for locked/deleted agents
+        if self._sub_repo:
+            sub = self._sub_repo.get_by_agent_id(agent_id)
+            if sub and sub.status == "locked":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "agent_locked",
+                        "message": "Agent is locked due to unpaid subscription. Please add credits to unlock.",
+                    },
+                )
+            if sub and sub.status == "deleted":
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
         workspace = self._workspace(agent_id)
 
         if not await self.storage.exists(workspace):
@@ -428,25 +496,25 @@ class AgentService:
                     detail=f"Agent '{agent_id}' not found for the given ownership scope",
                 )
 
-        # 1. Gateway removal
+        # Soft-delete via subscription (data preserved for future recovery)
+        if self.db:
+            from .subscription_service import SubscriptionService
+            sub_svc = SubscriptionService(self.db)
+            await sub_svc.cancel_subscription(agent_id)
+
+            # Disable cron jobs so they don't run while soft-deleted
+            await sub_svc.lock_agent(agent_id)
+            # Override status to deleted (lock_agent sets it to locked)
+            if self._sub_repo:
+                self._sub_repo.soft_delete(agent_id)
+
+        # Remove from gateway so agent stops serving requests
         try:
             await self.gateway.delete_agent(agent_id)
         except Exception as exc:
             logger.warning("Gateway delete_agent failed: %s", exc)
 
-        # 2. DB cleanup (existing + registry row)
-        if self.db:
-            await self._delete_agent_db_data(agent_id)
-            if self._registry:
-                self._registry.delete(agent_id)
-
-        # 3. Filesystem cleanup
-        workspace = self._workspace(agent_id)
-        agent_base = str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id)
-        await self.storage.delete_dir(workspace)
-        await self.storage.delete_dir(agent_base)
-
-        logger.info("Agent '%s' deleted (org=%s)", agent_id, org_id)
+        logger.info("Agent '%s' soft-deleted (org=%s)", agent_id, org_id)
         return {"status": "deleted", "agent_id": agent_id}
 
     async def _delete_agent_db_data(self, agent_id: str) -> None:

@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     GARAGE_WALLET_SERVICE_URL: str = "http://localhost:4000"
     GARAGE_WALLET_INTERNAL_API_KEY: str = ""
 
+    # ── Agent Subscriptions ──────────────────────────────────────────────────
+    AGENT_MONTHLY_COST_CENTS: int = 2400  # $24.00/month per agent
+    SUBSCRIPTION_DELETE_AFTER_DAYS: int = 7  # Soft-delete 7 days after locking
 
     # ── Twitter ─────────────────────────────────────────────────────────────────
     TWITTER_CLIENT_ID: str = ""

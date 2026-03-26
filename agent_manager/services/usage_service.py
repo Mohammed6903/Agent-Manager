@@ -1395,7 +1395,20 @@ class UsageService:
             )
 
             wallet = get_wallet_client(agent_id)
-            await wallet.deduct_credits(user_id, amount_cents, description)
+            result = await wallet.deduct_credits(user_id, amount_cents, description)
+
+            # Log wallet transaction
+            from ..repositories.wallet_transaction_repository import WalletTransactionRepository
+            deduct_data = result.get("data", result) if isinstance(result, dict) else {}
+            WalletTransactionRepository(self.db).create(
+                user_id=user_id,
+                agent_id=agent_id,
+                type="usage_deduction",
+                amount_cents=amount_cents,
+                description=description,
+                status="success",
+                balance_after_cents=deduct_data.get("balanceCents"),
+            )
 
             # Mark as billed
             for record in unbilled:
@@ -1452,7 +1465,21 @@ class UsageService:
 
             cron_agent_id = ownership.agent_id if ownership else ""
             wallet = get_wallet_client(cron_agent_id)
-            await wallet.deduct_credits(user_id, amount_cents, description)
+            result = await wallet.deduct_credits(user_id, amount_cents, description)
+
+            # Log wallet transaction
+            from ..repositories.wallet_transaction_repository import WalletTransactionRepository
+            deduct_data = result.get("data", result) if isinstance(result, dict) else {}
+            WalletTransactionRepository(self.db).create(
+                user_id=user_id,
+                agent_id=cron_agent_id or None,
+                type="usage_deduction",
+                amount_cents=amount_cents,
+                description=description,
+                status="success",
+                balance_after_cents=deduct_data.get("balanceCents"),
+                reference_id=run_id,
+            )
 
             run.billed = True
             self.db.commit()
@@ -1473,7 +1500,7 @@ class UsageService:
         """Look up agent display name from the registry, falling back to agent_id."""
         try:
             from ..repositories.agent_registry_repository import AgentRegistryRepository
-            agent = AgentRegistryRepository(self.db).get_by_agent_id(agent_id)
+            agent = AgentRegistryRepository(self.db).get(agent_id)
             if agent and agent.name:
                 return agent.name
         except Exception:

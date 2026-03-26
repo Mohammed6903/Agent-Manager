@@ -22,6 +22,7 @@ from ..services.context_injection_service import build_context_block
 from ..services.secret_service import SecretService
 from ..services.usage_service import UsageService
 from ..schemas.chat import ChatRequest, NewSessionResponse
+from ..repositories.subscription_repository import SubscriptionRepository
 
 logger = logging.getLogger("agent_manager.services.chat_service")
 
@@ -108,6 +109,26 @@ async def _check_wallet_balance(user_id: str, agent_id: str = "") -> None:
     except Exception as exc:
         # Wallet service unreachable — allow request to proceed (graceful degradation)
         logger.warning("Wallet pre-flight check failed (allowing request): %s", exc)
+
+
+def _check_agent_subscription(agent_id: str, db: Session | None) -> None:
+    """Block chat if agent subscription is locked or deleted."""
+    if not db:
+        return
+    sub_repo = SubscriptionRepository(db)
+    sub = sub_repo.get_by_agent_id(agent_id)
+    if not sub:
+        return  # Legacy agent without subscription
+    if sub.status == "locked":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "agent_locked",
+                "message": "Agent is locked due to unpaid subscription. Please add credits to unlock.",
+            },
+        )
+    if sub.status == "deleted":
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
 
 class ChatService:
@@ -519,6 +540,7 @@ class ChatService:
         db: Session | None = None,
     ) -> StreamingResponse:
         """Return a streaming SSE response proxied from the gateway."""
+        _check_agent_subscription(req.agent_id, db)
         await _check_wallet_balance(req.user_id, req.agent_id)
 
         user_field = self._build_user_field(
@@ -547,6 +569,7 @@ class ChatService:
         db: Session | None = None,
     ) -> dict:
         """Send a non-streaming chat request and return the full response."""
+        _check_agent_subscription(req.agent_id, db)
         await _check_wallet_balance(req.user_id, req.agent_id)
 
         user_field = self._build_user_field(
