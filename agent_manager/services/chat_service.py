@@ -519,8 +519,7 @@ class ChatService:
         db: Session | None = None,
     ) -> StreamingResponse:
         """Return a streaming SSE response proxied from the gateway."""
-        if not req.bypass_payment:
-            await _check_wallet_balance(req.user_id, req.agent_id)
+        await _check_wallet_balance(req.user_id, req.agent_id)
 
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
@@ -548,8 +547,7 @@ class ChatService:
         db: Session | None = None,
     ) -> dict:
         """Send a non-streaming chat request and return the full response."""
-        if not req.bypass_payment:
-            await _check_wallet_balance(req.user_id, req.agent_id)
+        await _check_wallet_balance(req.user_id, req.agent_id)
 
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
