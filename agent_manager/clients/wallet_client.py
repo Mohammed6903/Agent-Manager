@@ -1,4 +1,4 @@
-"""HTTP client for the NetworkChain wallet service."""
+"""HTTP client for wallet services (NetworkChain + Garage)."""
 
 from __future__ import annotations
 
@@ -30,8 +30,22 @@ class DebtLimitReachedError(Exception):
         super().__init__(message or f"Debt limit reached: {debt_cents} cents")
 
 
+def get_wallet_client(agent_id: str) -> "WalletClient":
+    """Return the correct WalletClient based on agent_id prefix.
+
+    Garage agents (prefixed with "garage") → roam-backend wallet.
+    All other agents → NetworkChain wallet (default).
+    """
+    if agent_id.startswith("garage"):
+        return WalletClient(
+            base_url=settings.GARAGE_WALLET_SERVICE_URL,
+            api_key=settings.GARAGE_WALLET_INTERNAL_API_KEY,
+        )
+    return WalletClient()
+
+
 class WalletClient:
-    """Async client that talks to NetworkChain's internal wallet endpoints."""
+    """Async client that talks to internal wallet endpoints."""
 
     def __init__(
         self,

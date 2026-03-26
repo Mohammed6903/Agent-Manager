@@ -14,7 +14,7 @@ from fastapi import HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..clients.wallet_client import WalletClient, InsufficientBalanceError
+from ..clients.wallet_client import WalletClient, InsufficientBalanceError, get_wallet_client
 from ..config import settings
 from ..database import SessionLocal
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post
@@ -48,17 +48,17 @@ _HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=3000.0, write=10.0, pool=10.0)
 _HTTPX_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
 
 
-async def _check_wallet_balance(user_id: str) -> None:
+async def _check_wallet_balance(user_id: str, agent_id: str = "") -> None:
     """Pre-flight balance + debt check. Raises HTTPException 402 if blocked."""
-    if not settings.WALLET_INTERNAL_API_KEY:
+    if not settings.WALLET_INTERNAL_API_KEY and not settings.GARAGE_WALLET_INTERNAL_API_KEY:
         return  # Wallet integration not configured, skip check
 
     try:
-        wallet = WalletClient()
+        wallet = get_wallet_client(agent_id)
         result = await wallet.check_balance(user_id)
-        data = result.get("data", {})
-        balance_cents = data.get("balanceCents", 0)
-        debt_cents = data.get("debtCents", 0)
+        # Wallet returns balanceCents/debtCents at top level (not nested under "data")
+        balance_cents = result.get("balanceCents", result.get("data", {}).get("balanceCents", 0))
+        debt_cents = result.get("debtCents", result.get("data", {}).get("debtCents", 0))
 
         # Block if debt has hit the cap ($2)
         if debt_cents >= settings.MAX_DEBT_CENTS:
@@ -520,7 +520,7 @@ class ChatService:
     ) -> StreamingResponse:
         """Return a streaming SSE response proxied from the gateway."""
         if not req.bypass_payment:
-            await _check_wallet_balance(req.user_id)
+            await _check_wallet_balance(req.user_id, req.agent_id)
 
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
@@ -550,7 +550,7 @@ class ChatService:
     ) -> dict:
         """Send a non-streaming chat request and return the full response."""
         if not req.bypass_payment:
-            await _check_wallet_balance(req.user_id)
+            await _check_wallet_balance(req.user_id, req.agent_id)
 
         user_field = self._build_user_field(
             req.agent_id, req.user_id,

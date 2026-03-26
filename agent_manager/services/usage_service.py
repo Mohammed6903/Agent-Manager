@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..clients.gateway_client import GatewayClient
-from ..clients.wallet_client import WalletClient, InsufficientBalanceError, DebtLimitReachedError
+from ..clients.wallet_client import InsufficientBalanceError, DebtLimitReachedError, get_wallet_client
 from ..config import settings
 from ..models.chat_usage import ChatUsageLog
 from ..models.cron import CronOwnership, CronPipelineRun
@@ -1394,7 +1394,7 @@ class UsageService:
                 f"${total_cost:.4f})"
             )
 
-            wallet = WalletClient()
+            wallet = get_wallet_client(agent_id)
             await wallet.deduct_credits(user_id, amount_cents, description)
 
             # Mark as billed
@@ -1433,6 +1433,7 @@ class UsageService:
             # Resolve agent name via cron ownership
             agent_name = run_id
             cron_name = ""
+            ownership = None
             if run.cron_id:
                 ownership = (
                     self.db.query(CronOwnership)
@@ -1449,7 +1450,8 @@ class UsageService:
                 f" (${run.total_cost:.4f})"
             )
 
-            wallet = WalletClient()
+            cron_agent_id = ownership.agent_id if ownership else ""
+            wallet = get_wallet_client(cron_agent_id)
             await wallet.deduct_credits(user_id, amount_cents, description)
 
             run.billed = True
