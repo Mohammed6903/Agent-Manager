@@ -11,7 +11,6 @@ from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks,
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..schemas.chat import (
     ChatRequest,
     CreateAgentRequest,
@@ -97,9 +96,10 @@ async def create_agent(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
 ):
     """Create a new OpenClaw agent (filesystem + gateway registration).
-    
+
     Pass `org_id` in the request body to scope the agent to a specific
-    organisation. Omit it to create an unscoped (legacy) agent.
+    organisation (Garage). Pass `user_id` for personal agent ownership
+    (Network Chain).
     """
     return await agent_service.create_agent(req)
 
@@ -108,9 +108,10 @@ async def create_agent(
 async def list_agents(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
     org_id: Optional[str] = Query(default=None, description="Filter agents by organisation ID"),
+    user_id: Optional[str] = Query(default=None, description="Filter agents by user ID"),
 ):
-    """List registered agents. Pass ?org_id= to return only agents for that org."""
-    return await agent_service.list_agents(org_id=org_id)
+    """List registered agents. Pass ?org_id= or ?user_id= to scope results."""
+    return await agent_service.list_agents(org_id=org_id, user_id=user_id)
 
 
 @router.get("/agents/{agent_id}", tags=["Agents"])
@@ -118,9 +119,10 @@ async def get_agent(
     agent_id: str,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
     org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org"),
+    user_id: Optional[str] = Query(default=None, description="Verify agent belongs to this user"),
 ):
-    """Get details for a single agent. Pass ?org_id= to enforce org ownership check."""
-    return await agent_service.get_agent(agent_id, org_id=org_id)
+    """Get details for a single agent. Pass ?org_id= or ?user_id= to enforce ownership check."""
+    return await agent_service.get_agent(agent_id, org_id=org_id, user_id=user_id)
 
 
 @router.patch("/agents/{agent_id}", tags=["Agents"])
@@ -129,9 +131,10 @@ async def update_agent(
     req: UpdateAgentRequest,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
     org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org before updating"),
+    user_id: Optional[str] = Query(default=None, description="Verify agent belongs to this user before updating"),
 ):
     """Update an agent's identity, role, or personality files."""
-    return await agent_service.update_agent(agent_id, req, org_id=org_id)
+    return await agent_service.update_agent(agent_id, req, org_id=org_id, user_id=user_id)
 
 
 @router.delete("/agents/{agent_id}", tags=["Agents"])
@@ -139,12 +142,13 @@ async def delete_agent(
     agent_id: str,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
     org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org before deleting"),
+    user_id: Optional[str] = Query(default=None, description="Verify agent belongs to this user before deleting"),
 ):
     """Delete an agent (gateway de-registration + filesystem cleanup).
-    
-    Pass ?org_id= to enforce that the agent belongs to the org before deletion.
+
+    Pass ?org_id= or ?user_id= to enforce ownership before deletion.
     """
-    return await agent_service.delete_agent(agent_id, org_id=org_id)
+    return await agent_service.delete_agent(agent_id, org_id=org_id, user_id=user_id)
 
 
 

@@ -71,7 +71,7 @@ class TaskService:
         q = self.db.query(AgentTask)
 
         if agent_id:
-            # agent_id is already fully specific — org_id filter adds no value
+            # agent_id is already fully specific — org_id/user_id filter adds no value
             q = q.filter(AgentTask.agent_id == agent_id)
         elif org_id:
             # Resolve all agent_ids that belong to this org via the registry,
@@ -80,9 +80,16 @@ class TaskService:
             registry = AgentRegistryRepository(self.db)
             org_agents = registry.list(org_id=org_id)
             if not org_agents:
-                return []   # no agents in this org → no tasks possible
-            org_agent_ids = [a.agent_id for a in org_agents]
-            q = q.filter(AgentTask.agent_id.in_(org_agent_ids))
+                return []
+            q = q.filter(AgentTask.agent_id.in_([a.agent_id for a in org_agents]))
+        elif user_id:
+            # Resolve all agent_ids owned by this user via the registry,
+            # then filter tasks to only those agents
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            registry = AgentRegistryRepository(self.db)
+            user_agents = registry.list(user_id=user_id)
+            if user_agents:
+                q = q.filter(AgentTask.agent_id.in_([a.agent_id for a in user_agents]))
 
         if user_id:
             q = q.filter(AgentTask.user_id == user_id)

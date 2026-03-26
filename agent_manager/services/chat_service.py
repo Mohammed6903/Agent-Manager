@@ -528,8 +528,7 @@ class ChatService:
         )
         bg_task = BackgroundTasks()
         session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
-        if not req.bypass_payment:
-            bg_task.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
+        bg_task.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
 
         return StreamingResponse(
             self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
@@ -558,8 +557,7 @@ class ChatService:
         )
 
         session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
-        if not req.bypass_payment:
-            background_tasks.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
+        background_tasks.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
 
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 

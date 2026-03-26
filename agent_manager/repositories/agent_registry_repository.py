@@ -31,16 +31,20 @@ class AgentRegistryRepository:
         self.db.refresh(entry)
         return entry
 
-    def get(self, agent_id: str, org_id: str | None = None) -> AgentRegistry | None:
+    def get(self, agent_id: str, org_id: str | None = None, user_id: str | None = None) -> AgentRegistry | None:
         q = self.db.query(AgentRegistry).filter(AgentRegistry.agent_id == agent_id)
         if org_id is not None:
             q = q.filter(AgentRegistry.org_id == org_id)
+        if user_id is not None:
+            q = q.filter(AgentRegistry.user_id == user_id)
         return q.first()
 
-    def list(self, org_id: str | None = None) -> List[AgentRegistry]:
+    def list(self, org_id: str | None = None, user_id: str | None = None) -> List[AgentRegistry]:
         q = self.db.query(AgentRegistry)
         if org_id is not None:
             q = q.filter(AgentRegistry.org_id == org_id)
+        if user_id is not None:
+            q = q.filter(AgentRegistry.user_id == user_id)
         return q.order_by(AgentRegistry.created_at.desc()).all()
 
     def update_name(self, agent_id: str, name: str) -> None:

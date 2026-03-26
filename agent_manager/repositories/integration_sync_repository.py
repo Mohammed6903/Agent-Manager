@@ -1,19 +1,26 @@
-"""Generic repository for integration sync state."""
+"""Generic repository for integration sync state with optimistic locking."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, update
 from sqlalchemy.orm import Session
 
 from agent_manager.models.gmail import IntegrationSyncState
+
+logger = logging.getLogger("agent_manager.repositories.integration_sync")
+
+
+class ConcurrentModificationError(Exception):
+    """Raised when optimistic lock detects a concurrent update."""
 
 
 class IntegrationSyncRepository:
     """Manages persistence of per-agent, per-integration sync state.
 
-    Replaces GmailSyncRepository and CalendarSyncRepository with a single
-    implementation that works for any integration.
+    Uses optimistic locking (version column) to prevent concurrent tasks
+    from overwriting each other's cursor state.
     """
 
     def __init__(self, db: Session, integration_name: str) -> None:
@@ -36,13 +43,39 @@ class IntegrationSyncRepository:
     ) -> IntegrationSyncState:
         """Create or update sync state after a successful sync.
 
-        ``cursor`` is opaque — historyId for Gmail, nextSyncToken for Calendar, etc.
+        Uses optimistic locking: if another task updated the row concurrently,
+        raises ConcurrentModificationError instead of silently overwriting.
         """
         state = self.get(agent_id)
         if state:
-            state.sync_cursor = cursor
-            state.last_synced_at = datetime.now(timezone.utc)
-            state.total_fetched += fetched_count
+            current_version = state.version
+            result = self.db.execute(
+                update(IntegrationSyncState)
+                .where(
+                    and_(
+                        IntegrationSyncState.id == state.id,
+                        IntegrationSyncState.version == current_version,
+                    )
+                )
+                .values(
+                    sync_cursor=cursor,
+                    last_synced_at=datetime.now(timezone.utc),
+                    total_fetched=IntegrationSyncState.total_fetched + fetched_count,
+                    version=current_version + 1,
+                )
+            )
+            self.db.commit()
+
+            if result.rowcount == 0:
+                logger.error(
+                    "Optimistic lock failed for %s/%s (version=%d) — concurrent modification detected",
+                    agent_id, self.integration_name, current_version,
+                )
+                raise ConcurrentModificationError(
+                    f"Sync state for {agent_id}/{self.integration_name} was modified by another task"
+                )
+
+            self.db.refresh(state)
         else:
             state = IntegrationSyncState(
                 agent_id=agent_id,
@@ -50,24 +83,11 @@ class IntegrationSyncRepository:
                 sync_cursor=cursor,
                 last_synced_at=datetime.now(timezone.utc),
                 total_fetched=fetched_count,
+                version=1,
             )
             self.db.add(state)
-
-        try:
             self.db.commit()
             self.db.refresh(state)
-        except Exception:
-            self.db.rollback()
-            state = self.db.merge(
-                IntegrationSyncState(
-                    agent_id=agent_id,
-                    integration_name=self.integration_name,
-                    sync_cursor=cursor,
-                    last_synced_at=datetime.now(timezone.utc),
-                    total_fetched=fetched_count,
-                )
-            )
-            self.db.commit()
 
         return state
 

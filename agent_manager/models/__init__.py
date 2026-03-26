@@ -9,9 +9,11 @@ from .integration import AgentIntegration, IntegrationLog
 from .third_party_context import ThirdPartyContext, ThirdPartyContextAssignment
 from .chat_usage import ChatUsageLog
 from .agent_registry import AgentRegistry
+from .failed_ingestion import FailedIngestion
 
 __all__ = [
     "AgentRegistry",
+    "FailedIngestion",
     "AgentTask",
     "GlobalContext",
     "AgentContext",

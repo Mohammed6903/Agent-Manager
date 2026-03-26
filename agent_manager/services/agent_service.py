@@ -120,13 +120,10 @@ class AgentService:
             logger.info("Bootstrapped shared AGENTS.md at %s", agents_path)
 
     async def sync_templates_to_shared(self) -> dict[str, Any]:
-        """Overwrite shared files with the latest source templates.
+        """Overwrite shared files AND push copies to every agent workspace.
 
-        Unlike ``ensure_shared_files`` (which skips existing files), this
-        always writes the current template content so that code changes are
-        propagated to every symlinked agent workspace.
-
-        Returns a summary of what was synced and how many agents are affected.
+        Since OpenClaw cannot read symlinks, we write the actual file content
+        directly into each agent's workspace on every startup.
         """
         await self.storage.ensure_dir(str(SHARED_DIR))
         results: list[dict[str, Any]] = []
@@ -136,28 +133,45 @@ class AgentService:
             "AGENTS.md": self._default_agents_md,
         }
 
+        try:
+            agents = await self.gateway.list_agents()
+        except Exception:
+            agents = []
+
         for filename, loader in template_loaders.items():
             content = loader()
             if content is None:
                 results.append({"file": filename, "synced": False, "reason": "template not found"})
                 continue
 
+            # Write to shared dir (canonical copy)
             target_path = self._shared_path(filename)
             await self.storage.write_text(target_path, content)
-            affected = await self._count_symlinked_agents(filename)
+
+            # Push to every agent workspace
+            affected = 0
+            for agent in agents:
+                workspace = agent.get("workspace") or self._workspace(agent["id"])
+                dest = str(Path(workspace) / filename)
+                try:
+                    await self.storage.write_text(dest, content)
+                    affected += 1
+                except Exception as exc:
+                    logger.warning("Failed to sync %s to %s: %s", filename, workspace, exc)
+
             results.append({"file": filename, "synced": True, "affected_agents": affected})
             logger.info("Synced shared %s from source template — %d agent(s) affected", filename, affected)
 
         return {"synced_files": results}
 
     async def migrate_symlinks(self) -> dict[str, Any]:
-        """One-time (idempotent) migration: convert regular SOUL.md / AGENTS.md
-        files in every agent workspace into symlinks pointing to the shared
-        copies.
+        """One-time (idempotent) migration: copy shared SOUL.md / AGENTS.md
+        into every agent workspace (replacing any stale symlinks or outdated
+        copies).
 
         Returns a summary dict describing what was done.
         """
-        results: dict[str, list[str]] = {"symlinked": [], "already_symlink": [], "errors": []}
+        results: dict[str, list[str]] = {"copied": [], "already_current": [], "errors": []}
 
         try:
             agents = await self.gateway.list_agents()
@@ -168,25 +182,22 @@ class AgentService:
         for agent in agents:
             workspace = agent.get("workspace") or self._workspace(agent["id"])
             for filename in SHARED_FILES:
-                link_path = str(Path(workspace) / filename)
+                dest_path = str(Path(workspace) / filename)
                 target_path = self._shared_path(filename)
 
                 try:
-                    if await self.storage.is_symlink(link_path):
-                        results["already_symlink"].append(f"{agent['id']}/{filename}")
-                        continue
-
                     if not await self.storage.exists(target_path):
                         results["errors"].append(
                             f"{agent['id']}/{filename}: shared file missing"
                         )
                         continue
 
-                    # Remove the regular file and replace with a symlink
-                    await self.storage.create_symlink(link_path, target_path)
-                    results["symlinked"].append(f"{agent['id']}/{filename}")
+                    # Read the shared file and write its content to the workspace
+                    content = await self.storage.read_text(target_path)
+                    await self.storage.write_text(dest_path, content)
+                    results["copied"].append(f"{agent['id']}/{filename}")
                     logger.info(
-                        "Migrated %s/%s → symlink to %s", agent["id"], filename, target_path
+                        "Copied shared %s into %s/%s", target_path, agent["id"], filename
                     )
                 except Exception as exc:
                     msg = f"{agent['id']}/{filename}: {exc}"
@@ -195,21 +206,24 @@ class AgentService:
 
         return results
 
-    async def _symlink_or_write(
+    async def _copy_shared_or_write(
         self, workspace: str, filename: str, fallback_content: str
     ) -> None:
-        """Create a symlink to the shared copy of *filename* if it exists,
-        otherwise fall back to writing *fallback_content* as a regular file.
+        """Copy the shared file into the agent workspace.
+
+        Uses direct file copies instead of symlinks because OpenClaw
+        cannot read symlinked files reliably.
         """
-        link_path = str(Path(workspace) / filename)
+        dest_path = str(Path(workspace) / filename)
         target_path = self._shared_path(filename)
 
         if await self.storage.exists(target_path):
-            await self.storage.create_symlink(link_path, target_path)
-            logger.info("Symlinked %s → %s", link_path, target_path)
+            content = await self.storage.read_text(target_path)
+            await self.storage.write_text(dest_path, content)
+            logger.info("Copied shared %s → %s", target_path, dest_path)
         else:
-            await self.storage.write_text(link_path, fallback_content)
-            logger.info("Wrote %s (shared copy not found, using fallback)", link_path)
+            await self.storage.write_text(dest_path, fallback_content)
+            logger.info("Wrote %s (shared copy not found, using fallback)", dest_path)
 
     # ── Agent CRUD ──────────────────────────────────────────────────────────────
 
@@ -228,10 +242,12 @@ class AgentService:
         if any(a.get("id") == agent_id for a in existing):
             raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
         
-        # Also reject if this org already has an agent with the same id in DB
-        if self._registry and req.org_id:
-            if self._registry.get(agent_id, org_id=req.org_id):
+        # Also reject if the agent already exists under the same ownership scope
+        if self._registry:
+            if req.org_id and self._registry.get(agent_id, org_id=req.org_id):
                 raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists in this org")
+            if req.user_id and self._registry.get(agent_id, user_id=req.user_id):
+                raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists for this user")
 
         config_hash = config_data.get("hash")
         if not config_hash:
@@ -254,13 +270,13 @@ class AgentService:
         
         file_tasks = [
             self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content),
-            self._symlink_or_write(workspace, "AGENTS.md", agents_md_content)
+            self._copy_shared_or_write(workspace, "AGENTS.md", agents_md_content)
         ]
 
         if req.soul:
             file_tasks.append(self.storage.write_text(str(Path(workspace) / "SOUL.md"), req.soul))
         else:
-            file_tasks.append(self._symlink_or_write(workspace, "SOUL.md", self._default_soul()))
+            file_tasks.append(self._copy_shared_or_write(workspace, "SOUL.md", self._default_soul()))
 
         # Execute all file writes in parallel
         await asyncio.gather(*file_tasks)
@@ -308,11 +324,12 @@ class AgentService:
             agent_dir=agent_dir,
             status="created",
             org_id=req.org_id,
+            user_id=req.user_id,
         )
 
-    async def list_agents(self, org_id: str | None = None) -> List[dict[str, Any]]:
+    async def list_agents(self, org_id: str | None = None, user_id: str | None = None) -> List[dict[str, Any]]:
         if self._registry:
-            rows = self._registry.list(org_id=org_id)
+            rows = self._registry.list(org_id=org_id, user_id=user_id)
             return [
                 {
                     "id": r.agent_id,
@@ -320,17 +337,18 @@ class AgentService:
                     "workspace": r.workspace,
                     "agentDir": r.agent_dir,
                     "org_id": r.org_id,
+                    "user_id": r.user_id,
                 }
                 for r in rows
             ]
-        # Fallback: no DB — hit gateway (org filtering not possible here)
+        # Fallback: no DB — hit gateway (org/user filtering not possible here)
         agents = await self.gateway.list_agents()
         return agents
 
-    async def get_agent(self, agent_id: str, org_id: str | None = None) -> dict[str, Any]:
+    async def get_agent(self, agent_id: str, org_id: str | None = None, user_id: str | None = None) -> dict[str, Any]:
         # Fast path: DB registry
         if self._registry:
-            row = self._registry.get(agent_id, org_id=org_id)
+            row = self._registry.get(agent_id, org_id=org_id, user_id=user_id)
             if not row:
                 raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
             return {
@@ -339,6 +357,7 @@ class AgentService:
                 "workspace": row.workspace,
                 "agentDir": row.agent_dir,
                 "org_id": row.org_id,
+                "user_id": row.user_id,
             }
         # Fallback: gateway scan
         agents = await self.gateway.list_agents()
@@ -348,9 +367,9 @@ class AgentService:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
     async def update_agent(
-        self, agent_id: str, req: UpdateAgentRequest, org_id: str | None = None
+        self, agent_id: str, req: UpdateAgentRequest, org_id: str | None = None, user_id: str | None = None
     ) -> AgentResponse:
-        agent = await self.get_agent(agent_id, org_id=org_id)
+        agent = await self.get_agent(agent_id, org_id=org_id, user_id=user_id)
         workspace = self._workspace(agent_id)
 
         if not await self.storage.exists(workspace):
@@ -395,17 +414,18 @@ class AgentService:
             agent_dir=self._agent_dir(agent_id),
             status="updated",
             org_id=org_id,
+            user_id=user_id,
         )
 
 
-    async def delete_agent(self, agent_id: str, org_id: str | None = None) -> dict[str, str]:
-        # Verify ownership before deletion if org_id is supplied
-        if self._registry and org_id:
-            row = self._registry.get(agent_id, org_id=org_id)
+    async def delete_agent(self, agent_id: str, org_id: str | None = None, user_id: str | None = None) -> dict[str, str]:
+        # Verify ownership before deletion if org_id or user_id is supplied
+        if self._registry and (org_id or user_id):
+            row = self._registry.get(agent_id, org_id=org_id, user_id=user_id)
             if not row:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Agent '{agent_id}' not found in org '{org_id}'",
+                    detail=f"Agent '{agent_id}' not found for the given ownership scope",
                 )
 
         # 1. Gateway removal
@@ -468,9 +488,8 @@ class AgentService:
     # ── Shared-file admin helpers ────────────────────────────────────────────────
 
     async def update_shared_file(self, filename: str, content: str) -> dict[str, Any]:
-        """Write *content* to the shared copy of *filename* and return how many
-        agent workspaces will see the change (i.e. have a symlink pointing to
-        it).
+        """Write *content* to the shared copy of *filename* and push it to
+        every agent workspace.
         """
         if filename not in SHARED_FILES:
             raise HTTPException(
@@ -479,12 +498,28 @@ class AgentService:
             )
         target_path = self._shared_path(filename)
         await self.storage.write_text(target_path, content)
-        affected = await self._count_symlinked_agents(filename)
+
+        # Push the updated content to every agent workspace
+        try:
+            agents = await self.gateway.list_agents()
+        except Exception:
+            agents = []
+
+        affected = 0
+        for agent in agents:
+            workspace = agent.get("workspace") or self._workspace(agent["id"])
+            dest = str(Path(workspace) / filename)
+            try:
+                await self.storage.write_text(dest, content)
+                affected += 1
+            except Exception as exc:
+                logger.warning("Failed to push %s to %s: %s", filename, workspace, exc)
+
         logger.info("Updated shared %s — %d agent(s) affected", filename, affected)
         return {"filename": filename, "affected_agents": affected}
 
-    async def _count_symlinked_agents(self, filename: str) -> int:
-        """Count how many existing agent workspaces have a symlink for *filename*."""
+    async def _count_agents_with_file(self, filename: str) -> int:
+        """Count how many existing agent workspaces have *filename*."""
         count = 0
         try:
             agents = await self.gateway.list_agents()
@@ -492,9 +527,9 @@ class AgentService:
             return 0
         for agent in agents:
             workspace = agent.get("workspace") or self._workspace(agent["id"])
-            link_path = str(Path(workspace) / filename)
+            file_path = str(Path(workspace) / filename)
             try:
-                if await self.storage.is_symlink(link_path):
+                if await self.storage.exists(file_path):
                     count += 1
             except Exception:
                 pass

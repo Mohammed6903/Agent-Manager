@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models.third_party_context import ThirdPartyContext
@@ -97,10 +97,30 @@ class ThirdPartyContextRepository:
         )
 
     def get_all_complete(self) -> list[ThirdPartyContext]:
-        """Return all ThirdPartyContext rows with status 'complete'."""
+        """Return the newest completed context per agent + integration."""
+        # Subquery: max created_at per (agent_id, integration_name)
+        newest = (
+            select(
+                ThirdPartyContext.agent_id,
+                ThirdPartyContext.integration_name,
+                func.max(ThirdPartyContext.created_at).label("max_created"),
+            )
+            .where(ThirdPartyContext.status == "complete")
+            .group_by(
+                ThirdPartyContext.agent_id,
+                ThirdPartyContext.integration_name,
+            )
+            .subquery()
+        )
         return list(
             self.db.execute(
                 select(ThirdPartyContext)
+                .join(
+                    newest,
+                    (ThirdPartyContext.agent_id == newest.c.agent_id)
+                    & (ThirdPartyContext.integration_name == newest.c.integration_name)
+                    & (ThirdPartyContext.created_at == newest.c.max_created),
+                )
                 .where(ThirdPartyContext.status == "complete")
                 .order_by(ThirdPartyContext.created_at.desc())
             )
@@ -141,6 +161,7 @@ class ThirdPartyContextRepository:
                 ThirdPartyContext.status.in_(active_statuses),
             )
             .order_by(ThirdPartyContext.created_at.desc())
+            .limit(1)
         ).scalar_one_or_none()
 
     def delete(self, context_id: uuid.UUID) -> bool:

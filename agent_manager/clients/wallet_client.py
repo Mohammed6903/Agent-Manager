@@ -11,7 +11,7 @@ from ..config import settings
 
 logger = logging.getLogger("agent_manager.clients.wallet_client")
 
-TIMEOUT = 5.0  # seconds
+TIMEOUT = 15.0  # seconds — generous to handle backend under load
 
 
 class InsufficientBalanceError(Exception):

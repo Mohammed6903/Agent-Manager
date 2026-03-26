@@ -347,9 +347,13 @@ def _full_sync(
     )
     stored_status: dict[str, bool] = s3_service.list_all_gmail_message_ids_with_status(agent_id)
 
-    # ── Phase 1: Collect all unfetched message IDs via pagination ────────────
+    # ── Phase 1+2: Paginate message IDs in chunks and fetch concurrently ─────
+    # Process IDs in chunks of _ID_CHUNK_SIZE to avoid unbounded memory usage
+    # on large mailboxes (500k+ messages).
+    _ID_CHUNK_SIZE = 10_000
     all_to_fetch: list[str] = []
     page_token: str | None = None
+    total_fetched_ids = 0
 
     while True:
         if is_aborted():
@@ -367,52 +371,72 @@ def _full_sync(
 
         to_fetch: list[str] = []
         to_restore: list[str] = []
-        
+
         for ref in message_refs:
             msg_id = ref["id"]
             if msg_id not in stored_status:
                 to_fetch.append(msg_id)
             elif stored_status[msg_id]:
-                # It exists but is softly-deleted (expired), we can just restore it
                 to_restore.append(msg_id)
             else:
-                # It exists and is active
                 counters["skipped"] += 1
 
         if to_restore:
             restored = s3_service.untag_gmail_as_expired(agent_id, to_restore)
             with _lock:
                 counters["fetched"] += restored
-            # Update local state cache so if this ID is seen again, we know it's active
             for r_id in to_restore:
                 stored_status[r_id] = False
 
         all_to_fetch.extend(to_fetch)
 
+        # When chunk is full, flush it: fetch concurrently then clear the list
+        if len(all_to_fetch) >= _ID_CHUNK_SIZE:
+            chunk_total = len(all_to_fetch) + counters["skipped"]
+            _update_progress(
+                "FETCHING",
+                {
+                    "stage": "fetching",
+                    "message": f"Fetching emails (chunk of {len(all_to_fetch)})...",
+                    "current": counters["fetched"],
+                    "total": total_estimate,
+                    "percentage": int((counters["fetched"] / total_estimate * 100) if total_estimate else 0),
+                    "skipped": counters["skipped"],
+                    "failed": counters["failed"],
+                },
+            )
+            completed = _run_concurrent_batches(
+                service, agent_id, all_to_fetch, counters, total_estimate, is_aborted, credentials, _lock
+            )
+            if not completed:
+                return None
+            total_fetched_ids += len(all_to_fetch)
+            all_to_fetch.clear()
+
         page_token = response.get("nextPageToken")
         if not page_token:
             break
 
-    actual_total = len(all_to_fetch) + counters["skipped"]
-    _update_progress(
-        "FETCHING",
-        {
-            "stage": "fetching",
-            "message": f"Fetching {len(all_to_fetch)} new emails...",
-            "current": 0,
-            "total": actual_total,
-            "percentage": 0,
-            "skipped": counters["skipped"],
-            "failed": 0,
-        },
-    )
-
-    # ── Phase 2: Concurrent batch fetching ───────────────────────────────────
-    completed = _run_concurrent_batches(
-        service, agent_id, all_to_fetch, counters, actual_total, is_aborted, credentials, _lock
-    )
-    if not completed:
-        return None
+    # Flush remaining IDs
+    if all_to_fetch:
+        actual_total = total_fetched_ids + len(all_to_fetch) + counters["skipped"]
+        _update_progress(
+            "FETCHING",
+            {
+                "stage": "fetching",
+                "message": f"Fetching {len(all_to_fetch)} new emails...",
+                "current": counters["fetched"],
+                "total": actual_total,
+                "percentage": int((counters["fetched"] / actual_total * 100) if actual_total else 0),
+                "skipped": counters["skipped"],
+                "failed": 0,
+            },
+        )
+        completed = _run_concurrent_batches(
+            service, agent_id, all_to_fetch, counters, actual_total, is_aborted, credentials, _lock
+        )
+        if not completed:
+            return None
 
     profile = service.users().getProfile(userId="me").execute()
     return profile["historyId"]

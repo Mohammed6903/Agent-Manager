@@ -13,6 +13,7 @@ from agent_manager.integrations.google.schemas import (
     BatchReadRequest,
 )
 from . import service as gmail_service
+from . import search_service as gmail_search_service
 
 router = APIRouter()
 
