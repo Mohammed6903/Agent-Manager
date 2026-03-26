@@ -56,7 +56,7 @@ class CronOwnershipRepository:
 
         Returns the list of cron_ids that were removed so callers can also
         remove the jobs from the gateway.
-        CronPipelineRun rows cascade automatically via the FK constraint.
+        CronPipelineRun rows are preserved (cron_id set to NULL) for analytics.
         """
         entries = self.db.query(CronOwnership).filter(CronOwnership.agent_id == agent_id).all()
         cron_ids = [e.cron_id for e in entries]

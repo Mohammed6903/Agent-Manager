@@ -237,6 +237,24 @@ class AgentService:
         workspace = self._workspace(agent_id)
         agent_dir = self._agent_dir(agent_id)
 
+        # ── PRE-FLIGHT: Check wallet balance before doing any work ───────
+        if req.org_id and req.user_id:
+            from ..clients.wallet_client import get_wallet_client
+            wallet = get_wallet_client(agent_id)
+            try:
+                balance_resp = await wallet.check_balance(req.user_id)
+                balance_data = balance_resp.get("data", balance_resp)
+                balance_cents = balance_data.get("balanceCents", 0)
+                if balance_cents < settings.AGENT_MONTHLY_COST_CENTS:
+                    raise HTTPException(
+                        status_code=402,
+                        detail=f"Insufficient balance. ${settings.AGENT_MONTHLY_COST_CENTS / 100:.2f} required to create an agent.",
+                    )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.warning("Wallet pre-flight check failed (allowing request): %s", exc)
+
         # ── PHASE 1: Concurrent Network Reads ──────────────────────────────
         # Fire both gateway requests at the same time instead of waiting for one to finish
         existing_task = asyncio.create_task(self.gateway.list_agents())
@@ -518,7 +536,14 @@ class AgentService:
         return {"status": "deleted", "agent_id": agent_id}
 
     async def _delete_agent_db_data(self, agent_id: str) -> None:
-        """Remove every database record associated with the agent."""
+        """Remove operational database records associated with the agent.
+
+        Analytics / usage / billing tables are intentionally preserved:
+        - chat_usage_logs      (token usage & cost per message)
+        - wallet_transactions  (credit movements)
+        - integration_logs     (API call history)
+        - cron_pipeline_runs   (pipeline run history & costs)
+        """
         from sqlalchemy import delete as sa_delete
         from ..models.gmail import GoogleAccount, AgentSecret
         from ..models.agent_task import AgentTask
@@ -526,7 +551,8 @@ class AgentService:
         from ..repositories.cron_ownership_repository import CronOwnershipRepository
         from ..repositories.context_repository import ContextRepository
 
-        # -- Cron jobs: remove from gateway first, then ownership/pipeline rows --
+        # -- Cron jobs: remove from gateway first, then ownership rows --
+        # CronPipelineRun rows are preserved (FK set to NULL on cron delete)
         cron_repo = CronOwnershipRepository(self.db)
         cron_ids = cron_repo.delete_by_agent_id(agent_id)
         for cron_id in cron_ids:
@@ -535,7 +561,7 @@ class AgentService:
             except Exception as exc:
                 logger.warning("cron_remove(%s) failed during agent delete: %s", cron_id, exc)
 
-        # -- Integration assignments + logs --
+        # -- Integration assignments (logs are preserved for analytics) --
         IntegrationRepository(self.db).delete_all_for_agent(agent_id)
 
         # -- Context assignments (not the shared global contexts themselves) --

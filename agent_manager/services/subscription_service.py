@@ -60,8 +60,26 @@ class SubscriptionService:
                 detail="Insufficient balance. $24.00 required to create an agent.",
             )
 
-        # Deduct credits
+        # Create subscription record FIRST (validates DB before taking money)
+        now = datetime.now(timezone.utc)
+        next_billing = now + timedelta(days=30)
         description = f"Agent: {agent_name} — subscription (initial)"
+        try:
+            subscription = self.sub_repo.create(
+                agent_id=agent_id,
+                org_id=org_id,
+                user_id=user_id,
+                amount_cents=cost,
+                next_billing_date=next_billing,
+            )
+        except Exception as exc:
+            logger.error("Failed to create subscription record for '%s': %s", agent_id, exc)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create subscription. Please try again.",
+            )
+
+        # Deduct credits (DB record exists, safe to charge)
         try:
             deduct_result = await wallet.deduct_credits(
                 user_id=user_id,
@@ -69,27 +87,20 @@ class SubscriptionService:
                 description=description,
             )
         except (InsufficientBalanceError, DebtLimitReachedError):
+            # Rollback: remove the subscription record since payment failed
+            self.sub_repo.soft_delete(agent_id)
             raise HTTPException(
                 status_code=402,
                 detail="Insufficient balance. $24.00 required to create an agent.",
             )
         except Exception as exc:
+            # Rollback: remove the subscription record since payment failed
+            self.sub_repo.soft_delete(agent_id)
             logger.error("Wallet deduct failed for user %s: %s", user_id, exc)
             raise HTTPException(
                 status_code=502,
                 detail="Payment processing failed. Please try again.",
             )
-
-        # Create subscription
-        now = datetime.now(timezone.utc)
-        next_billing = now + timedelta(days=30)
-        subscription = self.sub_repo.create(
-            agent_id=agent_id,
-            org_id=org_id,
-            user_id=user_id,
-            amount_cents=cost,
-            next_billing_date=next_billing,
-        )
 
         # Log transaction
         deduct_data = deduct_result.get("data", deduct_result)

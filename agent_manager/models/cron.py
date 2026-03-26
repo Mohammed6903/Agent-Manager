@@ -19,7 +19,7 @@ class CronPipelineRun(Base):
     __tablename__ = "cron_pipeline_runs"
 
     id = Column(String, primary_key=True)           # OpenClaw sessionId / runId
-    cron_id = Column(String, ForeignKey("cron_ownership.cron_id", ondelete="CASCADE"), index=True)
+    cron_id = Column(String, ForeignKey("cron_ownership.cron_id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String)                         # success | partial | error
     started_at = Column(BigInteger)                 # epoch ms
     finished_at = Column(BigInteger)

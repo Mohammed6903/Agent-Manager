@@ -86,11 +86,12 @@ class IntegrationRepository:
         return [row for row in self.db.execute(stmt).scalars().all()]
 
     def delete_all_for_agent(self, agent_id: str) -> None:
-        """Delete all integration assignments and logs for an agent."""
+        """Delete integration assignments for an agent.
+
+        IntegrationLog rows are intentionally preserved for analytics and
+        usage auditing — they must never be deleted when an agent is removed.
+        """
         from sqlalchemy import delete as sa_delete
-        self.db.execute(
-            sa_delete(IntegrationLog).where(IntegrationLog.agent_id == agent_id)
-        )
         self.db.execute(
             sa_delete(AgentIntegration).where(AgentIntegration.agent_id == agent_id)
         )
