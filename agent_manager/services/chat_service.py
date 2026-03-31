@@ -27,6 +27,34 @@ from ..repositories.subscription_repository import SubscriptionRepository
 logger = logging.getLogger("agent_manager.services.chat_service")
 
 
+async def _save_assistant_response(
+    session_id: str | None,
+    agent_id: str,
+    user_id: str,
+    room_id: str | None,
+    accumulator: list[str],
+) -> None:
+    """Background task: save the accumulated assistant response to DB."""
+    if not session_id or not accumulator:
+        return
+    content = "".join(accumulator)
+    if not content.strip():
+        return
+    try:
+        with SessionLocal() as db:
+            from ..repositories.conversation_repository import ConversationRepository
+            ConversationRepository(db).add_message(
+                session_id=session_id,
+                agent_id=agent_id,
+                user_id=user_id,
+                role="assistant",
+                content=content,
+                room_id=room_id,
+            )
+    except Exception as exc:
+        logger.error("Failed to save assistant response for session %s: %s", session_id, exc)
+
+
 async def _sync_usage_after_delay(agent_id: str, session_key: str, user_id: str) -> None:
     """Wait for OpenClaw to flush its local disk write, then sync to DB and deduct wallet."""
     await asyncio.sleep(2.0)
@@ -187,6 +215,40 @@ class ChatService:
             return "text file"
         return "file"
 
+    def _maybe_load_history(self, req: ChatRequest, db: Session | None) -> ChatRequest:
+        """If no history passed but session_id exists, auto-load from DB."""
+        if req.history or not req.session_id or not db:
+            return req
+        try:
+            from ..repositories.conversation_repository import ConversationRepository
+            from ..schemas.chat import ChatMessage
+            repo = ConversationRepository(db)
+            messages = repo.get_history(req.session_id, limit=100)
+            if not messages:
+                return req
+            loaded = [ChatMessage(role=m.role, content=m.content) for m in messages]
+            return req.model_copy(update={"history": loaded})
+        except Exception as exc:
+            logger.warning("Failed to load history for session %s: %s", req.session_id, exc)
+            return req
+
+    def _save_user_message(self, req: ChatRequest, db: Session | None) -> None:
+        """Save the user message to conversation history."""
+        if not req.session_id or not db:
+            return
+        try:
+            from ..repositories.conversation_repository import ConversationRepository
+            ConversationRepository(db).add_message(
+                session_id=req.session_id,
+                agent_id=req.agent_id,
+                user_id=req.user_id,
+                role="user",
+                content=req.message,
+                room_id=req.room_id,
+            )
+        except Exception as exc:
+            logger.warning("Failed to save user message for session %s: %s", req.session_id, exc)
+
     def _build_messages(
         self,
         req: ChatRequest,
@@ -302,11 +364,25 @@ class ChatService:
         chunk = {"choices": [{"delta": {"content": content}, "finish_reason": None}]}
         return f"data: {json.dumps(chunk)}\n\n".encode()
 
+    @staticmethod
+    def _accumulate_sse(decoded: str, accumulator: list[str]) -> None:
+        """Extract content deltas from SSE chunk text and append to accumulator."""
+        try:
+            for line in decoded.split("\n"):
+                if line.startswith("data: ") and line != "data: [DONE]":
+                    data = json.loads(line[6:])
+                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        accumulator.append(delta)
+        except (json.JSONDecodeError, IndexError, KeyError):
+            pass
+
     async def _stream_gateway(
         self,
         req: ChatRequest,
         uploaded_file_paths: list[str] | None = None,
         db: Session | None = None,
+        response_accumulator: list[str] | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Open a streaming connection to the OpenClaw Gateway and yield SSE chunks.
 
@@ -438,6 +514,8 @@ class ChatService:
                                             return
                                         if '"delta"' in decoded and '"content"' in decoded:
                                             received_content = True
+                                            if response_accumulator is not None:
+                                                self._accumulate_sse(decoded, response_accumulator)
                                         yield chunk
                                 # Stream ended — check if we got nothing at all
                                 if not received_content:
@@ -460,6 +538,8 @@ class ChatService:
                 else:
                     # Model answered directly (no tool call) — emit as synthetic SSE
                     content = choice.get("message", {}).get("content") or ""
+                    if response_accumulator is not None and content:
+                        response_accumulator.append(content)
                     yield self._sse_bytes(content)
                     yield b"data: [DONE]\n\n"
                     return
@@ -505,6 +585,8 @@ class ChatService:
                                 return
                             if '"delta"' in decoded and '"content"' in decoded:
                                 received_content = True
+                                if response_accumulator is not None:
+                                    self._accumulate_sse(decoded, response_accumulator)
                             yield chunk
                     # Stream ended — check if we got nothing at all
                     if not received_content:
@@ -543,6 +625,11 @@ class ChatService:
         _check_agent_subscription(req.agent_id, db)
         await _check_wallet_balance(req.user_id, req.agent_id)
 
+        # Auto-load conversation history from DB if not provided
+        req = self._maybe_load_history(req, db)
+        # Persist the user message
+        self._save_user_message(req, db)
+
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
             session_id=req.session_id, room_id=req.room_id,
@@ -551,8 +638,19 @@ class ChatService:
         session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
         bg_task.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
 
+        # Accumulate streamed assistant response for DB persistence
+        response_accumulator: list[str] = []
+        bg_task.add_task(
+            _save_assistant_response,
+            req.session_id, req.agent_id, req.user_id,
+            req.room_id, response_accumulator,
+        )
+
         return StreamingResponse(
-            self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
+            self._stream_gateway(
+                req, uploaded_file_paths=uploaded_file_paths, db=db,
+                response_accumulator=response_accumulator,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -571,6 +669,11 @@ class ChatService:
         """Send a non-streaming chat request and return the full response."""
         _check_agent_subscription(req.agent_id, db)
         await _check_wallet_balance(req.user_id, req.agent_id)
+
+        # Auto-load conversation history from DB if not provided
+        req = self._maybe_load_history(req, db)
+        # Persist the user message
+        self._save_user_message(req, db)
 
         user_field = self._build_user_field(
             req.agent_id, req.user_id,
@@ -628,6 +731,20 @@ class ChatService:
                     choice = data["choices"][0]
                     message = choice.get("message", {})
                     content = message.get("content", "")
+                # Persist assistant response
+                if req.session_id and db and content:
+                    try:
+                        from ..repositories.conversation_repository import ConversationRepository
+                        ConversationRepository(db).add_message(
+                            session_id=req.session_id,
+                            agent_id=req.agent_id,
+                            user_id=req.user_id,
+                            role="assistant",
+                            content=content,
+                            room_id=req.room_id,
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to save assistant response: %s", exc)
                 return {"response": content, "raw": data}
             except httpx.ConnectError as exc:
                 raise HTTPException(

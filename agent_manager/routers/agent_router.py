@@ -356,6 +356,41 @@ async def clear_memory(
     return await session_service.clear_agent_memory(agent_id)
 
 
+# ── Conversation Persistence (DB-backed) ─────────────────────────────────────
+
+@router.get("/conversations/{session_id}/history", tags=["Conversations"])
+async def get_conversation_history(
+    session_id: str,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """Get persisted conversation history for a session."""
+    from ..repositories.conversation_repository import ConversationRepository
+    repo = ConversationRepository(db)
+    messages = repo.get_history(session_id, limit=limit)
+    return {
+        "session_id": session_id,
+        "messages": [
+            {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
+            for m in messages
+        ],
+        "count": len(messages),
+    }
+
+
+@router.get("/conversations/user/{user_id}/sessions", tags=["Conversations"])
+async def get_user_sessions(
+    user_id: str,
+    agent_id: Optional[str] = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    """Get recent conversation sessions for a user."""
+    from ..repositories.conversation_repository import ConversationRepository
+    repo = ConversationRepository(db)
+    sessions = repo.get_user_sessions(user_id, agent_id=agent_id, limit=limit)
+    return {"user_id": user_id, "sessions": sessions}
+
 
 # ── Cron Jobs ──────────────────────────────────────────────────────────────────
 
