@@ -8,7 +8,6 @@ from .gmail import GoogleAccount, AgentSecret, IntegrationSyncState
 from .integration import AgentIntegration, IntegrationLog
 from .third_party_context import ThirdPartyContext, ThirdPartyContextAssignment
 from .chat_usage import ChatUsageLog
-from .conversation_message import ConversationMessage
 from .agent_registry import AgentRegistry
 from .agent_subscription import AgentSubscription
 from .wallet_transaction import WalletTransaction
@@ -33,5 +32,4 @@ __all__ = [
     "ThirdPartyContext",
     "ThirdPartyContextAssignment",
     "ChatUsageLog",
-    "ConversationMessage",
 ]
