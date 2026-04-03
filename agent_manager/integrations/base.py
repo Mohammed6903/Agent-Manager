@@ -8,7 +8,7 @@ from enum import Enum
 class AuthFlowType(str, Enum):
     STATIC = "static"          # API keys, bearer tokens — user provides directly
     OAUTH2_GOOGLE = "oauth2_google"    # Google OAuth — handled by GoogleOAuth2Flow
-    OAUTH2_GENERIC = "oauth2_generic"  # Future OAuth providers, List, Any
+    OAUTH2_GENERIC = "oauth2_generic"  # Generic OAuth 2.0 providers (Slack, GitHub, etc.)
     OAUTH1_TWITTER = "oauth1_twitter"  # Twitter OAuth 1.0a
     OAUTH2_LINKEDIN = "oauth2_linkedin"  # LinkedIn OAuth 2.0
 
@@ -55,6 +55,10 @@ class BaseIntegration:
     # Each entry declares the field name and how the UI should render the value.
     # Override per integration — default exposes nothing.
     metadata_fields: ClassVar[List[MetadataFieldDef]] = []
+    # Set to False to hide an integration from all API responses, block new
+    # assignments, and suppress already-assigned instances from agent listings.
+    # Useful for integrations under maintenance or not yet ready for users.
+    is_active: ClassVar[bool] = True
 
     @classmethod
     def filter_metadata(cls, raw: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
@@ -91,6 +95,7 @@ class BaseIntegration:
                 for e in getattr(cls, "endpoints", [])
             ],
             "usage_instructions": getattr(cls, "usage_instructions", ""),
+            "is_active": cls.is_active,
         }
 
 class BaseHTTPIntegration(BaseIntegration):

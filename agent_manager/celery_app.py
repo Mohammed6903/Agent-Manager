@@ -62,6 +62,7 @@ celery_app.conf.update(
         "agent_manager.tasks.calendar.sync_task.daily_calendar_sync":   {"queue": "beat"},
         "agent_manager.tasks.docs.sync_task.daily_docs_sync":           {"queue": "beat"},
         "agent_manager.tasks.sheets.sync_task.daily_sheets_sync":       {"queue": "beat"},
+        "agent_manager.tasks.drive.sync_task.daily_drive_sync":         {"queue": "beat"},
         "agent_manager.tasks.dlq_retry_task.retry_failed_ingestions": {"queue": "beat"},
         "agent_manager.tasks.subscription_billing_task.process_subscription_renewals": {"queue": "beat"},
     },
@@ -86,6 +87,11 @@ celery_app.conf.update(
         "daily-sheets-sync": {
             "task": "agent_manager.tasks.sheets.sync_task.daily_sheets_sync",
             "schedule": crontab(hour=3, minute=30),  # 3:30 AM UTC daily
+            "options": {"queue": "beat"},
+        },
+        "daily-drive-sync": {
+            "task": "agent_manager.tasks.drive.sync_task.daily_drive_sync",
+            "schedule": crontab(hour=4, minute=30),  # 4:30 AM UTC daily
             "options": {"queue": "beat"},
         },
         "hourly-dlq-retry": {

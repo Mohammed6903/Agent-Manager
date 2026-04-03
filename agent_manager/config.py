@@ -94,5 +94,129 @@ class Settings(BaseSettings):
     LINKEDIN_CLIENT_ID: str = ""
     LINKEDIN_CLIENT_SECRET: str = ""
 
+    # ── Slack ───────────────────────────────────────────────────────────────────
+    SLACK_CLIENT_ID: str = ""
+    SLACK_CLIENT_SECRET: str = ""
+
+    # ── GitHub ──────────────────────────────────────────────────────────────────
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+
+    # ── Trello ──────────────────────────────────────────────────────────────────
+    TRELLO_CLIENT_ID: str = ""      # Trello API Key (acts as client_id in OAuth)
+    TRELLO_CLIENT_SECRET: str = ""
+
+    # ── Airtable ────────────────────────────────────────────────────────────────
+    AIRTABLE_CLIENT_ID: str = ""
+    AIRTABLE_CLIENT_SECRET: str = ""
+
+    # ── Asana ───────────────────────────────────────────────────────────────────
+    ASANA_CLIENT_ID: str = ""
+    ASANA_CLIENT_SECRET: str = ""
+
+    # ── ClickUp ─────────────────────────────────────────────────────────────────
+    CLICKUP_CLIENT_ID: str = ""
+    CLICKUP_CLIENT_SECRET: str = ""
+
+    # ── Todoist ─────────────────────────────────────────────────────────────────
+    TODOIST_CLIENT_ID: str = ""
+    TODOIST_CLIENT_SECRET: str = ""
+
+    # ── Typeform ────────────────────────────────────────────────────────────────
+    TYPEFORM_CLIENT_ID: str = ""
+    TYPEFORM_CLIENT_SECRET: str = ""
+
+    # ── HubSpot ─────────────────────────────────────────────────────────────────
+    HUBSPOT_CLIENT_ID: str = ""
+    HUBSPOT_CLIENT_SECRET: str = ""
+
+    # ── Notion ──────────────────────────────────────────────────────────────────
+    NOTION_CLIENT_ID: str = ""
+    NOTION_CLIENT_SECRET: str = ""
+
+    # ── Stripe Connect ──────────────────────────────────────────────────────────
+    STRIPE_CLIENT_ID: str = ""       # Platform's Connect client ID (ca_...)
+    STRIPE_SECRET_KEY: str = ""      # Platform's secret key (sk_...) — used as client_secret
+
+    # ── Jira ────────────────────────────────────────────────────────────────────
+    JIRA_CLIENT_ID: str = ""
+    JIRA_CLIENT_SECRET: str = ""
+
+    # ── Salesforce ──────────────────────────────────────────────────────────────
+    SALESFORCE_CLIENT_ID: str = ""
+    SALESFORCE_CLIENT_SECRET: str = ""
+
+    # ── Monday ──────────────────────────────────────────────────────────────────
+    MONDAY_CLIENT_ID: str = ""
+    MONDAY_CLIENT_SECRET: str = ""
+
+    # ── Dropbox ─────────────────────────────────────────────────────────────────
+    DROPBOX_CLIENT_ID: str = ""      # Dropbox App Key
+    DROPBOX_CLIENT_SECRET: str = ""  # Dropbox App Secret
+
+    # ── Mailchimp ───────────────────────────────────────────────────────────────
+    MAILCHIMP_CLIENT_ID: str = ""
+    MAILCHIMP_CLIENT_SECRET: str = ""
+
+    # ── Calendly ────────────────────────────────────────────────────────────────
+    CALENDLY_CLIENT_ID: str = ""
+    CALENDLY_CLIENT_SECRET: str = ""
+
+    # ── Pipedrive ───────────────────────────────────────────────────────────────
+    PIPEDRIVE_CLIENT_ID: str = ""
+    PIPEDRIVE_CLIENT_SECRET: str = ""
+
+    # ── Confluence ──────────────────────────────────────────────────────────────
+    CONFLUENCE_CLIENT_ID: str = ""   # Same Atlassian app as Jira if desired
+    CONFLUENCE_CLIENT_SECRET: str = ""
+
+    # ── Zoho CRM ────────────────────────────────────────────────────────────────
+    ZOHO_CRM_CLIENT_ID: str = ""
+    ZOHO_CRM_CLIENT_SECRET: str = ""
+
+    # ── Linear ──────────────────────────────────────────────────────────────────
+    LINEAR_CLIENT_ID: str = ""
+    LINEAR_CLIENT_SECRET: str = ""
+
+    # ── Box ──────────────────────────────────────────────────────────────────────
+    BOX_CLIENT_ID: str = ""
+    BOX_CLIENT_SECRET: str = ""
+
+    # ── Buffer ──────────────────────────────────────────────────────────────────
+    BUFFER_CLIENT_ID: str = ""
+    BUFFER_CLIENT_SECRET: str = ""
+
+    # ── Wrike ───────────────────────────────────────────────────────────────────
+    WRIKE_CLIENT_ID: str = ""
+    WRIKE_CLIENT_SECRET: str = ""
+
+    # ── Eventbrite ──────────────────────────────────────────────────────────────
+    EVENTBRITE_CLIENT_ID: str = ""
+    EVENTBRITE_CLIENT_SECRET: str = ""
+
+    # ── Basecamp ────────────────────────────────────────────────────────────────
+    BASECAMP_CLIENT_ID: str = ""
+    BASECAMP_CLIENT_SECRET: str = ""
+
+    # ── QuickBooks ──────────────────────────────────────────────────────────────
+    QUICKBOOKS_CLIENT_ID: str = ""
+    QUICKBOOKS_CLIENT_SECRET: str = ""
+
+    # ── Xero ────────────────────────────────────────────────────────────────────
+    XERO_CLIENT_ID: str = ""
+    XERO_CLIENT_SECRET: str = ""
+
+    # ── WordPress ───────────────────────────────────────────────────────────────
+    WORDPRESS_CLIENT_ID: str = ""
+    WORDPRESS_CLIENT_SECRET: str = ""
+
+    # ── Square ──────────────────────────────────────────────────────────────────
+    SQUARE_CLIENT_ID: str = ""
+    SQUARE_CLIENT_SECRET: str = ""
+
+    # ── Microsoft (Outlook, Teams, OneDrive — shared app registration) ──────
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
+
 
 settings = Settings()

@@ -17,6 +17,7 @@ from ..schemas.third_party_context import (
     ThirdPartyContextResponse,
 )
 from ..services.agent_service import AgentService
+from ..services.context_providers import list_active_providers
 from ..services.third_party_context_service import ThirdPartyContextService
 
 router = APIRouter(tags=["Third-Party Contexts"])
@@ -27,6 +28,18 @@ def _get_service(
     agent_service: AgentService = Depends(get_agent_service),
 ) -> ThirdPartyContextService:
     return ThirdPartyContextService(db, agent_service)
+
+
+# ── Provider discovery ──────────────────────────────────────────────────────
+
+
+@router.get("/providers")
+async def list_context_providers():
+    """Return integration names that have a registered context provider (active only)."""
+    return [
+        {"name": p.name, "display_name": p.display_name}
+        for p in list_active_providers()
+    ]
 
 
 # ── Context CRUD ─────────────────────────────────────────────────────────────
