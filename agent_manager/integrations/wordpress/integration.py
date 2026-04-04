@@ -8,6 +8,8 @@ class WordPressIntegration(BaseHTTPIntegration):
 
     name = "wordpress"
     display_name = "WordPress"
+    is_active = False
+    test_connection = ("GET", "/me")
     api_type = "rest"
     base_url = "https://public-api.wordpress.com/rest/v1.1"
 

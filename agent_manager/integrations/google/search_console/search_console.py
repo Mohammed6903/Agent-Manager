@@ -9,6 +9,8 @@ class GoogleSearchConsoleIntegration(BaseGoogleIntegration):
 
     name = "google_search_console"
     display_name = "Google Search Console"
+    test_connection = ("GET", "webmasters/v3/sites")
+    is_active = False
     base_url = "https://searchconsole.googleapis.com/v1"
 
     metadata_fields = [

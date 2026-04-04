@@ -8,6 +8,8 @@ class OneDriveIntegration(BaseHTTPIntegration):
 
     name = "onedrive"
     display_name = "OneDrive"
+    is_active = False
+    test_connection = ("GET", "/me/drive")
     api_type = "rest"
     base_url = "https://graph.microsoft.com/v1.0"
 

@@ -60,6 +60,11 @@ class BaseIntegration:
     # Useful for integrations under maintenance or not yet ready for users.
     is_active: ClassVar[bool] = True
 
+    # Lightweight ping call to verify credentials are still valid.
+    # Tuple of (method, path) — must not consume significant API quota.
+    # Override per integration. Default: None (test not supported).
+    test_connection: ClassVar[Optional[tuple]] = None
+
     @classmethod
     def filter_metadata(cls, raw: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
         """Return a typed list of metadata entries from raw integration_metadata.

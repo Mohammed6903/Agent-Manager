@@ -8,6 +8,8 @@ class PipedriveIntegration(BaseHTTPIntegration):
 
     name = "pipedrive"
     display_name = "Pipedrive"
+    is_active = False
+    test_connection = ("GET", "/users/me")
     api_type = "rest"
     base_url = "https://api.pipedrive.com/v1"
 

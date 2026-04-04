@@ -80,15 +80,16 @@ def get_google_flow(scopes: list[str], state=None):
         state=state,
     )
 
-def exchange_code_and_store(db: Session, agent_id: str, authorization_response: str, raw_state: str = None):
+def exchange_code_and_store(db: Session, agent_id: str, authorization_response: str, raw_state: str = None, code_verifier: str = None):
     """Exchange the authorization code for tokens.
-    
+
     Uses the scopes from the callback URL (what Google actually granted)
     rather than re-querying the DB, which may not have the new integration yet.
-    
+
     Args:
         raw_state: The original state from the callback URL. Must match
                    the state used when the auth URL was generated.
+        code_verifier: PKCE code_verifier generated during auth URL creation.
     """
     from urllib.parse import urlparse, parse_qs
 
@@ -121,16 +122,25 @@ def exchange_code_and_store(db: Session, agent_id: str, authorization_response: 
     # what Google returns in the callback — prevents CSRF mismatch.
     flow_state = raw_state if raw_state else agent_id
     flow = get_google_flow(scopes=scopes, state=flow_state)
+    if code_verifier:
+        flow.code_verifier = code_verifier
     flow.fetch_token(authorization_response=authorization_response)
     credentials = flow.credentials
     store_credentials(db, agent_id, credentials)
     return credentials
 
 
-def exchange_code_with_code(db: Session, agent_id: str, code: str):
-    """Exchange a raw authorization code for tokens (headless flow)."""
+def exchange_code_with_code(db: Session, agent_id: str, code: str, code_verifier: str = None):
+    """Exchange a raw authorization code for tokens (headless flow).
+
+    Args:
+        code_verifier: PKCE code_verifier generated during auth URL creation.
+            Required by Google when the auth URL included a code_challenge.
+    """
     scopes = get_required_scopes(agent_id, db)
     flow = get_google_flow(scopes=scopes, state=agent_id)
+    if code_verifier:
+        flow.code_verifier = code_verifier
     flow.fetch_token(code=code)
     credentials = flow.credentials
     store_credentials(db, agent_id, credentials)

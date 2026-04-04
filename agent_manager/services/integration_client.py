@@ -99,15 +99,36 @@ class IntegrationClient:
             
         finally:
             duration_ms = int((time.time() - start) * 1000)
+            matched_endpoint = self._match_endpoint(method, url)
             self.repo.create_log(
                 integration_name=self.integration_name,
                 agent_id=self.agent_id,
                 method=method.upper(),
-                endpoint=self._match_endpoint(method, url),
+                endpoint=matched_endpoint,
                 status_code=status_code,
                 duration_ms=duration_ms,
                 request_id=request_id,
                 error_message=error_message
+            )
+
+            # Log to unified activity stream
+            from .agent_activity_service import log_activity_sync
+            status_label = "error" if (status_code >= 400 or error_message) else "success"
+            summary = f"{self.integration_name}: {method.upper()} {matched_endpoint} ({status_code}, {duration_ms}ms)"
+            log_activity_sync(
+                self.db,
+                self.agent_id,
+                "integration_call",
+                summary,
+                metadata={
+                    "integration": self.integration_name,
+                    "method": method.upper(),
+                    "endpoint": matched_endpoint,
+                    "status_code": status_code,
+                    "duration_ms": duration_ms,
+                    "error": error_message,
+                },
+                status=status_label,
             )
 
         return response

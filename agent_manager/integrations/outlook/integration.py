@@ -8,6 +8,8 @@ class OutlookIntegration(BaseHTTPIntegration):
 
     name = "outlook"
     display_name = "Outlook"
+    is_active = False
+    test_connection = ("GET", "/me")
     api_type = "rest"
     base_url = "https://graph.microsoft.com/v1.0"
 

@@ -8,6 +8,8 @@ class WooCommerceIntegration(BaseHTTPIntegration):
 
     name = "woocommerce"
     display_name = "WooCommerce"
+    is_active = False
+    test_connection = ("GET", "/products?per_page=1")
     api_type = "rest"
     base_url = "https://{store_url}/wp-json/wc/v3"
 

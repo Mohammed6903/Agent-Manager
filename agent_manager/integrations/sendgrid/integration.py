@@ -8,6 +8,8 @@ class SendGridIntegration(BaseHTTPIntegration):
 
     name = "sendgrid"
     display_name = "SendGrid"
+    is_active = False
+    test_connection = ("GET", "/stats?limit=1")
     api_type = "rest"
     base_url = "https://api.sendgrid.com/v3"
 

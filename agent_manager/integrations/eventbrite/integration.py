@@ -8,6 +8,8 @@ class EventbriteIntegration(BaseHTTPIntegration):
 
     name = "eventbrite"
     display_name = "Eventbrite"
+    is_active = False
+    test_connection = ("GET", "/users/me")
     api_type = "rest"
     base_url = "https://www.eventbriteapi.com/v3"
 

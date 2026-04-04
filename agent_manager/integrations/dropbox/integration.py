@@ -8,6 +8,8 @@ class DropboxIntegration(BaseHTTPIntegration):
 
     name = "dropbox"
     display_name = "Dropbox"
+    is_active = False
+    test_connection = ("POST", "/users/get_current_account")
     api_type = "rest"
     base_url = "https://api.dropboxapi.com/2"
 

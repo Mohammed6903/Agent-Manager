@@ -8,6 +8,8 @@ class MailchimpIntegration(BaseHTTPIntegration):
 
     name = "mailchimp"
     display_name = "Mailchimp"
+    is_active = False
+    test_connection = ("GET", "/lists?count=1")
     api_type = "rest"
     base_url = "https://{dc}.api.mailchimp.com/3.0"
 

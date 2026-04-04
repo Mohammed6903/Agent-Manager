@@ -229,6 +229,16 @@ def get_integration_logs(
     logs = svc.get_recent_logs(integration_name)
     return IntegrationLogListResponse(logs=logs)
 
+@router.post("/{integration_name}/test")
+async def test_connection(
+    integration_name: str,
+    agent_id: str,
+    svc: IntegrationService = Depends(get_integration_service),
+):
+    """Lightweight ping to verify an agent's integration credentials are still valid."""
+    return await svc.test_connection(agent_id, integration_name)
+
+
 @router.delete("/unassign")
 def unassign_integration_from_agent(
     agent_id: str,

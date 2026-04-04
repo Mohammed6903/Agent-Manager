@@ -299,6 +299,13 @@ def ingest_and_pipeline(
             )
 
         ctx_repo.update_status(ctx_id, "complete")
+
+        from agent_manager.services.agent_activity_service import log_activity_sync
+        log_activity_sync(db, agent_id, "context_sync_complete",
+            f"Context sync complete: {integration_name} ({counters['fetched']} fetched, {processed} processed)",
+            metadata={"integration": integration_name, "fetched": counters["fetched"], "processed": processed, "failed": failed},
+            status="success")
+
         return {
             "stage": "complete",
             "message": "Ingest and pipeline complete.",
@@ -313,6 +320,12 @@ def ingest_and_pipeline(
     except Exception as exc:
         if not is_daily_sync:
             _set_ctx_status(db, ctx_id, "failed")
+
+        from agent_manager.services.agent_activity_service import log_activity_sync
+        log_activity_sync(db, agent_id, "context_sync_failed",
+            f"Context sync failed: {integration_name} — {str(exc)[:200]}",
+            metadata={"integration": integration_name, "error": str(exc)[:500]},
+            status="error")
         _update_progress(
             "TASK_ERROR",
             {"stage": "error", "message": str(exc), "task_id": task_id},

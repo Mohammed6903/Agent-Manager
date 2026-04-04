@@ -8,6 +8,8 @@ class SlackIntegration(BaseHTTPIntegration):
 
     name = "slack"
     display_name = "Slack"
+    is_active = False
+    test_connection = ("POST", "/conversations.list")
     api_type = "rest"
     base_url = "https://slack.com/api"
 

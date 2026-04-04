@@ -8,6 +8,8 @@ class HubSpotIntegration(BaseHTTPIntegration):
 
     name = "hubspot"
     display_name = "HubSpot"
+    is_active = False
+    test_connection = ("GET", "/crm/v3/objects/contacts?limit=1")
     api_type = "rest"
     base_url = "https://api.hubapi.com"
 

@@ -56,6 +56,12 @@ class TaskService:
 
         resp = _row_to_response(task)
         await task_ws_manager.broadcast("task_created", _row_to_dict(task))
+
+        from .agent_activity_service import log_activity
+        await log_activity(self.db, req.agent_id, "task_created",
+            f"Task created: {task.title}",
+            metadata={"task_id": str(task.id), "title": task.title, "status": task.status})
+
         logger.info("Task '%s' created for agent '%s'", task.id, task.agent_id)
         return resp
 
@@ -131,6 +137,12 @@ class TaskService:
 
         resp = _row_to_response(task)
         await task_ws_manager.broadcast("task_updated", _row_to_dict(task))
+
+        from .agent_activity_service import log_activity
+        await log_activity(self.db, task.agent_id, "task_updated",
+            f"Task updated: {task.title} → {task.status}",
+            metadata={"task_id": str(task.id), "title": task.title, "status": task.status})
+
         logger.info("Task '%s' updated", task_id)
         return resp
 

@@ -8,6 +8,8 @@ class ClickUpIntegration(BaseHTTPIntegration):
 
     name = "clickup"
     display_name = "ClickUp"
+    is_active = False
+    test_connection = ("GET", "/team")
     api_type = "rest"
     base_url = "https://api.clickup.com/api/v2"
 

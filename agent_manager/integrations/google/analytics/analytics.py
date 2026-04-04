@@ -9,6 +9,8 @@ class GoogleAnalyticsIntegration(BaseGoogleIntegration):
 
     name = "google_analytics"
     display_name = "Google Analytics"
+    test_connection = ("GET", "analytics/v1beta/properties")
+    is_active = False
     base_url = "https://analyticsdata.googleapis.com/v1beta"
 
     metadata_fields = [

@@ -1,5 +1,6 @@
 """OpenClaw API — Unified Agent Manager & Service Gateway."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -75,7 +76,8 @@ from agent_manager.routers.cron_template_router import router as cron_template_r
 from agent_manager.routers.analytics_router import router as analytics_router
 from agent_manager.routers.billing_router import router as billing_router
 from agent_manager.routers.third_party_context_router import router as third_party_context_router
-from agent_manager.ws_manager import task_ws_manager, cron_ws_manager
+from agent_manager.ws_manager import task_ws_manager, cron_ws_manager, activity_ws_manager
+from agent_manager.routers.agent_activity_router import router as agent_activity_router
 from agent_manager.dependencies import get_storage, get_gateway
 from agent_manager.services.qdrant_service import ensure_collection
 
@@ -116,8 +118,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Failed to bootstrap/sync shared files: %s", exc)
 
+    # Start server-side heartbeat for all agents (every 5s)
+    from agent_manager.services.heartbeat_service import start_heartbeat_task
+    heartbeat_task = start_heartbeat_task()
+    logger.info("Heartbeat service started")
+
     yield
-    # Log shutdown
+
+    # Stop heartbeat
+    heartbeat_task.cancel()
+    try:
+        await heartbeat_task
+    except asyncio.CancelledError:
+        pass
     logger.info("OpenClaw API shutting down")
 
 
@@ -500,6 +513,13 @@ app.include_router(
     responses={404: {"description": "Resource not found"}},
 )
 
+# Agent Activity endpoints: /api/agents/{agent_id}/activity
+app.include_router(
+    agent_activity_router,
+    prefix="/api",
+    responses={404: {"description": "Resource not found"}},
+)
+
 
 # ── WebSocket ───────────────────────────────────────────────────────────────────
 
@@ -524,6 +544,17 @@ async def crons_websocket(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         cron_ws_manager.disconnect(ws)
+
+
+@app.websocket("/api/activity/ws")
+async def activity_websocket(ws: WebSocket):
+    """Real-time agent activity stream."""
+    await activity_ws_manager.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        activity_ws_manager.disconnect(ws)
 
 def main():
     uvicorn.run(

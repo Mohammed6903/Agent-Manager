@@ -8,6 +8,8 @@ class MondayIntegration(BaseHTTPIntegration):
 
     name = "monday"
     display_name = "Monday"
+    is_active = False
+    test_connection = ("POST", "/")
     api_type = "rest"
     base_url = "https://api.monday.com/v2"
 

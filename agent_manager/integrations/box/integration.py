@@ -8,6 +8,8 @@ class BoxIntegration(BaseHTTPIntegration):
 
     name = "box"
     display_name = "Box"
+    is_active = False
+    test_connection = ("GET", "/users/me")
     api_type = "rest"
     base_url = "https://api.box.com/2.0"
 

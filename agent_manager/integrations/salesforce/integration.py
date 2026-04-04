@@ -8,6 +8,8 @@ class SalesforceIntegration(BaseHTTPIntegration):
 
     name = "salesforce"
     display_name = "Salesforce"
+    is_active = False
+    test_connection = ("GET", "/sobjects")
     api_type = "rest"
     base_url = "https://{instance_url}/services/data/v59.0"
 

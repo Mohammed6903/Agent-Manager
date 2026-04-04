@@ -8,6 +8,8 @@ class WhatsAppBusinessIntegration(BaseHTTPIntegration):
 
     name = "whatsapp"
     display_name = "WhatsApp Business"
+    is_active = False
+    test_connection = ("GET", "/me")
     api_type = "rest"
     base_url = "https://graph.facebook.com/v19.0"
 

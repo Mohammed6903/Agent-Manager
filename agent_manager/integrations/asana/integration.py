@@ -8,6 +8,8 @@ class AsanaIntegration(BaseHTTPIntegration):
 
     name = "asana"
     display_name = "Asana"
+    is_active = False
+    test_connection = ("GET", "/users/me")
     api_type = "rest"
     base_url = "https://app.asana.com/api/1.0"
 

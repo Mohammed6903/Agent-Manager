@@ -8,6 +8,8 @@ class TrelloIntegration(BaseHTTPIntegration):
 
     name = "trello"
     display_name = "Trello"
+    is_active = False
+    test_connection = ("GET", "/members/me")
     api_type = "rest"
     base_url = "https://api.trello.com/1"
 

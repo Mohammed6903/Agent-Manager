@@ -8,6 +8,8 @@ class BasecampIntegration(BaseHTTPIntegration):
 
     name = "basecamp"
     display_name = "Basecamp"
+    is_active = False
+    test_connection = ("GET", "/authorization.json")
     api_type = "rest"
     base_url = "https://3.basecampapi.com"
 

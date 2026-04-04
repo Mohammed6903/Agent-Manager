@@ -8,6 +8,8 @@ class BufferIntegration(BaseHTTPIntegration):
 
     name = "buffer"
     display_name = "Buffer"
+    is_active = False
+    test_connection = ("GET", "/user.json")
     api_type = "rest"
     base_url = "https://api.bufferapp.com/1"
 

@@ -8,6 +8,8 @@ class PostHogIntegration(BaseHTTPIntegration):
 
     name = "posthog"
     display_name = "PostHog"
+    is_active = False
+    test_connection = ("GET", "/projects/")
     api_type = "rest"
     base_url = "https://app.posthog.com/api"
 

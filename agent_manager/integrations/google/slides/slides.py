@@ -9,6 +9,8 @@ class GoogleSlidesIntegration(BaseGoogleIntegration):
 
     name = "google_slides"
     display_name = "Google Slides"
+    test_connection = ("GET", "slides/v1/presentations")
+    is_active = False
     base_url = "https://slides.googleapis.com/v1"
 
     metadata_fields = [

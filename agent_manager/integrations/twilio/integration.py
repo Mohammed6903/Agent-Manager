@@ -8,6 +8,8 @@ class TwilioIntegration(BaseHTTPIntegration):
 
     name = "twilio"
     display_name = "Twilio"
+    is_active = False
+    test_connection = ("GET", "/Accounts.json")
     api_type = "rest"
     base_url = "https://api.twilio.com/2010-04-01"
 

@@ -8,6 +8,8 @@ class CalendlyIntegration(BaseHTTPIntegration):
 
     name = "calendly"
     display_name = "Calendly"
+    is_active = False
+    test_connection = ("GET", "/users/me")
     api_type = "rest"
     base_url = "https://api.calendly.com"
 

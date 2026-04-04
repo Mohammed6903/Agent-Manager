@@ -9,6 +9,7 @@ class GoogleCalendarIntegration(BaseGoogleIntegration):
     
     name = "google_calendar"
     display_name = "Google Calendar"
+    test_connection = ("GET", "calendar/v3/users/me/calendarList?maxResults=1")
     base_url = "https://www.googleapis.com/calendar/v3"
     metadata_fields = [
         MetadataFieldDef(name="email", type=MetadataFieldType.STRING),

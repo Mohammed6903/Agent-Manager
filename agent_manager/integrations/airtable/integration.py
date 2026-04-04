@@ -8,6 +8,8 @@ class AirtableIntegration(BaseHTTPIntegration):
 
     name = "airtable"
     display_name = "Airtable"
+    is_active = False
+    test_connection = ("GET", "/meta/bases")
     api_type = "rest"
     base_url = "https://api.airtable.com/v0"
 

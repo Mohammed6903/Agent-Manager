@@ -8,6 +8,7 @@ class LinkedInIntegration(BaseSDKIntegration):
     
     name = "linkedin"
     display_name = "LinkedIn"
+    test_connection = ("GET", "/userinfo")
     api_type = "sdk"
     base_url = "https://api.linkedin.com/v2"
     

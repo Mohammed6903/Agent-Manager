@@ -1,4 +1,4 @@
-"""Garage community feed tool — lets agents post on the Garage feed."""
+"""Garage tools — feed posting and proactive chat message delivery."""
 from __future__ import annotations
 
 import logging
@@ -34,7 +34,29 @@ GARAGE_TOOLS = [
                 "required": ["content"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deliver_chat_message",
+            "description": (
+                "Send a message to the user's chat UI. Use this after completing a cron/scheduled job "
+                "to deliver the summary, or anytime you need to proactively send a message outside of "
+                "a direct conversation. Write the content as a clean, human-readable message — "
+                "not raw JSON or code blocks."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The message content to deliver to the user's chat.",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
 ]
 
 
@@ -70,6 +92,36 @@ async def send_cron_summary_to_chat(
     except Exception as exc:
         logger.error("Error sending cron summary to chat: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+async def execute_deliver_chat_message(
+    agent_id: str, user_id: str, session_id: str, content: str
+) -> str:
+    """Execute the deliver_chat_message tool — sends a message to the user's chat UI."""
+    url = f"{settings.GARAGE_CHAT_INTERNAL_URL.rstrip('/')}/internal/chat/message"
+    body = {
+        "userId": user_id,
+        "sessionId": session_id,
+        "agentId": agent_id,
+        "message": content,
+        "type": "system",
+        "source": "agent-tool",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                json=body,
+                headers={"Authorization": f"Bearer {settings.GARAGE_INTERNAL_API_KEY}"},
+            )
+            if resp.status_code == 200:
+                logger.info("Chat message delivered for agent %s to user %s", agent_id, user_id)
+                return "Message delivered successfully."
+            logger.error("Chat delivery failed: HTTP %s — %s", resp.status_code, resp.text[:300])
+            return f"Failed to deliver message: HTTP {resp.status_code}"
+    except Exception as exc:
+        logger.error("Error delivering chat message for agent %s: %s", agent_id, exc)
+        return f"Error delivering message: {exc}"
 
 
 async def execute_create_garage_post(

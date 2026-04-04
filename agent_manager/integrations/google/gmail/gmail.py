@@ -9,6 +9,7 @@ class GmailIntegration(BaseGoogleIntegration):
     
     name = "gmail"
     display_name = "Gmail"
+    test_connection = ("GET", "gmail/v1/users/me/profile")
     base_url = "https://gmail.googleapis.com"
     metadata_fields = [
         MetadataFieldDef(name="email", type=MetadataFieldType.STRING),

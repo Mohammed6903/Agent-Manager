@@ -8,6 +8,8 @@ class GitHubIntegration(BaseHTTPIntegration):
 
     name = "github"
     display_name = "GitHub"
+    is_active = False
+    test_connection = ("GET", "/user")
     api_type = "rest"
     base_url = "https://api.github.com"
 

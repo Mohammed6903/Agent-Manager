@@ -107,7 +107,14 @@ class IntegrationService:
         SecretService.set_secret(self.db, req.agent_id, req.integration_name, provided_credentials)
 
         # Create mapping in DB
-        return self.repo.assign_to_agent(req.agent_id, req.integration_name)
+        result = self.repo.assign_to_agent(req.agent_id, req.integration_name)
+
+        from .agent_activity_service import log_activity_sync
+        log_activity_sync(self.db, req.agent_id, "integration_connected",
+            f"Connected {req.integration_name}",
+            metadata={"integration": req.integration_name})
+
+        return result
 
     def unassign_integration(self, agent_id: str, integration_name: str) -> bool:
         """Remove an integration assignment from an agent, including stored credentials."""
@@ -116,6 +123,12 @@ class IntegrationService:
             raise HTTPException(status_code=404, detail=f"Integration '{integration_name}' is not assigned to agent '{agent_id}'.")
         # Delete the stored credentials — no longer needed once unassigned
         SecretService.delete_secret(self.db, agent_id, integration_name)
+
+        from .agent_activity_service import log_activity_sync
+        log_activity_sync(self.db, agent_id, "integration_disconnected",
+            f"Disconnected {integration_name}",
+            metadata={"integration": integration_name})
+
         return True
 
     def get_agent_integrations(self, agent_id: str) -> List[dict]:
@@ -209,3 +222,75 @@ class IntegrationService:
 
     def get_recent_logs(self, integration_name: str, limit: int = 20) -> List[IntegrationLog]:
         return self.repo.get_recent_logs(integration_name, limit)
+
+    async def test_connection(self, agent_id: str, integration_name: str) -> dict:
+        """Make a lightweight API call to verify the integration credentials are valid."""
+        try:
+            integration_cls = get_integration(integration_name, allow_inactive=True)
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Integration '{integration_name}' not found.")
+
+        assignment = self.repo.get_assignment(agent_id, integration_name)
+        if not assignment:
+            raise HTTPException(status_code=404, detail=f"Integration '{integration_name}' not assigned to agent.")
+
+        test_config = getattr(integration_cls, "test_connection", None)
+        if not test_config:
+            return {"status": "unsupported", "message": "Test not available for this integration."}
+
+        method, path = test_config
+
+        # Google SDK integrations need special handling
+        if issubclass(integration_cls, BaseGoogleIntegration):
+            try:
+                from ..integrations.google.gmail.auth_service import get_valid_credentials
+                import httpx
+                creds = get_valid_credentials(self.db, agent_id)
+                if not creds:
+                    return {"status": "failed", "message": "Credentials expired or missing. Re-authorize required."}
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        f"https://www.googleapis.com/{path}",
+                        headers={"Authorization": f"Bearer {creds.token}"},
+                        timeout=10.0,
+                    )
+                if resp.status_code < 400:
+                    return {"status": "ok", "message": "Connection verified."}
+                else:
+                    return {"status": "failed", "message": f"API returned {resp.status_code}."}
+            except Exception as e:
+                return {"status": "failed", "message": str(e)}
+
+        # SDK integrations (Twitter, LinkedIn) — use stored credentials directly
+        from ..integrations.base import BaseSDKIntegration
+        if issubclass(integration_cls, BaseSDKIntegration):
+            try:
+                import httpx
+                creds = SecretService.get_secret(self.db, agent_id, integration_name)
+                if not creds or not creds.get("access_token"):
+                    return {"status": "failed", "message": "Credentials expired or missing. Re-authorize required."}
+                url = f"{integration_cls.base_url}{path}" if not path.startswith("http") else path
+                async with httpx.AsyncClient() as http:
+                    resp = await http.request(
+                        method, url,
+                        headers={"Authorization": f"Bearer {creds['access_token']}"},
+                        timeout=10.0,
+                    )
+                if resp.status_code < 400:
+                    return {"status": "ok", "message": "Connection verified."}
+                else:
+                    return {"status": "failed", "message": f"API returned {resp.status_code}."}
+            except Exception as e:
+                return {"status": "failed", "message": str(e)}
+
+        # HTTP integrations — use IntegrationClient
+        try:
+            client = self.get_client(agent_id, integration_name)
+            async with client:
+                resp = await client.request(method, f"{client.base_url}{path}")
+            if resp.status_code < 400:
+                return {"status": "ok", "message": "Connection verified."}
+            else:
+                return {"status": "failed", "message": f"API returned {resp.status_code}."}
+        except Exception as e:
+            return {"status": "failed", "message": str(e)}

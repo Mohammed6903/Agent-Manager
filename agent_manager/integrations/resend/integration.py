@@ -8,6 +8,8 @@ class ResendIntegration(BaseHTTPIntegration):
 
     name = "resend"
     display_name = "Resend"
+    is_active = False
+    test_connection = ("GET", "/domains")
     api_type = "rest"
     base_url = "https://api.resend.com"
 

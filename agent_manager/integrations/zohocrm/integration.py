@@ -8,6 +8,8 @@ class ZohoCRMIntegration(BaseHTTPIntegration):
 
     name = "zohocrm"
     display_name = "Zoho CRM"
+    is_active = False
+    test_connection = ("GET", "/users?type=ActiveUsers")
     api_type = "rest"
     base_url = "https://www.zohoapis.com/crm/v5"
 

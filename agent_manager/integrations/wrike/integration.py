@@ -8,6 +8,8 @@ class WrikeIntegration(BaseHTTPIntegration):
 
     name = "wrike"
     display_name = "Wrike"
+    is_active = False
+    test_connection = ("GET", "/contacts?me=true")
     api_type = "rest"
     base_url = "https://www.wrike.com/api/v4"
 

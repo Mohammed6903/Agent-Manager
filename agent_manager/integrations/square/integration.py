@@ -8,6 +8,8 @@ class SquareIntegration(BaseHTTPIntegration):
 
     name = "square"
     display_name = "Square"
+    is_active = False
+    test_connection = ("GET", "/locations")
     api_type = "rest"
     base_url = "https://connect.squareup.com/v2"
 

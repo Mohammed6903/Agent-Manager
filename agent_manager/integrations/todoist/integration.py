@@ -8,6 +8,8 @@ class TodoistIntegration(BaseHTTPIntegration):
 
     name = "todoist"
     display_name = "Todoist"
+    is_active = False
+    test_connection = ("GET", "/projects")
     api_type = "rest"
     base_url = "https://api.todoist.com/rest/v2"
 

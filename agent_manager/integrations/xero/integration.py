@@ -8,6 +8,8 @@ class XeroIntegration(BaseHTTPIntegration):
 
     name = "xero"
     display_name = "Xero"
+    is_active = False
+    test_connection = ("GET", "/Organisation")
     api_type = "rest"
     base_url = "https://api.xero.com/api.xro/2.0"
 

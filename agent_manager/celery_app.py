@@ -65,6 +65,7 @@ celery_app.conf.update(
         "agent_manager.tasks.drive.sync_task.daily_drive_sync":         {"queue": "beat"},
         "agent_manager.tasks.dlq_retry_task.retry_failed_ingestions": {"queue": "beat"},
         "agent_manager.tasks.subscription_billing_task.process_subscription_renewals": {"queue": "beat"},
+        "agent_manager.tasks.activity_cleanup_task.cleanup_old_activities": {"queue": "beat"},
     },
 
     # Beat configuration
@@ -102,6 +103,11 @@ celery_app.conf.update(
         "daily-subscription-renewals": {
             "task": "agent_manager.tasks.subscription_billing_task.process_subscription_renewals",
             "schedule": crontab(hour=4, minute=0),  # 4 AM UTC daily
+            "options": {"queue": "beat"},
+        },
+        "daily-activity-cleanup": {
+            "task": "agent_manager.tasks.activity_cleanup_task.cleanup_old_activities",
+            "schedule": crontab(hour=5, minute=30),  # 5:30 AM UTC daily
             "options": {"queue": "beat"},
         },
     },

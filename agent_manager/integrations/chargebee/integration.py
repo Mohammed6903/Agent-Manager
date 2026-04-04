@@ -8,6 +8,8 @@ class ChargebeeIntegration(BaseHTTPIntegration):
 
     name = "chargebee"
     display_name = "Chargebee"
+    is_active = False
+    test_connection = ("GET", "/customers?limit=1")
     api_type = "rest"
     base_url = "https://{site}.chargebee.com/api/v2"
 

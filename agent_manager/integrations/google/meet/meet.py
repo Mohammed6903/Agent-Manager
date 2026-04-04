@@ -8,6 +8,7 @@ class GoogleMeetIntegration(BaseGoogleIntegration):
 
     name = "google_meet"
     display_name = "Google Meet"
+    test_connection = ("GET", "meet/v2/spaces")
     base_url = "https://meet.googleapis.com/v2"
 
     metadata_fields = [

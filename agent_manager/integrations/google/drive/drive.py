@@ -9,6 +9,7 @@ class GoogleDriveIntegration(BaseGoogleIntegration):
 
     name = "google_drive"
     display_name = "Google Drive"
+    test_connection = ("GET", "drive/v3/about?fields=user")
     base_url = "https://www.googleapis.com/drive/v3"
     metadata_fields = [
         MetadataFieldDef(name="email", type=MetadataFieldType.STRING),

@@ -8,6 +8,8 @@ class StripeIntegration(BaseHTTPIntegration):
 
     name = "stripe"
     display_name = "Stripe"
+    is_active = False
+    test_connection = ("GET", "/balance")
     api_type = "rest"
     base_url = "https://api.stripe.com/v1"
 

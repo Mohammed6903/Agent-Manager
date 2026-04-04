@@ -9,6 +9,8 @@ class GoogleFormsIntegration(BaseGoogleIntegration):
 
     name = "google_forms"
     display_name = "Google Forms"
+    test_connection = ("GET", "forms/v1/forms")
+    is_active = False
     base_url = "https://forms.googleapis.com/v1"
 
     metadata_fields = [

@@ -9,6 +9,7 @@ class GoogleSheetsIntegration(BaseGoogleIntegration):
 
     name = "google_sheets"
     display_name = "Google Sheets"
+    test_connection = ("GET", "drive/v3/about?fields=user")
     base_url = "https://sheets.googleapis.com/v4"
     metadata_fields = [
         MetadataFieldDef(name="email", type=MetadataFieldType.STRING),

@@ -179,6 +179,19 @@ All tools below come from the **agent-manager plugin**. They are the canonical w
 
 ---
 
+### message-delivery — sending messages to users
+
+**When:** You need to proactively send a message to the user's chat UI. This is MANDATORY after every cron/scheduled job, and useful anytime you want to communicate results outside of a direct conversation.
+
+**Rules:**
+- After completing a cron job or scheduled task, you MUST call `deliver_chat_message` to send the summary to the user's chat. This is the ONLY way the user sees your cron job results in real-time.
+- The `content` should be a clean, human-readable summary. Do NOT include raw JSON, code blocks, or pipeline metadata. Write it as you would a message to a colleague.
+- For direct chat sessions, you do NOT need this tool — your responses are already delivered. This is specifically for background/async work (cron jobs, heartbeats, proactive notifications).
+
+**Tools:** `deliver_chat_message`
+
+---
+
 ### google-auth — authentication
 
 Use when an agent needs to connect a Google integration for the first time or re-auth is needed.

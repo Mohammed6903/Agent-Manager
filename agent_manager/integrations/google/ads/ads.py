@@ -9,6 +9,8 @@ class GoogleAdsIntegration(BaseGoogleIntegration):
 
     name = "google_ads"
     display_name = "Google Ads"
+    test_connection = ("GET", "customers:listAccessibleCustomers")
+    is_active = False
     base_url = "https://googleads.googleapis.com/v16"
 
     metadata_fields = [

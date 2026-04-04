@@ -8,6 +8,8 @@ class TelegramBotIntegration(BaseHTTPIntegration):
 
     name = "telegram"
     display_name = "Telegram Bot"
+    is_active = False
+    test_connection = ("POST", "/getMe")
     api_type = "rest"
     base_url = "https://api.telegram.org"
 

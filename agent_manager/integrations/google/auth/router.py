@@ -35,8 +35,22 @@ def callback(request: Request, db: Session = Depends(get_db)):
         agent_id = state
         integration_name = None
 
+    # Retrieve PKCE code_verifier stored during auth URL generation
+    from agent_manager.services.secret_service import SecretService
+    pkce_key = f"_google_pkce_{agent_id}"
+    code_verifier = None
     try:
-        creds = auth_service.exchange_code_and_store(db, agent_id, str(request.url), raw_state=state)
+        pkce_data = SecretService.get_secret(db, agent_id, pkce_key)
+        if pkce_data:
+            code_verifier = pkce_data.get("code_verifier")
+            SecretService.delete_secret(db, agent_id, pkce_key)
+    except Exception:
+        pass
+
+    try:
+        creds = auth_service.exchange_code_and_store(
+            db, agent_id, str(request.url), raw_state=state, code_verifier=code_verifier,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

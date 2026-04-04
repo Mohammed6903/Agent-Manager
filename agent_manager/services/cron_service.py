@@ -314,6 +314,15 @@ class CronService:
         # Broadcast trigger
         await cron_ws_manager.broadcast("cron_triggered", {"job_id": job_id})
 
+        # Log to activity stream
+        ownership = self.ownership.get(job_id)
+        agent_id = ownership.get("agent_id", "") if ownership else ""
+        if agent_id:
+            from .agent_activity_service import log_activity
+            await log_activity(self.db, agent_id, "cron_triggered",
+                f"Cron job triggered: {job_id}",
+                metadata={"job_id": job_id})
+
         return result
 
     async def get_cron_runs(self, job_id: str, limit: int = 20) -> List[dict]:

@@ -8,6 +8,8 @@ class JiraIntegration(BaseHTTPIntegration):
 
     name = "jira"
     display_name = "Jira"
+    is_active = False
+    test_connection = ("GET", "/myself")
     api_type = "rest"
     base_url = "https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3"
 

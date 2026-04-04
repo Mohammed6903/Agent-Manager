@@ -9,6 +9,8 @@ class YouTubeIntegration(BaseGoogleIntegration):
 
     name = "youtube"
     display_name = "YouTube"
+    test_connection = ("GET", "youtube/v3/channels?mine=true&part=id")
+    is_active = False
     base_url = "https://www.googleapis.com/youtube/v3"
 
     metadata_fields = [

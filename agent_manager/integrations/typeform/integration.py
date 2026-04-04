@@ -8,6 +8,8 @@ class TypeformIntegration(BaseHTTPIntegration):
 
     name = "typeform"
     display_name = "Typeform"
+    is_active = False
+    test_connection = ("GET", "/forms")
     api_type = "rest"
     base_url = "https://api.typeform.com"
 

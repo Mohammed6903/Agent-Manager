@@ -8,6 +8,8 @@ class ClockifyIntegration(BaseHTTPIntegration):
 
     name = "clockify"
     display_name = "Clockify"
+    is_active = False
+    test_connection = ("GET", "/user")
     api_type = "rest"
     base_url = "https://api.clockify.me/api/v1"
 

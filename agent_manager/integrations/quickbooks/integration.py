@@ -8,6 +8,8 @@ class QuickBooksIntegration(BaseHTTPIntegration):
 
     name = "quickbooks"
     display_name = "QuickBooks"
+    is_active = False
+    test_connection = ("GET", "/company/companyinfo")
     api_type = "rest"
     base_url = "https://quickbooks.api.intuit.com/v3"
 

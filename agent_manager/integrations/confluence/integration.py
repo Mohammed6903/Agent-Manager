@@ -8,6 +8,8 @@ class ConfluenceIntegration(BaseHTTPIntegration):
 
     name = "confluence"
     display_name = "Confluence"
+    is_active = False
+    test_connection = ("GET", "/spaces?limit=1")
     api_type = "rest"
     base_url = "https://api.atlassian.com/ex/confluence/{cloud_id}/wiki/api/v2"
 

@@ -8,6 +8,7 @@ class TwitterIntegration(BaseSDKIntegration):
     
     name = "twitter"
     display_name = "Twitter / X"
+    test_connection = ("GET", "/users/me")
     api_type = "sdk"
     base_url = "https://api.twitter.com/2"
     

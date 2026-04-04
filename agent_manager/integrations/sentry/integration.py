@@ -8,6 +8,8 @@ class SentryIntegration(BaseHTTPIntegration):
 
     name = "sentry"
     display_name = "Sentry"
+    is_active = False
+    test_connection = ("GET", "/organizations/")
     api_type = "rest"
     base_url = "https://sentry.io/api/0"
 

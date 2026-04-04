@@ -9,6 +9,7 @@ class GoogleDocsIntegration(BaseGoogleIntegration):
 
     name = "google_docs"
     display_name = "Google Docs"
+    test_connection = ("GET", "drive/v3/about?fields=user")
     base_url = "https://docs.googleapis.com/v1"
     metadata_fields = [
         MetadataFieldDef(name="email", type=MetadataFieldType.STRING),

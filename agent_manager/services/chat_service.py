@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..clients.wallet_client import WalletClient, InsufficientBalanceError, get_wallet_client
 from ..config import settings
 from ..database import SessionLocal
-from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post
+from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post, execute_deliver_chat_message
 from ..services.context_injection_service import build_context_block
 from ..services.secret_service import SecretService
 from ..services.usage_service import UsageService
@@ -344,14 +344,16 @@ class ChatService:
             headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
 
         # ── Tool-enabled path ──────────────────────────────────────────────────
+        # Always include deliver_chat_message; only include create_garage_post if creds exist
         garage_creds = SecretService.get_secret(db, req.agent_id, "garage_feed") if db else None
-        if garage_creds:
+        active_tools = [t for t in GARAGE_TOOLS if t["function"]["name"] != "create_garage_post" or garage_creds]
+        if active_tools:
             probe_body = {
                 "model": f"openclaw:{req.agent_id}",
                 "messages": messages,
                 "stream": False,
                 "user": user_field,
-                "tools": GARAGE_TOOLS,
+                "tools": active_tools,
             }
             async with httpx.AsyncClient(timeout=_HTTPX_TIMEOUT) as client:
                 try:
@@ -384,6 +386,7 @@ class ChatService:
                     tool_results: list[dict] = []
                     for tc in tool_calls:
                         fn_name = tc.get("function", {}).get("name")
+                        result = None
                         if fn_name == "create_garage_post":
                             try:
                                 args = json.loads(tc["function"]["arguments"])
@@ -394,6 +397,18 @@ class ChatService:
                                 )
                             except Exception as exc:
                                 result = f"Tool execution error: {exc}"
+                        elif fn_name == "deliver_chat_message":
+                            try:
+                                args = json.loads(tc["function"]["arguments"])
+                                result = await execute_deliver_chat_message(
+                                    agent_id=req.agent_id,
+                                    user_id=req.user_id,
+                                    session_id=req.session_id or "",
+                                    content=args.get("content", ""),
+                                )
+                            except Exception as exc:
+                                result = f"Tool execution error: {exc}"
+                        if result is not None:
                             tool_results.append({
                                 "role": "tool",
                                 "tool_call_id": tc["id"],
@@ -551,6 +566,14 @@ class ChatService:
         session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
         bg_task.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
 
+        # Log chat activity
+        if db:
+            from .agent_activity_service import log_activity_sync
+            preview = (req.message or "")[:80]
+            log_activity_sync(db, req.agent_id, "chat_message_received",
+                f"Chat: \"{preview}{'…' if len(req.message or '') > 80 else ''}\"",
+                metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": True})
+
         return StreamingResponse(
             self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
             media_type="text/event-stream",
@@ -628,6 +651,19 @@ class ChatService:
                     choice = data["choices"][0]
                     message = choice.get("message", {})
                     content = message.get("content", "")
+
+                # Log chat activity
+                if db:
+                    from .agent_activity_service import log_activity_sync
+                    preview = (req.message or "")[:80]
+                    log_activity_sync(db, req.agent_id, "chat_message_received",
+                        f"Chat: \"{preview}{'…' if len(req.message or '') > 80 else ''}\"",
+                        metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": False})
+                    resp_preview = content[:80] if content else ""
+                    log_activity_sync(db, req.agent_id, "chat_response_sent",
+                        f"Reply: \"{resp_preview}{'…' if len(content) > 80 else ''}\"",
+                        metadata={"session_id": req.session_id, "response_length": len(content)})
+
                 return {"response": content, "raw": data}
             except httpx.ConnectError as exc:
                 raise HTTPException(

@@ -8,6 +8,8 @@ class LinearIntegration(BaseHTTPIntegration):
 
     name = "linear"
     display_name = "Linear"
+    is_active = False
+    test_connection = ("POST", "/graphql")
     api_type = "rest"
     base_url = "https://api.linear.app"
 

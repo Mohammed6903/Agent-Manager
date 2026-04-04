@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent_manager.database import Base
 from agent_manager.models import GoogleAccount, AgentSecret, CronOwnership, CronPipelineRun  # Import to register models
+from agent_manager.models.agent_activity import AgentActivity  # noqa: F401
 
 load_dotenv()
 
