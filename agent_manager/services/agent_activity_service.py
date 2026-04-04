@@ -35,28 +35,31 @@ async def log_activity(
     This is the single entry point for all agent activity logging.
     Call it from any service after an action completes.
     """
-    repo = AgentActivityRepository(db)
-    activity = repo.create(
-        agent_id=agent_id,
-        activity_type=activity_type,
-        summary=summary,
-        metadata=metadata,
-        status=status,
-    )
+    try:
+        repo = AgentActivityRepository(db)
+        activity = repo.create(
+            agent_id=agent_id,
+            activity_type=activity_type,
+            summary=summary,
+            metadata=metadata,
+            status=status,
+        )
 
-    # Broadcast to connected clients
-    event_data = {
-        "id": str(activity.id),
-        "agent_id": activity.agent_id,
-        "activity_type": activity.activity_type,
-        "summary": activity.summary,
-        "metadata": activity.metadata_,
-        "status": activity.status,
-        "created_at": activity.created_at.isoformat(),
-    }
+        # Broadcast to connected clients
+        event_data = {
+            "id": str(activity.id),
+            "agent_id": activity.agent_id,
+            "activity_type": activity.activity_type,
+            "summary": activity.summary,
+            "metadata": activity.metadata_,
+            "status": activity.status,
+            "created_at": activity.created_at.isoformat(),
+        }
 
-    await activity_ws_manager.broadcast("agent_activity", event_data)
-    logger.debug("Activity logged: agent=%s type=%s", agent_id, activity_type)
+        await activity_ws_manager.broadcast("agent_activity", event_data)
+        logger.debug("Activity logged: agent=%s type=%s", agent_id, activity_type)
+    except Exception:
+        logger.exception("Failed to log activity: agent=%s type=%s", agent_id, activity_type)
 
 
 def log_activity_sync(
@@ -72,12 +75,15 @@ def log_activity_sync(
     Persists to DB but does NOT broadcast via WebSocket (async-only).
     The frontend will pick up these events on next REST poll.
     """
-    repo = AgentActivityRepository(db)
-    repo.create(
-        agent_id=agent_id,
-        activity_type=activity_type,
-        summary=summary,
-        metadata=metadata,
-        status=status,
-    )
-    logger.debug("Activity logged (sync): agent=%s type=%s", agent_id, activity_type)
+    try:
+        repo = AgentActivityRepository(db)
+        repo.create(
+            agent_id=agent_id,
+            activity_type=activity_type,
+            summary=summary,
+            metadata=metadata,
+            status=status,
+        )
+        logger.debug("Activity logged (sync): agent=%s type=%s", agent_id, activity_type)
+    except Exception:
+        logger.exception("Failed to log activity (sync): agent=%s type=%s", agent_id, activity_type)

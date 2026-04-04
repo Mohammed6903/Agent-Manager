@@ -20,6 +20,7 @@ logger = logging.getLogger("agent_manager.services.cron_service")
 class CronService:
     def __init__(self, gateway: GatewayClient, db: Session):
         self.gateway = gateway
+        self.db = db
         self.ownership = CronOwnershipRepository(db)
         self.pipelines = CronPipelineRepository(db)
 

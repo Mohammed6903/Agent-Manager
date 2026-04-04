@@ -560,6 +560,25 @@ async def cron_webhook_receiver(
         import asyncio
         asyncio.create_task(cron_ws_manager.broadcast("cron_run_finished", {"job_id": job_id, "run": run_data}))
 
+        # Log to unified activity stream
+        if agent_id:
+            from ..services.agent_activity_service import log_activity_sync
+            duration_s = round(int(duration) / 1000, 1) if duration else 0
+            activity_summary = f"Cron job completed: {job_id} ({pipeline_status}, {duration_s}s)"
+            if run_summary:
+                activity_summary += f" — {run_summary[:100]}"
+            log_activity_sync(
+                db, agent_id, "cron_run_completed", activity_summary,
+                metadata={
+                    "job_id": job_id,
+                    "pipeline_status": pipeline_status,
+                    "duration_ms": duration,
+                    "tasks_count": len(tasks),
+                    "model": payload.get("model"),
+                },
+                status="success" if pipeline_status == "success" else "error",
+            )
+
         # Send summary to Garage chat (strip pipeline_result block)
         from ..tools.garage_tool import send_cron_summary_to_chat
         from ..repositories.cron_ownership_repository import CronOwnershipRepository as OwnerRepo
