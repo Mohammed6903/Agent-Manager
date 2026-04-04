@@ -1,6 +1,9 @@
-"""Server-side heartbeat — runs every 5 seconds for all active agents.
+"""Server-side heartbeat — broadcasts every 5 seconds, persists every 30 seconds.
 
-Persists heartbeat to agent_activities and broadcasts via WebSocket.
+The WebSocket broadcast runs every 5s so the frontend feels live.
+The DB write only happens every 30s to keep storage sane (~2,880 rows/agent/day
+instead of 17,280).
+
 Launched as a background asyncio task during app lifespan.
 """
 
@@ -9,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 
 import psutil
 from sqlalchemy import select
@@ -21,81 +25,98 @@ from ..ws_manager import activity_ws_manager
 logger = logging.getLogger("agent_manager.services.heartbeat_service")
 
 _SERVER_BOOT_TIME = time.time()
-HEARTBEAT_INTERVAL = 5  # seconds
+BROADCAST_INTERVAL = 5   # seconds — WebSocket push (live feel)
+PERSIST_INTERVAL = 30    # seconds — DB write (storage-friendly)
 
 
 async def _run_heartbeat_loop():
     """Infinite loop that emits heartbeats for every active agent."""
-    logger.info("Heartbeat service started (interval=%ds)", HEARTBEAT_INTERVAL)
+    logger.info(
+        "Heartbeat service started (broadcast=%ds, persist=%ds)",
+        BROADCAST_INTERVAL, PERSIST_INTERVAL,
+    )
 
+    tick = 0
     while True:
         try:
-            await _emit_heartbeats()
+            should_persist = (tick % (PERSIST_INTERVAL // BROADCAST_INTERVAL)) == 0
+            await _emit_heartbeats(persist=should_persist)
         except Exception:
             logger.exception("Heartbeat cycle failed")
 
-        await asyncio.sleep(HEARTBEAT_INTERVAL)
+        tick += 1
+        await asyncio.sleep(BROADCAST_INTERVAL)
 
 
-async def _emit_heartbeats():
-    """Single heartbeat cycle — query agents, log + broadcast for each."""
-    db = SessionLocal()
+async def _emit_heartbeats(*, persist: bool):
+    """Single heartbeat cycle — always broadcast, optionally persist."""
+    db = SessionLocal() if persist else None
     try:
         now = time.time()
         uptime_secs = int(now - _SERVER_BOOT_TIME)
+        timestamp = datetime.now(timezone.utc).isoformat()
 
-        # System metrics (once per cycle, shared across all agents)
+        # System metrics (once per cycle)
         cpu_percent = psutil.cpu_percent(interval=None)
         mem = psutil.virtual_memory()
         mem_used_mb = round(mem.used / (1024 * 1024))
         mem_percent = mem.percent
 
-        # Get all subscriptions to determine which agents exist + their status
-        subs = db.execute(select(AgentSubscription)).scalars().all()
+        # Get all subscriptions
+        session = db or SessionLocal()
+        try:
+            subs = session.execute(select(AgentSubscription)).scalars().all()
+        finally:
+            if not db:
+                session.close()
 
         if not subs:
             return
 
-        repo = AgentActivityRepository(db)
+        repo = AgentActivityRepository(db) if db else None
 
         for sub in subs:
             agent_id = sub.agent_id
             status = "offline" if sub.status in ("locked", "deleted") else "online"
-
             summary = f"Heartbeat {status.upper()} — cpu {cpu_percent}% mem {mem_used_mb}MB ({mem_percent}%)"
 
-            activity = repo.create(
-                agent_id=agent_id,
-                activity_type="heartbeat",
-                summary=summary,
-                metadata={
-                    "cpu_percent": cpu_percent,
-                    "mem_used_mb": mem_used_mb,
-                    "mem_percent": mem_percent,
-                    "uptime_seconds": uptime_secs,
-                },
-                status=status,
-            )
+            metadata = {
+                "cpu_percent": cpu_percent,
+                "mem_used_mb": mem_used_mb,
+                "mem_percent": mem_percent,
+                "uptime_seconds": uptime_secs,
+            }
 
-            # Broadcast via WebSocket
+            # Persist to DB only on persist ticks
+            activity_id = None
+            if repo:
+                try:
+                    activity = repo.create(
+                        agent_id=agent_id,
+                        activity_type="heartbeat",
+                        summary=summary,
+                        metadata=metadata,
+                        status=status,
+                    )
+                    activity_id = str(activity.id)
+                except Exception:
+                    logger.exception("Failed to persist heartbeat for %s", agent_id)
+
+            # Always broadcast via WebSocket
             event_data = {
-                "id": str(activity.id),
+                "id": activity_id or f"hb-{agent_id}-{int(now)}",
                 "agent_id": agent_id,
                 "activity_type": "heartbeat",
                 "summary": summary,
-                "metadata": {
-                    "cpu_percent": cpu_percent,
-                    "mem_used_mb": mem_used_mb,
-                    "mem_percent": mem_percent,
-                    "uptime_seconds": uptime_secs,
-                },
+                "metadata": metadata,
                 "status": status,
-                "created_at": activity.created_at.isoformat(),
+                "created_at": timestamp,
             }
             await activity_ws_manager.broadcast("agent_activity", event_data)
 
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 def start_heartbeat_task() -> asyncio.Task:
