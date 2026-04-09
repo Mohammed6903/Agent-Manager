@@ -218,5 +218,46 @@ class Settings(BaseSettings):
     MICROSOFT_CLIENT_ID: str = ""
     MICROSOFT_CLIENT_SECRET: str = ""
 
+    # ── Voice Call (Telnyx + Voxtral) ───────────────────────────────────────
+    # Carrier credentials — Telnyx Voice API v2 (Call Control).
+    TELNYX_API_KEY: str = ""
+    TELNYX_PUBLIC_KEY: str = ""          # Ed25519 public key for webhook signature verification
+    TELNYX_CONNECTION_ID: str = ""       # Voice API Application ID
+    TELNYX_FROM_NUMBER: str = ""         # E.164 format, e.g. "+19296959142"
+
+    # Voxtral (Mistral) STT + TTS credentials.
+    MISTRAL_API_KEY: str = ""
+    VOXTRAL_VOICE_ID: str = "98559b22-62b5-4a64-a7cd-fc78ca41faa8"  # Paul (default)
+    VOXTRAL_TTS_MODEL: str = "voxtral-mini-tts-2603"
+    VOXTRAL_STT_MODEL: str = "voxtral-mini-2602"
+
+    # Voice call behavior.
+    VOICE_CALL_PUBLIC_URL: str = ""        # Public https/wss base URL the carrier can reach, e.g. "https://xxx.ngrok-free.dev"
+    VOICE_CALL_MAX_DURATION_SEC: int = 600  # Hard cap per call
+    # Silence threshold that ends a user turn (voxtral mode). 700 ms was too
+    # aggressive — natural speech has pauses for breath / mid-sentence
+    # thinking that exceeded that. 1500 ms tolerates conversational pauses
+    # while still ending the turn promptly when the user is actually done.
+    VOICE_CALL_STT_SILENCE_MS: int = 1500
+    VOICE_CALL_STT_MIN_TURN_MS: int = 300   # Minimum audio before STT is triggered (voxtral mode)
+
+    # On/off switch for Voxtral. When False, bypass the media stream entirely
+    # and use Telnyx's built-in TTS (/actions/speak via Polly) and STT
+    # (/actions/transcription_start via Google) — no client-side audio
+    # processing. Useful for A/B testing voice quality and as a fallback
+    # if Voxtral has issues. Default True to keep voxtral as the primary mode.
+    VOICE_CALL_USE_VOXTRAL: bool = True
+    # Polly voice id used when VOICE_CALL_USE_VOXTRAL=False. See:
+    # https://developers.telnyx.com/api/call-control/CallCommandsSpeak
+    VOICE_CALL_TELNYX_TTS_VOICE: str = "Polly.Joanna"
+    VOICE_CALL_TELNYX_TTS_LANGUAGE: str = "en-US"
+    VOICE_CALL_TELNYX_STT_LANGUAGE: str = "en"
+    # Telnyx STT engine: "A" = Google (default), "B" = Telnyx's own ASR.
+    VOICE_CALL_TELNYX_STT_ENGINE: str = "B"
+    # Telnyx STT fires "final" events at every micro-pause, fragmenting
+    # one sentence into many tiny transcripts. We aggregate fragments
+    # received within this window into a single agent turn.
+    VOICE_CALL_TRANSCRIPT_DEBOUNCE_MS: int = 1500
+
 
 settings = Settings()

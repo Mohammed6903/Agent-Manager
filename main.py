@@ -63,6 +63,7 @@ from agent_manager.integrations.quickbooks.router import router as quickbooks_ro
 from agent_manager.integrations.xero.router import router as xero_router
 from agent_manager.integrations.twilio.router import router as twilio_router
 from agent_manager.integrations.whatsapp.router import router as whatsapp_router
+from agent_manager.voice_call.router import router as voice_call_router
 from agent_manager.integrations.telegram.router import router as telegram_router
 from agent_manager.integrations.wordpress.router import router as wordpress_router
 from agent_manager.integrations.woocommerce.router import router as woocommerce_router
@@ -281,6 +282,13 @@ app.include_router(
 app.include_router(
     integration_router,
     prefix="/api/integrations",
+    responses={404: {"description": "Resource not found"}},
+)
+
+# Voice call endpoints (outbound calls + Telnyx webhook + media stream WS)
+app.include_router(
+    voice_call_router,
+    prefix="/api/voice",
     responses={404: {"description": "Resource not found"}},
 )
 

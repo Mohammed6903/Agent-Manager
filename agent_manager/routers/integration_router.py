@@ -197,6 +197,22 @@ def get_agent_integrations(
 
     return AgentIntegrationsStatusResponse(connected=connected, available=available)
 
+@router.get("/agent/{agent_id}/names")
+def get_agent_integration_names(
+    agent_id: str,
+    db: Session = Depends(get_db),
+):
+    """Lightweight endpoint returning just the names of integrations connected to an agent.
+
+    Used by the OpenClaw plugin (agent-manager-extension) to filter the agent's
+    tool inventory on every model attempt. Performance-critical path — keep
+    response shape minimal.
+    """
+    from ..repositories.integration_repository import IntegrationRepository
+    repo = IntegrationRepository(db)
+    assignments = repo.get_agent_integrations(agent_id)
+    return {"integrations": [a.integration_name for a in assignments]}
+
 @router.get("/{integration_name}/credentials", response_model=Dict[str, Any])
 def get_integration_credentials(
     integration_name: str,

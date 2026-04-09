@@ -8,7 +8,7 @@ from .database import get_db
 from .repositories.storage import StorageRepository
 from .repositories.filesystem_storage import FileSystemStorage
 from .clients.gateway_client import GatewayClient
-from .clients.cli_gateway_client import CLIGatewayClient
+from .clients.ws_gateway_client import WSGatewayClient
 from .services.agent_service import AgentService
 from .services.session_service import SessionService
 from .services.chat_service import ChatService
@@ -20,7 +20,7 @@ from .services.subscription_service import SubscriptionService
 
 # Singletons for storage and gateway client (can be swapped based on config)
 _storage = FileSystemStorage()
-_gateway = CLIGatewayClient()
+_gateway = WSGatewayClient()
 _chat = ChatService()
 
 def get_storage() -> StorageRepository:

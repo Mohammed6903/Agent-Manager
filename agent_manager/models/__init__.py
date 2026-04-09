@@ -12,6 +12,7 @@ from .agent_registry import AgentRegistry
 from .agent_subscription import AgentSubscription
 from .wallet_transaction import WalletTransaction
 from .failed_ingestion import FailedIngestion
+from .voice_call import VoiceCall, VoiceCallTurn
 
 __all__ = [
     "AgentRegistry",
@@ -32,4 +33,6 @@ __all__ = [
     "ThirdPartyContext",
     "ThirdPartyContextAssignment",
     "ChatUsageLog",
+    "VoiceCall",
+    "VoiceCallTurn",
 ]

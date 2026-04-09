@@ -4,6 +4,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..clients.plugin_notifier import notify_plugin_integration_change
 from ..models.integration import AgentIntegration, IntegrationLog
 
 
@@ -27,7 +28,7 @@ class IntegrationRepository:
                 self.db.commit()
                 self.db.refresh(existing)
             return existing
-            
+
         mapping = AgentIntegration(
             agent_id=agent_id,
             integration_name=integration_name,
@@ -36,6 +37,7 @@ class IntegrationRepository:
         self.db.add(mapping)
         self.db.commit()
         self.db.refresh(mapping)
+        notify_plugin_integration_change(agent_id)
         return mapping
 
     def update_metadata(self, agent_id: str, integration_name: str, metadata: dict) -> Optional[AgentIntegration]:
@@ -71,6 +73,7 @@ class IntegrationRepository:
         if mapping:
             self.db.delete(mapping)
             self.db.commit()
+            notify_plugin_integration_change(agent_id)
             return True
         return False
 
@@ -96,6 +99,7 @@ class IntegrationRepository:
             sa_delete(AgentIntegration).where(AgentIntegration.agent_id == agent_id)
         )
         self.db.commit()
+        notify_plugin_integration_change(agent_id)
 
     def create_log(self, integration_name: str, agent_id: str, method: str, endpoint: str, status_code: int, duration_ms: int, request_id: Optional[str] = None, error_message: Optional[str] = None) -> IntegrationLog:
         log = IntegrationLog(

@@ -200,7 +200,7 @@ class SubscriptionService:
         self.sub_repo.lock(agent_id)
 
         # Disable crons by removing them from the gateway
-        from ..clients.cli_gateway_client import CLIGatewayClient
+        from ..dependencies import get_gateway
 
         cron_entries = (
             self.db.query(CronOwnership)
@@ -209,7 +209,7 @@ class SubscriptionService:
         )
 
         if cron_entries:
-            gateway = CLIGatewayClient()
+            gateway = get_gateway()
             for entry in cron_entries:
                 try:
                     await gateway.cron_remove(entry.cron_id)
