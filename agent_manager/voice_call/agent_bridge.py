@@ -58,19 +58,38 @@ TOOLS_INVOKE_TIMEOUT_S = 60.0
 class VoiceAgentSession:
     """Per-call agent conversation state.
 
-    The `user_field` is openclaw's session disambiguator — different values
-    produce different sessions. We use ``voice:{call_id}`` so each voice call
-    has its own clean context that won't collide with chat sessions.
+    The ``user_field`` is openclaw's session disambiguator AND its way of
+    identifying the human user the agent is acting on behalf of. The chat
+    service builds it as ``"{agent_id}:{user_id}"`` (with optional
+    ``:{session_id}`` suffix) — openclaw extracts ``user_id`` from the
+    second segment to look up wallet, integrations (Gmail, Calendar, etc.)
+    and other user-scoped resources. **The voice path MUST follow the
+    same shape**, otherwise tools that need user context (send_email,
+    schedule_event, anything reading user state) silently get no user
+    and either fail or operate without authorization.
+
+    For voice calls we use ``"{agent_id}:{user_id}:voice:{call_id}"`` so
+    each call gets its own per-session conversation history while still
+    being correctly attributed to the user.
     """
 
     call_id: str
     agent_id: str
+    user_id: Optional[str] = None
     system_prompt: Optional[str] = None
     messages: list[dict] = field(default_factory=list)
 
     @property
     def user_field(self) -> str:
-        return f"voice:{self.call_id}"
+        # Match agent_manager.services.chat_service._build_user_field shape
+        # exactly: {agent_id}:{user_id}[:{session_id}]. We use the call_id
+        # as the session_id so each voice call has an isolated conversation.
+        # If user_id is missing, fall back to a per-call placeholder so
+        # openclaw still gets a parseable string (no crash) but tools that
+        # need a real user will report the error rather than silently
+        # acting on the wrong user.
+        uid = self.user_id or "unknown"
+        return f"{self.agent_id}:{uid}:voice:{self.call_id}"
 
     @property
     def session_key(self) -> str:

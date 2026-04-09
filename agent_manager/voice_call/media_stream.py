@@ -202,6 +202,7 @@ async def handle_media_stream(
     runtime.agent_session = VoiceAgentSession(
         call_id=call_id,
         agent_id=persistent.get("agent_id") or "",
+        user_id=persistent.get("user_id") or None,
         system_prompt=persistent.get("system_prompt"),
     )
     runtime.ws = ws

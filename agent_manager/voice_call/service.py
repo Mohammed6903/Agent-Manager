@@ -156,6 +156,7 @@ class VoiceCallService:
             direction="outbound",
             use_voxtral=use_voxtral,
             agent_id=req.agent_id,
+            user_id=req.user_id,
             initial_message=greeting,
             system_prompt=req.system_prompt,
         )
