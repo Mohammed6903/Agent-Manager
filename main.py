@@ -191,9 +191,13 @@ async def lifespan(app: FastAPI):
 
     backfill_task = asyncio.create_task(_backfill_manual_contexts())
 
+    # Note: no PDF extractor pre-warm. The switch from docling to
+    # pdfplumber eliminated the cold-start model download — pdfplumber
+    # is pure Python and loads on import with no setup cost.
+
     yield
 
-    # Stop heartbeat + backfill
+    # Stop heartbeat + background tasks
     heartbeat_task.cancel()
     try:
         await heartbeat_task

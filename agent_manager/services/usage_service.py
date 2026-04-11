@@ -1419,11 +1419,19 @@ class UsageService:
                 "Deducted %d cents from user %s for session %s",
                 amount_cents, user_id, session_id,
             )
+
+            # If this deduction pushed the user below the min balance,
+            # auto-disable every cron they own so scheduled jobs can't
+            # keep draining what's already empty. Idempotent.
+            await self._auto_disable_crons_if_wallet_blocked(user_id)
         except (InsufficientBalanceError, DebtLimitReachedError) as exc:
             logger.warning(
                 "Wallet deduction failed for user %s, session %s: %s",
                 user_id, session_id, exc,
             )
+            # Wallet refused the deduction — user is definitely blocked.
+            # Disable their crons immediately.
+            await self._auto_disable_crons_if_wallet_blocked(user_id)
         except Exception as exc:
             logger.error("Failed to deduct session cost for %s: %s", session_id, exc)
 
@@ -1488,13 +1496,59 @@ class UsageService:
                 "Deducted %d cents from user %s for cron run %s",
                 amount_cents, user_id, run_id,
             )
+
+            # After a cron run deducts, re-check balance. If this run
+            # pushed the user negative, disable all their other crons
+            # before the next scheduled fire time. This is the primary
+            # defense for "don't let crons keep draining a dry wallet".
+            await self._auto_disable_crons_if_wallet_blocked(user_id)
         except (InsufficientBalanceError, DebtLimitReachedError) as exc:
             logger.warning(
                 "Wallet deduction failed for user %s, cron run %s: %s",
                 user_id, run_id, exc,
             )
+            # Wallet refused — user is blocked. Disable immediately.
+            await self._auto_disable_crons_if_wallet_blocked(user_id)
         except Exception as exc:
             logger.error("Failed to deduct cron cost for %s: %s", run_id, exc)
+
+    async def _auto_disable_crons_if_wallet_blocked(self, user_id: str) -> None:
+        """Helper: if the user is now wallet-blocked, disable all their crons.
+
+        Called after every successful OR failed wallet deduction so the
+        system reacts as fast as possible when balance crosses the line.
+        Safe to call unconditionally — ``disable_crons_for_user`` only
+        touches crons with ``disabled_reason IS NULL``, so already-auto-
+        disabled rows are no-ops.
+
+        ALSO calls the restore helper at the end. Restore is idempotent
+        and cheap (short-circuits when the user is still blocked or has
+        nothing flagged), but when a user has topped up since last
+        deduct, this is the place where the transition from "blocked"
+        to "unblocked" gets observed and their auto-disabled crons get
+        reactivated. Combined with the explicit
+        ``POST /api/crons/restore-for-user`` endpoint that the Billing
+        page calls after a successful payment, this covers both the
+        active-use recovery path and the explicit top-up path.
+        """
+        try:
+            from .cron_gate_service import (
+                disable_crons_for_user,
+                is_user_wallet_blocked,
+                restore_crons_for_user_if_unblocked,
+            )
+            if await is_user_wallet_blocked(user_id):
+                await disable_crons_for_user(self.db, self.gateway, user_id)
+            else:
+                await restore_crons_for_user_if_unblocked(
+                    self.db, self.gateway, user_id
+                )
+        except Exception as exc:
+            logger.warning(
+                "_auto_disable_crons_if_wallet_blocked failed for user %s: %s",
+                user_id,
+                exc,
+            )
 
     def _resolve_agent_name(self, agent_id: str) -> str:
         """Look up agent display name from the registry, falling back to agent_id."""

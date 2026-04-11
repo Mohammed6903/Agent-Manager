@@ -249,6 +249,12 @@ class Settings(BaseSettings):
     VOICE_CALL_STT_SILENCE_MS: int = 1500
     VOICE_CALL_STT_MIN_TURN_MS: int = 300   # Minimum audio before STT is triggered (voxtral mode)
 
+    # ── Manual context PDF uploads ──────────────────────────────────────────
+    # Max PDF upload size for manual-context ingestion. 10 MB is enough for
+    # a several-thousand-page text document or a few dozen pages of scans.
+    # Bump this if users upload larger documents routinely.
+    MANUAL_CONTEXT_PDF_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
+
     # On/off switch for Voxtral. When False, bypass the media stream entirely
     # and use Telnyx's built-in TTS (/actions/speak via Polly) and STT
     # (/actions/transcription_start via Google) — no client-side audio

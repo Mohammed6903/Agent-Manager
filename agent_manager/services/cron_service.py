@@ -13,6 +13,7 @@ from ..schemas.cron import CreateCronRequest, UpdateCronRequest, CronResponse
 from ..config import settings
 from ..ws_manager import cron_ws_manager
 from ..utils.cron_utils import sanitize_cron_expr
+from .cron_gate_service import is_user_wallet_blocked
 
 logger = logging.getLogger("agent_manager.services.cron_service")
 
@@ -26,6 +27,21 @@ class CronService:
 
     async def create_cron(self, req: CreateCronRequest) -> str:
         """Create a cron job in OpenClaw and store ownership."""
+        # Wallet gate: users at or beyond the min-balance / debt-cap line
+        # can't create new crons. Prevents the "I have $0 but I can still
+        # schedule recurring work" loophole.
+        if req.user_id and await is_user_wallet_blocked(req.user_id, req.agent_id or ""):
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "wallet_blocked",
+                    "message": (
+                        "Your wallet is empty or past the debt limit. "
+                        "Add credits before creating scheduled tasks."
+                    ),
+                },
+            )
+
         # Build the OpenClaw job dict
         schedule = {"kind": req.schedule_kind, "expr": req.schedule_expr}
         if req.schedule_kind == "cron":
@@ -310,6 +326,23 @@ class CronService:
 
     async def trigger_cron(self, job_id: str) -> dict:
         """Run the job immediately."""
+        # Wallet gate for manual triggers. We pull the owning user_id
+        # from the cron_ownership row so we know whose wallet to check.
+        ownership = self.ownership.get(job_id)
+        owner_user_id = ownership.get("user_id") if ownership else None
+        owner_agent_id = ownership.get("agent_id") if ownership else ""
+        if owner_user_id and await is_user_wallet_blocked(owner_user_id, owner_agent_id or ""):
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "wallet_blocked",
+                    "message": (
+                        "Your wallet is empty or past the debt limit. "
+                        "Add credits before triggering scheduled tasks."
+                    ),
+                },
+            )
+
         result = await self.gateway.cron_run(job_id)
 
         # Broadcast trigger

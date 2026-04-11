@@ -1,14 +1,16 @@
 import asyncio
 import json
+import os
 import uuid
 from typing import List, Optional
 
 from celery.contrib.abortable import AbortableAsyncResult
-from fastapi import APIRouter, Depends, Response, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Response, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..celery_app import celery_app
+from ..config import settings
 from ..database import get_db
 from ..schemas.context import (
     AgentContextAssignRequest,
@@ -18,8 +20,9 @@ from ..schemas.context import (
     GlobalContextCreate,
     GlobalContextResponse,
     GlobalContextUpdate,
+    UploadPdfResponse,
 )
-from ..services import manual_context_service
+from ..services import manual_context_service, pdf_extraction_service
 from ..services.context_service import ContextService
 from ..services.third_party_context_service import ThirdPartyContextService
 from agent_manager.tasks.gmail.ingest_task import get_active_tasks
@@ -39,6 +42,139 @@ def create_global_context(
     org_id: Optional[str] = Query(default=None),
 ):
     return svc.create_global_context(req, org_id=org_id)
+
+
+@router.post("/upload-pdf", response_model=UploadPdfResponse)
+async def upload_pdf_context(
+    file: UploadFile = File(..., description="PDF file to extract into a knowledge context"),
+    name: Optional[str] = Query(
+        default=None,
+        description=(
+            "Optional context name. If omitted, derived from the uploaded "
+            "filename (extension stripped). Must be unique within the org."
+        ),
+    ),
+    use_ocr: bool = Query(
+        default=False,
+        description=(
+            "Run Mistral OCR on the PDF. Enable for scanned, image-based, "
+            "or heavily-formatted documents. Leave off for born-digital "
+            "PDFs — the local path is faster and free."
+        ),
+    ),
+    org_id: Optional[str] = Query(default=None),
+    svc: ContextService = Depends(get_context_service),
+):
+    """Upload a PDF and create a manual context from its contents.
+
+    Flow:
+
+    1. Validate MIME (application/pdf) and size (``MANUAL_CONTEXT_PDF_MAX_BYTES``).
+    2. Extract markdown via ``pdf_extraction_service.extract_pdf``.
+       The ``use_ocr`` flag selects between the local docling path (fast,
+       free, good for born-digital) and the Mistral OCR path (handles
+       scanned documents and complex layouts).
+    3. Hand the extracted markdown to ``ContextService.create_global_context``,
+       which triggers the existing chunk + embed + Qdrant pipeline.
+    4. Return the created ``GlobalContext`` alongside extraction metadata
+       (page count, char count, OCR flag, and — if the heuristic fired —
+       a warning that the document may need OCR for complete results).
+
+    The response ``warning`` field is ``null`` on OCR uploads and on
+    non-OCR uploads where the heuristic determined the content looks
+    complete. Clients should surface the warning to the user so they
+    know to re-upload with OCR if the stored context looks thin.
+    """
+    # ── Content-type check ─────────────────────────────────────────────
+    # FastAPI's UploadFile.content_type is what the client advertised,
+    # which can lie. We accept "application/pdf" and a couple of common
+    # variants; a hostile client could still spoof this but the downstream
+    # extractors will fail on non-PDF bytes, so this is a cheap front-door
+    # filter, not a security boundary.
+    content_type = (file.content_type or "").lower()
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    is_pdf = content_type in ("application/pdf", "application/x-pdf") or ext == ".pdf"
+    if not is_pdf:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Expected a PDF upload (content-type 'application/pdf' or "
+                f"a .pdf filename), got content-type={content_type!r}, "
+                f"filename={file.filename!r}"
+            ),
+        )
+
+    # ── Size guard ─────────────────────────────────────────────────────
+    # Read the bytes up front (UploadFile is a SpooledTemporaryFile under
+    # the hood so this is cheap for typical sizes). Enforce the cap in
+    # one pass rather than trying to stream-count — manual uploads are
+    # bounded to a few tens of MB, not gigabytes.
+    pdf_bytes = await file.read()
+    size = len(pdf_bytes)
+    if size > settings.MANUAL_CONTEXT_PDF_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"PDF is {size:,} bytes, which exceeds the "
+                f"{settings.MANUAL_CONTEXT_PDF_MAX_BYTES:,}-byte upload limit. "
+                f"If you need to upload larger documents, raise "
+                f"MANUAL_CONTEXT_PDF_MAX_BYTES in config."
+            ),
+        )
+    if size == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # ── Extract ────────────────────────────────────────────────────────
+    # InvalidPdfError is a client error (bad file) — map to 400.
+    # The generic PdfExtractionError covers downstream failures
+    # (docling crash, Mistral OCR outage, timeouts) — map to 502.
+    try:
+        result = await pdf_extraction_service.extract_pdf(
+            pdf_bytes, use_ocr=use_ocr
+        )
+    except pdf_extraction_service.InvalidPdfError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except pdf_extraction_service.PdfExtractionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    if not result.markdown.strip():
+        # Happens only when BOTH pypdf and docling returned nothing for
+        # a PDF that passed the front-door check — almost certainly a
+        # fully scanned doc uploaded without OCR. Tell the user instead
+        # of silently creating an empty context.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No text content could be extracted from this PDF. It "
+                "appears to be a scanned or image-only document. Retry "
+                "with use_ocr=true to run Mistral OCR on the pages."
+            ),
+        )
+
+    # ── Resolve the context name ───────────────────────────────────────
+    final_name = (name or "").strip()
+    if not final_name:
+        # Derive from filename: strip directory (if any) and .pdf extension.
+        base = os.path.basename(file.filename or "uploaded-pdf.pdf")
+        final_name = os.path.splitext(base)[0] or "uploaded-pdf"
+
+    # ── Create the context (runs the full RAG pipeline) ────────────────
+    try:
+        created = svc.create_global_context(
+            GlobalContextCreate(name=final_name, content=result.markdown),
+            org_id=org_id,
+        )
+    except HTTPException:
+        # Re-raise service-layer errors (name conflict, etc.) as-is.
+        raise
+
+    return UploadPdfResponse(
+        context=GlobalContextResponse.model_validate(created),
+        page_count=result.page_count,
+        char_count=result.char_count,
+        used_ocr=result.used_ocr,
+        warning=result.warning,
+    )
 
 @router.get("", response_model=List[GlobalContextResponse])
 def list_global_contexts(

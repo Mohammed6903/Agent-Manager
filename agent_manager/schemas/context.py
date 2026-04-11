@@ -43,3 +43,32 @@ class ContextContentResponse(BaseModel):
     id: UUID
     name: str
     content: str
+
+
+class UploadPdfResponse(BaseModel):
+    """Response for POST /contexts/upload-pdf.
+
+    Wraps the freshly-created GlobalContext with extraction metadata so the
+    client can surface page counts, the OCR mode that was used, and — most
+    importantly — a ``warning`` string when our heuristics detected that
+    the PDF is probably scanned or image-based and would benefit from
+    re-uploading with OCR enabled.
+    """
+
+    context: GlobalContextResponse
+    page_count: int = Field(..., description="Total number of pages in the PDF")
+    char_count: int = Field(
+        ..., description="Characters of markdown text produced by the extraction"
+    )
+    used_ocr: bool = Field(
+        ..., description="Whether Mistral OCR was used. False means local text extraction."
+    )
+    warning: Optional[str] = Field(
+        None,
+        description=(
+            "Professional warning message when the extraction heuristic "
+            "detected that the document may be scanned or image-based and "
+            "the text density is lower than expected. None when the "
+            "extraction result looks complete or when OCR was used."
+        ),
+    )

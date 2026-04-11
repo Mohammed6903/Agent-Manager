@@ -446,6 +446,29 @@ async def trigger_cron(
     return await cron_service.trigger_cron(job_id)
 
 
+@router.post("/crons/restore-for-user", tags=["Cron Jobs"])
+async def restore_crons_for_user(
+    user_id: Annotated[str, Query(description="User whose auto-disabled crons should be restored")],
+    cron_service: Annotated[CronService, Depends(get_cron_service)],
+    db: Session = Depends(get_db),
+):
+    """Re-enable any crons auto-disabled due to negative wallet balance.
+
+    Called by the frontend after a successful wallet top-up. No-op if
+    the user is still below the minimum balance, or if they have no
+    auto-disabled crons. Returns the count of crons actually restored.
+
+    Only touches crons that our system auto-disabled
+    (``cron_ownership.disabled_reason = 'balance_negative'``). Crons
+    the user explicitly paused are never touched.
+    """
+    from ..services.cron_gate_service import restore_crons_for_user_if_unblocked
+    restored = await restore_crons_for_user_if_unblocked(
+        db, cron_service.gateway, user_id
+    )
+    return {"restored": restored, "user_id": user_id}
+
+
 @router.get("/crons/{job_id}/runs", tags=["Cron Jobs"])
 async def get_cron_runs(
     job_id: str,

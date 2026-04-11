@@ -13,6 +13,13 @@ class CronOwnership(Base):
     session_id = Column(String, nullable=False, index=True)
     agent_id = Column(String, nullable=False, index=True)
     created_at = Column(DateTime, default=func.now())
+    # Reason the cron was auto-disabled, if any. NULL means the cron's
+    # current enabled state was set by the user explicitly — we must
+    # not touch it. Currently the only value we write is
+    # "balance_negative" (user's wallet dropped below the minimum), but
+    # the field is a free-form string so new auto-disable reasons can
+    # be added later without a migration.
+    disabled_reason = Column(String, nullable=True)
 
 
 class CronPipelineRun(Base):
