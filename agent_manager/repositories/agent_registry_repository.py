@@ -1,11 +1,22 @@
 # repositories/agent_registry_repository.py
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from ..models.agent_registry import AgentRegistry
 
 
 class AgentRegistryRepository:
+    """CRUD + soft-delete access to the ``agent_registry`` table.
+
+    Soft-delete semantics: setting ``deleted_at`` hides the row from
+    ``list`` and ``get`` by default. Pass ``include_deleted=True`` to
+    bypass the filter (admin tools, restore flows). ``delete`` (hard
+    delete) remains available but should be reserved for true purges —
+    normal user-facing deletes go through ``soft_delete`` so the row
+    can be restored via ``restore``.
+    """
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -31,20 +42,35 @@ class AgentRegistryRepository:
         self.db.refresh(entry)
         return entry
 
-    def get(self, agent_id: str, org_id: str | None = None, user_id: str | None = None) -> AgentRegistry | None:
+    def get(
+        self,
+        agent_id: str,
+        org_id: str | None = None,
+        user_id: str | None = None,
+        include_deleted: bool = False,
+    ) -> AgentRegistry | None:
         q = self.db.query(AgentRegistry).filter(AgentRegistry.agent_id == agent_id)
         if org_id is not None:
             q = q.filter(AgentRegistry.org_id == org_id)
         if user_id is not None:
             q = q.filter(AgentRegistry.user_id == user_id)
+        if not include_deleted:
+            q = q.filter(AgentRegistry.deleted_at.is_(None))
         return q.first()
 
-    def list(self, org_id: str | None = None, user_id: str | None = None) -> List[AgentRegistry]:
+    def list(
+        self,
+        org_id: str | None = None,
+        user_id: str | None = None,
+        include_deleted: bool = False,
+    ) -> List[AgentRegistry]:
         q = self.db.query(AgentRegistry)
         if org_id is not None:
             q = q.filter(AgentRegistry.org_id == org_id)
         if user_id is not None:
             q = q.filter(AgentRegistry.user_id == user_id)
+        if not include_deleted:
+            q = q.filter(AgentRegistry.deleted_at.is_(None))
         return q.order_by(AgentRegistry.created_at.desc()).all()
 
     def update_name(self, agent_id: str, name: str) -> None:
@@ -53,7 +79,47 @@ class AgentRegistryRepository:
         ).update({"name": name})
         self.db.commit()
 
+    def soft_delete(self, agent_id: str) -> bool:
+        """Mark the agent as deleted by stamping ``deleted_at``.
+
+        Returns True if a row was updated, False if the agent_id
+        wasn't found (or was already soft-deleted — idempotent).
+        """
+        now = datetime.now(timezone.utc)
+        count = (
+            self.db.query(AgentRegistry)
+            .filter(
+                AgentRegistry.agent_id == agent_id,
+                AgentRegistry.deleted_at.is_(None),
+            )
+            .update({"deleted_at": now})
+        )
+        self.db.commit()
+        return count > 0
+
+    def restore(self, agent_id: str) -> bool:
+        """Clear ``deleted_at`` so the agent is visible again.
+
+        Returns True if a row was updated. Idempotent — restoring an
+        already-active agent returns False but doesn't raise.
+        """
+        count = (
+            self.db.query(AgentRegistry)
+            .filter(
+                AgentRegistry.agent_id == agent_id,
+                AgentRegistry.deleted_at.isnot(None),
+            )
+            .update({"deleted_at": None})
+        )
+        self.db.commit()
+        return count > 0
+
     def delete(self, agent_id: str) -> None:
+        """Hard-delete the registry row (purge, not recoverable).
+
+        Prefer ``soft_delete`` for user-facing deletes. This exists for
+        admin/purge flows that want the row actually gone from the DB.
+        """
         self.db.query(AgentRegistry).filter(
             AgentRegistry.agent_id == agent_id
         ).delete()

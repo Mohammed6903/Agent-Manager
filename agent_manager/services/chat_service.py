@@ -18,6 +18,7 @@ from ..clients.wallet_client import WalletClient, InsufficientBalanceError, get_
 from ..config import settings
 from ..database import SessionLocal
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post, execute_deliver_chat_message
+from ..services import manual_context_service
 from ..services.secret_service import SecretService
 from ..services.usage_service import UsageService
 from ..schemas.chat import ChatRequest, NewSessionResponse
@@ -327,14 +328,26 @@ class ChatService:
         )
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
-        # NOTE: automatic context injection was removed deliberately. With
-        # many plugins assigned to an agent, the cumulative cost of dumping
-        # every integration's "latest snapshot + top-k semantic hits" into
-        # the system prompt on every turn was unsustainable. Retrieval is
-        # now explicit: callers that need context hit the search endpoints
-        # (POST /api/contexts/search for manual contexts, or the per-
-        # integration routes for third-party) and decide per-turn whether
-        # to include the results.
+        # Auto-inject the most-relevant chunks from the agent's assigned
+        # manual contexts. This is the hybrid RAG path: a tight, score-
+        # gated, char-capped block that's pre-fetched on every turn so the
+        # model doesn't have to remember to call ``context_search`` for the
+        # common case. The relevance gate (AUTO_INJECT_MIN_SCORE) means
+        # unrelated turns (small talk, math, translation) skip injection
+        # entirely with no token cost beyond a single embedding call.
+        if db:
+            try:
+                ctx_block = manual_context_service.build_auto_inject_block(
+                    db, req.agent_id, req.message
+                )
+                if ctx_block:
+                    messages.insert(1, {"role": "system", "content": ctx_block})
+            except Exception as exc:
+                logger.warning(
+                    "Manual context auto-inject failed for agent %s: %s",
+                    req.agent_id,
+                    exc,
+                )
 
         headers = {
             "Content-Type": "application/json",
@@ -605,10 +618,21 @@ class ChatService:
 
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
-        # Context auto-injection removed — see note in _stream_gateway.
-        # Callers that need context must hit POST /api/contexts/search
-        # explicitly and decide per-turn whether to include chunks in the
-        # message history.
+        # Auto-inject manual context — same hybrid RAG path as
+        # _stream_gateway. See that function for the rationale.
+        if db:
+            try:
+                ctx_block = manual_context_service.build_auto_inject_block(
+                    db, req.agent_id, req.message
+                )
+                if ctx_block:
+                    messages.insert(1, {"role": "system", "content": ctx_block})
+            except Exception as exc:
+                logger.warning(
+                    "Manual context auto-inject failed for agent %s: %s",
+                    req.agent_id,
+                    exc,
+                )
 
         body = {
             "model": f"openclaw:{req.agent_id}",

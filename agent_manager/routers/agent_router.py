@@ -144,11 +144,32 @@ async def delete_agent(
     org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org before deleting"),
     user_id: Optional[str] = Query(default=None, description="Verify agent belongs to this user before deleting"),
 ):
-    """Delete an agent (gateway de-registration + filesystem cleanup).
+    """Soft-delete an agent (hidden from list/get, restorable).
 
     Pass ?org_id= or ?user_id= to enforce ownership before deletion.
+    The agent's registry row is marked deleted but preserved, the
+    openclaw gateway config is updated to stop serving the agent, and
+    any scheduled cron jobs it owned are cancelled. Recover via
+    ``POST /api/agents/{agent_id}/restore``.
     """
     return await agent_service.delete_agent(agent_id, org_id=org_id, user_id=user_id)
+
+
+@router.post("/agents/{agent_id}/restore", tags=["Agents"])
+async def restore_agent(
+    agent_id: str,
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    org_id: Optional[str] = Query(default=None, description="Verify agent belongs to this org before restoring"),
+    user_id: Optional[str] = Query(default=None, description="Verify agent belongs to this user before restoring"),
+):
+    """Restore a previously soft-deleted agent.
+
+    Clears the ``deleted_at`` marker on the registry row, re-registers
+    the agent with the openclaw gateway, and (if the subscription model
+    is enforced) reactivates the subscription row. Returns 404 if no
+    soft-deleted agent with this id exists for the given ownership scope.
+    """
+    return await agent_service.restore_agent(agent_id, org_id=org_id, user_id=user_id)
 
 
 

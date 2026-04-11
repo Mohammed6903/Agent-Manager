@@ -1,27 +1,38 @@
 """Manual-context RAG pipeline: chunk → embed → Qdrant store + search.
 
 Manual contexts (``GlobalContext``) are user-provided knowledge documents
-that can be assigned to any number of agents. Unlike third-party contexts
-(Gmail, Drive, etc.), they're NOT auto-injected into every chat turn —
-token cost scales poorly with many plugins, so retrieval is explicit: the
-client (or a future agent tool) hits the search endpoint when it decides
-it needs to look something up.
+that can be assigned to any number of agents. The chat path uses a
+hybrid retrieval strategy:
+
+1. **Auto-injection** (``build_auto_inject_block``): on every chat turn,
+   the chat service runs a top-k semantic search and injects the highest-
+   relevance chunks into the system prompt as a pre-fetched block. Token
+   cost is bounded by ``AUTO_INJECT_MAX_CHARS`` (~500 tokens) and gated
+   by ``AUTO_INJECT_MIN_SCORE`` so unrelated turns (small talk, math,
+   translation) skip injection entirely.
+
+2. **Explicit tool** (``search_for_agent``, exposed via the
+   ``context_search`` agent-manager tool): when the auto-injected baseline
+   isn't enough, the agent can explicitly request more chunks with a
+   higher top_k or a refined query.
 
 This module owns:
 
 - **Chunking**: character-window with overlap (sufficient for FAQs,
-  handbooks, policies, and most prose knowledge). No sentence/paragraph
-  awareness yet — can be upgraded later if needed.
+  handbooks, policies, and most prose knowledge).
 - **Hashing**: SHA-256 of content so we can skip re-embedding on
   rename-only edits.
-- **Embedding**: delegates to ``embed_service`` (OpenAI or Gemini,
-  configurable). Sync, inline with the API call — typical manual contexts
-  are small enough that a blocking embed is fine.
-- **Qdrant upsert/delete**: via ``qdrant_service``'s new manual-context
+- **Embedding**: delegates to ``embed_service`` (OpenAI or Gemini).
+  Sync, inline with the API call — typical manual contexts are small
+  enough that a blocking embed is fine.
+- **Qdrant upsert/delete**: via ``qdrant_service``'s manual-context
   helpers. Points are keyed by ``context_id`` (not ``agent_id``) because
   manual contexts are globals shared across agents.
 - **Retrieval**: ``search_for_agent`` resolves "what contexts is this
   agent assigned?" from Postgres, then vector-searches those in Qdrant.
+- **Auto-inject formatting**: ``build_auto_inject_block`` wraps the
+  retrieval result in a system-message block bounded by the relevance
+  and char-budget guardrails.
 
 Wiring:
 
@@ -29,8 +40,8 @@ Wiring:
   ``delete_context_chunks`` at the appropriate CRUD hooks.
 - The context router exposes ``/search`` and ``/reindex`` HTTP endpoints
   that wrap the functions here.
-- Chat/voice code does NOT auto-inject. If you want manual context in a
-  prompt, you explicitly call the search endpoint (or a future tool).
+- ``chat_service._stream_gateway`` and ``_chat_complete`` call
+  ``build_auto_inject_block`` and prepend the result as a system message.
 """
 from __future__ import annotations
 
@@ -55,10 +66,38 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE_CHARS = 800
 CHUNK_OVERLAP_CHARS = 100
 
-# Retrieval defaults. Top-5 is the industry norm for RAG over small
-# corpora; lower values risk missing the answer, higher values inflate
-# the payload the caller has to carry around.
+# ── Explicit-tool retrieval defaults ────────────────────────────────────────
+# Used by ``search_for_agent`` and the ``context_search`` agent tool.
+# Top-5 is the industry norm for explicit RAG; lower values risk missing
+# the answer, higher values inflate the payload.
 DEFAULT_TOP_K = 5
+
+# ── Auto-inject parameters (chat_service hybrid path) ───────────────────────
+# These are tighter than the explicit-tool defaults because auto-inject
+# pays a token tax on EVERY chat turn, not just the ones where the user
+# asks a context-relevant question.
+#
+# Top-3 (vs 5 for the tool) cuts the maximum token cost ~40% while still
+# covering cases where one chunk doesn't carry the full answer. The
+# agent can call ``context_search`` for more if needed.
+AUTO_INJECT_TOP_K = 3
+
+# Cosine-similarity threshold below which chunks are considered noise
+# and skipped entirely. Calibrated for ``text-embedding-3-small``: scores
+# below ~0.35 are typically tangentially related at best, and including
+# them just costs tokens without improving the answer. This is THE most
+# important guardrail — it makes auto-inject self-tuning. Domain queries
+# matching real documents score 0.5+ and get injected; small talk scores
+# 0.2-0.3 and silently skips injection. Free in token cost (one cheap
+# embedding call + Qdrant search regardless).
+AUTO_INJECT_MIN_SCORE = 0.35
+
+# Hard char cap on the entire injected block (header + chunks + footer).
+# 2000 chars ≈ 500 tokens at ~4 chars/token. With 3 chunks at the
+# 800-char chunk size (2400 chars total max), the cap forces truncation
+# of the lowest-relevance chunk to fit. The first ~1400 chars are
+# reserved for the highest-similarity chunks.
+AUTO_INJECT_MAX_CHARS = 2000
 
 
 def compute_content_hash(content: str) -> str:
@@ -287,8 +326,9 @@ def search_for_agent(
     ``chunk_index``, and ``text``. Empty list if the agent has no assigned
     contexts, the query is empty, or embedding fails.
 
-    Intentionally does NOT inject into any prompt — retrieval is explicit
-    and the caller decides what to do with the chunks.
+    Pure retrieval — does not format or inject. Used both by the explicit
+    ``context_search`` agent tool (via the HTTP route) and by
+    ``build_auto_inject_block`` (via direct call from chat_service).
     """
     if not query or not query.strip():
         return []
@@ -315,3 +355,119 @@ def search_for_agent(
         top_k=top_k,
     )
     return results
+
+
+def build_auto_inject_block(
+    db: Session,
+    agent_id: str,
+    user_message: str,
+) -> str | None:
+    """Build a system-message block for auto-injection on a chat turn.
+
+    This is the chat path's RAG hook. Called by ``chat_service`` on every
+    turn (streaming and non-streaming) before forwarding to the gateway.
+
+    Returns ``None`` (skip injection) when:
+
+    - The user message is empty/whitespace-only
+    - The agent has no assigned contexts
+    - The embedding call fails (logged inside ``search_for_agent``)
+    - The top-1 chunk's similarity score is below ``AUTO_INJECT_MIN_SCORE``
+      (the cheap relevance gate — saves ~500 tokens/turn on small talk
+      and unrelated questions where no document actually matches)
+
+    Otherwise returns a formatted string suitable for inserting as a
+    ``{"role": "system", "content": ...}`` message. The block is bounded
+    to ``AUTO_INJECT_MAX_CHARS`` chars total — chunks are added in
+    descending similarity order until the budget is exhausted, and the
+    last chunk that doesn't fit is truncated rather than dropped.
+
+    The block tells the model the chunks are pre-fetched and that it
+    should ignore them if they're not relevant to the question. This
+    framing matters: without it, models sometimes try to "use" injected
+    context even when it's tangential, producing answers that drag in
+    irrelevant material.
+    """
+    if not user_message or not user_message.strip():
+        return None
+
+    hits = search_for_agent(
+        db=db,
+        agent_id=agent_id,
+        query=user_message,
+        top_k=AUTO_INJECT_TOP_K,
+    )
+    if not hits:
+        return None
+
+    # Relevance gate: if even the best chunk is below threshold, the
+    # query has no semantic match in any of the agent's contexts. Skip
+    # injection entirely — the cheap embedding + Qdrant call already
+    # happened, and the savings come from not adding ~500 tokens of
+    # irrelevant text to the prompt for the model to ignore.
+    top_score = max((h.get("score") or 0.0) for h in hits)
+    if top_score < AUTO_INJECT_MIN_SCORE:
+        logger.debug(
+            "Auto-inject skipped (top_score=%.3f < %.3f) for agent=%s",
+            top_score,
+            AUTO_INJECT_MIN_SCORE,
+            agent_id,
+        )
+        return None
+
+    relevant = [
+        h for h in hits if (h.get("score") or 0.0) >= AUTO_INJECT_MIN_SCORE
+    ]
+    if not relevant:
+        return None
+
+    header = (
+        "[ASSIGNED CONTEXT — pre-fetched]\n"
+        "The following are excerpts from knowledge documents the user has "
+        "assigned to you. They were pre-fetched by semantic search on the "
+        "user's latest message. Use them when relevant to answer accurately. "
+        "If they don't address the question, ignore them and answer normally — "
+        "do NOT force them into an unrelated answer.\n\n"
+    )
+    footer = "[END ASSIGNED CONTEXT]"
+    fixed_overhead = len(header) + len(footer)
+    available = AUTO_INJECT_MAX_CHARS - fixed_overhead
+
+    parts: list[str] = []
+    used = 0
+    for h in relevant:
+        ctx_name = h.get("context_name") or "context"
+        text = (h.get("text") or "").strip()
+        if not text:
+            continue
+        prefix = f'From "{ctx_name}":\n'
+        suffix = "\n\n"
+        chunk_str = prefix + text + suffix
+        if used + len(chunk_str) <= available:
+            parts.append(chunk_str)
+            used += len(chunk_str)
+            continue
+        # Doesn't fit — truncate this chunk to use the remaining budget,
+        # then stop. Only worth doing if there's at least ~150 chars of
+        # room left; otherwise the truncated fragment is too small to be
+        # useful and we'd be paying header+suffix overhead for nothing.
+        remaining = available - used
+        truncate_marker = "…[truncated]"
+        min_useful = len(prefix) + len(suffix) + len(truncate_marker) + 100
+        if remaining >= min_useful:
+            text_room = remaining - len(prefix) - len(suffix) - len(truncate_marker)
+            parts.append(prefix + text[:text_room] + truncate_marker + suffix)
+        break
+
+    if not parts:
+        return None
+
+    block = header + "".join(parts).rstrip() + "\n" + footer
+    logger.info(
+        "Auto-inject manual context: agent=%s top_score=%.3f chunks=%d chars=%d",
+        agent_id,
+        top_score,
+        len(parts),
+        len(block),
+    )
+    return block

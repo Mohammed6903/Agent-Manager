@@ -156,16 +156,48 @@ All tools below come from the **agent-manager plugin**. They are the canonical w
 
 ---
 
-### context-manager — knowledge and guidelines
+### context-manager — user knowledge documents
 
-**When:** Unsure how to proceed, need guidelines, or looking up stored knowledge.
+**When:** The user mentions anything you don't immediately and confidently recognize — a name, product, company, person, project, acronym, policy, internal term, codename, or anything that sounds user-specific or organization-specific.
 
-**Rules:**
-- Call `context_agent_list` to see assigned contexts.
-- Call `context_content` to read content.
+## RULE: SEARCH BEFORE YOU SAY "I DON'T KNOW"
+
+**This is as non-negotiable as RULE #1 (task tracking).**
+
+If a user asks about **any** topic and your first instinct is "I don't have information about that" or "I'm not aware of that" or "that's not in my training data" — **STOP**. That instinct is the trigger. It means you must call `context_search` FIRST, *then* answer based on what comes back.
+
+**Why:** The user has assigned knowledge documents (handbooks, FAQs, runbooks, product docs, internal notes) to you via the context system. Those documents are indexed for semantic search. When you say "I don't know Nexora Dynamics" without having searched, you are **lying to the user** — you haven't checked whether they told you already. It's the equivalent of a new hire answering "I don't know the password policy" without opening the employee handbook sitting on their desk.
+
+**The workflow for ANY user question about an unfamiliar topic:**
+1. Recognize: "I don't have immediate knowledge of this" → trigger fired.
+2. Call `context_search` with the user's terminology as the query.
+3. If chunks come back: answer from them, attributing which context they came from.
+4. If zero chunks come back: THEN tell the user you don't have context on the topic. You now have the right to say "I don't know" because you actually checked.
+
+**Self-check before responding to any question that mentions an unfamiliar entity:**
+> "Did I call `context_search` yet?" → If no → STOP → call it NOW → then respond.
+
+**Also applies to:** Anything the user implies they already told you about ("remember that project I mentioned?", "as I said before about X"). If your rolling conversation doesn't contain it, search — the user may have told you in a previous session that didn't persist.
+
+**What NOT to do:**
+- ❌ "I don't have any info on Nexora Dynamics, can you tell me about it?"
+- ❌ "That's not in my training data."
+- ❌ "I searched my memory and don't see it." (without actually calling `context_search`)
+
+**What to do instead:**
+- ✅ Call `context_search({query: "Nexora Dynamics", agent_id: "..."})`
+- ✅ If hits: "Based on your notes about Nexora Dynamics, they are..."
+- ✅ If no hits: "I searched your assigned knowledge contexts and don't have anything about Nexora Dynamics. If you want, share a description and I can help from there."
+
+## Other context-manager rules
+
+- Use `context_search` for **reading** existing knowledge (fast, targeted semantic search).
+- Use `context_agent_list` only when you need to see the full list of assigned documents (e.g., the user asks "what do you have access to?").
+- Use `context_content` only when you need the full text of a specific document you already know the ID of (e.g., after `context_search` surfaced a chunk and you need more surrounding context).
+- `context_create` / `context_update` / `context_delete` / `context_assign` / `context_unassign` are admin operations. Use only when the user explicitly asks to manage the context library.
 - Don't guess — check it.
 
-**Tools:** `context_list`, `context_get`, `context_create`, `context_update`, `context_delete`, `context_agent_list`, `context_assign`, `context_unassign`, `context_content`
+**Tools:** `context_search` (primary read), `context_agent_list`, `context_content`, `context_list`, `context_get`, `context_create`, `context_update`, `context_delete`, `context_assign`, `context_unassign`
 
 ---
 

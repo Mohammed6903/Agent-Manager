@@ -20,6 +20,13 @@ class AgentRegistry(Base):
     updated_at = Column(DateTime(timezone=True),
                         default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
+    # Soft-delete timestamp. NULL = active. When set, the row is hidden
+    # from list/get queries by default but kept in the DB so the agent
+    # can be restored later (see AgentRegistryRepository.restore).
+    # This decouples visibility from the subscription/billing model —
+    # soft-delete works identically whether ENFORCE_AGENT_SUBSCRIPTION
+    # is on or off.
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     __table_args__ = (
         # Most common query: all agents for a given org

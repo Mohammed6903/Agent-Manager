@@ -278,13 +278,39 @@ class AgentService:
 
         if any(a.get("id") == agent_id for a in existing):
             raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
-        
-        # Also reject if the agent already exists under the same ownership scope
+
+        # Also reject if the agent already exists under the same ownership scope.
+        # These `get()` calls filter out soft-deleted rows by default, so a
+        # previously-deleted agent with the same id doesn't trip the 409.
         if self._registry:
             if req.org_id and self._registry.get(agent_id, org_id=req.org_id):
                 raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists in this org")
             if req.user_id and self._registry.get(agent_id, user_id=req.user_id):
                 raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists for this user")
+
+            # If a soft-deleted row with this exact agent_id exists (in ANY
+            # ownership scope — agent_ids are globally unique via the
+            # unique constraint on the table), we can't INSERT a new row
+            # with the same id. Return a structured 409 pointing the
+            # caller at the restore endpoint so they can recover the
+            # deleted agent instead. Silently auto-restoring would be
+            # surprising if they wanted a fresh agent, so we require an
+            # explicit decision.
+            soft_deleted = self._registry.get(agent_id, include_deleted=True)
+            if soft_deleted is not None and soft_deleted.deleted_at is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "agent_soft_deleted",
+                        "message": (
+                            f"Agent '{agent_id}' was previously deleted and is "
+                            f"recoverable. POST /api/agents/{agent_id}/restore "
+                            f"to bring it back, or choose a different id."
+                        ),
+                        "agent_id": agent_id,
+                        "deleted_at": soft_deleted.deleted_at.isoformat(),
+                    },
+                )
 
         config_hash = config_data.get("hash")
         if not config_hash:
@@ -393,20 +419,13 @@ class AgentService:
 
     async def list_agents(self, org_id: str | None = None, user_id: str | None = None) -> List[dict[str, Any]]:
         if self._registry:
+            # Registry filters soft-deleted rows (deleted_at IS NULL) by
+            # default — no cross-table join needed. This works identically
+            # regardless of whether ENFORCE_AGENT_SUBSCRIPTION is on.
             rows = self._registry.list(org_id=org_id, user_id=user_id)
-
-            # Build set of agent_ids with deleted subscriptions to filter out
-            deleted_agent_ids: set[str] = set()
-            if self._sub_repo:
-                for r in rows:
-                    sub = self._sub_repo.get_by_agent_id(r.agent_id)
-                    if sub and sub.status == "deleted":
-                        deleted_agent_ids.add(r.agent_id)
 
             result = []
             for r in rows:
-                if r.agent_id in deleted_agent_ids:
-                    continue
                 entry: dict[str, Any] = {
                     "id": r.agent_id,
                     "name": r.name,
@@ -415,7 +434,9 @@ class AgentService:
                     "org_id": r.org_id,
                     "user_id": r.user_id,
                 }
-                # Include subscription status so frontend can show locked state
+                # Include subscription status when available so the frontend
+                # can still render the "locked" badge if subscriptions are
+                # enforced. None when the flag is off and no row exists.
                 if self._sub_repo:
                     sub = self._sub_repo.get_by_agent_id(r.agent_id)
                     if sub:
@@ -427,17 +448,13 @@ class AgentService:
         return agents
 
     async def get_agent(self, agent_id: str, org_id: str | None = None, user_id: str | None = None) -> dict[str, Any]:
-        # Fast path: DB registry
+        # Fast path: DB registry. Soft-deleted rows are filtered by the
+        # repository (deleted_at IS NULL), so asking for a deleted agent
+        # returns 404 — the agent is invisible until restored.
         if self._registry:
             row = self._registry.get(agent_id, org_id=org_id, user_id=user_id)
             if not row:
                 raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-
-            # Check subscription status — deleted agents are invisible
-            if self._sub_repo:
-                sub = self._sub_repo.get_by_agent_id(agent_id)
-                if sub and sub.status == "deleted":
-                    raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
             result: dict[str, Any] = {
                 "id": row.agent_id,
@@ -534,7 +551,18 @@ class AgentService:
 
 
     async def delete_agent(self, agent_id: str, org_id: str | None = None, user_id: str | None = None) -> dict[str, str]:
-        # Verify ownership before deletion if org_id or user_id is supplied
+        """Soft-delete an agent.
+
+        The agent is marked deleted in the registry (``deleted_at``
+        stamped) but all data is preserved on disk and in the DB so it
+        can be restored later via ``restore_agent``. The openclaw
+        gateway config is updated to stop serving the agent, and any
+        cron jobs it owned are cancelled. If the subscription model is
+        enforced, the subscription row is also marked deleted for
+        back-compat with the recovery-via-unlock flow.
+        """
+        # Verify ownership before deletion if org_id or user_id is supplied.
+        # Skip deleted rows — asking to delete a deleted agent is a 404.
         if self._registry and (org_id or user_id):
             row = self._registry.get(agent_id, org_id=org_id, user_id=user_id)
             if not row:
@@ -543,27 +571,39 @@ class AgentService:
                     detail=f"Agent '{agent_id}' not found for the given ownership scope",
                 )
 
-        # Soft-delete via subscription (data preserved for future recovery)
         if self.db:
-            from .subscription_service import SubscriptionService
-            sub_svc = SubscriptionService(self.db)
-
-            # Disable cron jobs
+            # Disable cron jobs so nothing schedules against a deleted agent.
             from ..models.cron import CronOwnership
-            cron_ids = [c.cron_id for c in self.db.query(CronOwnership).filter(CronOwnership.agent_id == agent_id).all()]
+            cron_ids = [
+                c.cron_id
+                for c in self.db.query(CronOwnership)
+                .filter(CronOwnership.agent_id == agent_id)
+                .all()
+            ]
             for cron_id in cron_ids:
                 try:
                     await self.gateway.cron_remove(cron_id)
                 except Exception as exc:
-                    logger.warning("cron_remove(%s) failed during soft-delete: %s", cron_id, exc)
+                    logger.warning("cron_remove(%s) failed during delete: %s", cron_id, exc)
 
-            # Mark subscription as deleted
-            if self._sub_repo:
+            # Soft-delete at the registry layer. This is the single
+            # source of truth for "is this agent visible?" — independent
+            # of the subscription model so it works whether or not
+            # ENFORCE_AGENT_SUBSCRIPTION is on.
+            if self._registry:
+                self._registry.soft_delete(agent_id)
+
+            # If the subscription model is enforced, also mark the
+            # subscription row deleted so the old unlock-based recovery
+            # flow stays consistent. No-op when the flag is off (no row).
+            if settings.ENFORCE_AGENT_SUBSCRIPTION and self._sub_repo:
                 sub = self._sub_repo.get_by_agent_id(agent_id)
                 if sub:
                     self._sub_repo.soft_delete(agent_id)
 
-        # Remove from gateway so agent stops serving requests
+        # Remove from openclaw gateway so the agent stops serving requests.
+        # The registry row is still in our DB for restore, but the gateway
+        # config shouldn't advertise the agent while it's deleted.
         try:
             await self.gateway.delete_agent(agent_id)
         except Exception as exc:
@@ -571,6 +611,90 @@ class AgentService:
 
         logger.info("Agent '%s' soft-deleted (org=%s)", agent_id, org_id)
         return {"status": "deleted", "agent_id": agent_id}
+
+    async def restore_agent(
+        self,
+        agent_id: str,
+        org_id: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, str]:
+        """Restore a previously soft-deleted agent.
+
+        Clears ``deleted_at`` on the registry row, re-registers the
+        agent with the openclaw gateway, and (if the subscription model
+        is enforced) restores the subscription row to ``active``.
+
+        Returns 404 if no soft-deleted agent with this ID exists for the
+        given ownership scope.
+        """
+        if not self._registry or not self.db:
+            raise HTTPException(
+                status_code=500,
+                detail="Registry not configured — cannot restore agents",
+            )
+
+        # Find the deleted row — must include deleted or we can't see it
+        row = self._registry.get(
+            agent_id,
+            org_id=org_id,
+            user_id=user_id,
+            include_deleted=True,
+        )
+        if not row or row.deleted_at is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No deleted agent '{agent_id}' to restore",
+            )
+
+        # Flip deleted_at back to NULL
+        self._registry.restore(agent_id)
+
+        # If subscription enforcement is on, reactivate the subscription
+        # row so the chat/update gates let the agent back through.
+        if settings.ENFORCE_AGENT_SUBSCRIPTION and self._sub_repo:
+            sub = self._sub_repo.get_by_agent_id(agent_id)
+            if sub and sub.status == "deleted":
+                # Mark it active again. Exact transition depends on the
+                # repo's API — we use the existing mark_active helper if
+                # available, otherwise fall back to a direct status write.
+                mark_active = getattr(self._sub_repo, "mark_active", None)
+                if callable(mark_active):
+                    mark_active(agent_id)
+                else:
+                    from ..models.agent_subscription import AgentSubscription
+                    self.db.query(AgentSubscription).filter(
+                        AgentSubscription.agent_id == agent_id
+                    ).update({"status": "active", "deleted_at": None})
+                    self.db.commit()
+
+        # Re-register with the openclaw gateway so it shows up again.
+        # We rebuild the agent list and patch the config the same way
+        # create_agent does.
+        try:
+            existing = await self.gateway.list_agents()
+            config_data = await self.gateway.get_config()
+            config_hash = config_data.get("hash")
+            if config_hash:
+                # If the gateway already has the row (e.g. deleted from
+                # DB but still cached), don't append a duplicate.
+                if not any(a.get("id") == agent_id for a in existing):
+                    restored_entry = {
+                        "id": agent_id,
+                        "name": row.name,
+                        "workspace": row.workspace or self._workspace(agent_id),
+                        "agentDir": row.agent_dir or self._agent_dir(agent_id),
+                    }
+                    raw = self._build_agents_raw(existing + [restored_entry])
+                    await self.gateway.patch_config(config_hash, raw)
+        except Exception as exc:
+            logger.warning(
+                "Gateway re-register failed during restore of '%s': %s",
+                agent_id,
+                exc,
+            )
+
+        logger.info("Agent '%s' restored (org=%s)", agent_id, org_id)
+        return {"status": "restored", "agent_id": agent_id}
 
     async def _delete_agent_db_data(self, agent_id: str) -> None:
         """Remove operational database records associated with the agent.
