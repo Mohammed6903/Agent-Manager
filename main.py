@@ -155,14 +155,56 @@ async def lifespan(app: FastAPI):
     heartbeat_task = start_heartbeat_task()
     logger.info("Heartbeat service started")
 
+    # Backfill pre-RAG manual contexts in the background. Pre-existing
+    # GlobalContext rows created before the RAG pipeline landed have
+    # ``content_hash IS NULL`` and no Qdrant chunks. We sweep them on
+    # startup so search starts working without operator intervention.
+    # Runs in a background task (not awaited) because embedding many
+    # documents can take a while on a cold start and must not block
+    # the server accepting requests.
+    async def _backfill_manual_contexts():
+        from agent_manager.database import SessionLocal
+        from agent_manager.services import manual_context_service
+
+        try:
+            # Run the synchronous SQLAlchemy + embed loop in a worker
+            # thread so it doesn't starve the event loop.
+            def _run():
+                db = SessionLocal()
+                try:
+                    return manual_context_service.backfill_unindexed_contexts(db)
+                finally:
+                    db.close()
+
+            loop = asyncio.get_running_loop()
+            stats = await loop.run_in_executor(None, _run)
+            if stats["scanned"] > 0:
+                logger.info(
+                    "Manual context backfill: scanned=%d indexed=%d skipped=%d failed=%d",
+                    stats["scanned"],
+                    stats["indexed"],
+                    stats["skipped"],
+                    stats["failed"],
+                )
+        except Exception:
+            logger.exception("Manual context backfill task crashed")
+
+    backfill_task = asyncio.create_task(_backfill_manual_contexts())
+
     yield
 
-    # Stop heartbeat
+    # Stop heartbeat + backfill
     heartbeat_task.cancel()
     try:
         await heartbeat_task
     except asyncio.CancelledError:
         pass
+    if not backfill_task.done():
+        backfill_task.cancel()
+        try:
+            await backfill_task
+        except asyncio.CancelledError:
+            pass
     logger.info("OpenClaw API shutting down")
 
 

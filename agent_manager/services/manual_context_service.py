@@ -202,6 +202,72 @@ def delete_context_chunks(context_id: uuid.UUID) -> int:
         return 0
 
 
+def backfill_unindexed_contexts(db: Session) -> dict[str, int]:
+    """Index every ``GlobalContext`` with a NULL ``content_hash``.
+
+    Used for (a) migrating pre-RAG contexts that existed before this
+    pipeline was introduced and (b) retrying contexts whose original
+    index attempt failed (the create/update paths leave content_hash
+    NULL on failure so this sweep picks them up on the next run).
+
+    Each context is processed independently: a single failure is logged
+    and the sweep continues. Embedding rate limits are handled inside
+    ``embed_service`` via its Redis-backed TPM counter, so running this
+    on a large corpus self-throttles rather than tripping 429s.
+
+    Returns a dict with ``{scanned, indexed, skipped, failed}`` counts
+    — useful for both the admin endpoint and the startup log line.
+    """
+    from ..models.context import GlobalContext  # local import to avoid cycles
+
+    rows = (
+        db.query(GlobalContext)
+        .filter(GlobalContext.content_hash.is_(None))
+        .all()
+    )
+
+    stats = {"scanned": len(rows), "indexed": 0, "skipped": 0, "failed": 0}
+    if not rows:
+        return stats
+
+    for ctx in rows:
+        if not ctx.content or not ctx.content.strip():
+            # Empty content — mark as "indexed" with a zero-chunk hash so
+            # we don't retry this row forever on every backfill sweep.
+            ctx.content_hash = compute_content_hash(ctx.content or "")
+            stats["skipped"] += 1
+            continue
+        try:
+            index_context(ctx.id, ctx.name, ctx.content)
+            ctx.content_hash = compute_content_hash(ctx.content)
+            stats["indexed"] += 1
+        except Exception:
+            logger.exception(
+                "Backfill failed for context %s (%s) — leaving content_hash NULL for retry",
+                ctx.id,
+                ctx.name,
+            )
+            stats["failed"] += 1
+
+    # Commit once at the end so partial-progress hash updates survive a
+    # subsequent crash. If we crashed mid-loop, already-processed rows
+    # would still be NULL on next startup and get retried — acceptable.
+    try:
+        db.commit()
+    except Exception:
+        logger.exception("Backfill commit failed — content_hash updates lost")
+        db.rollback()
+
+    logger.info(
+        "Manual context backfill complete: scanned=%d indexed=%d skipped=%d failed=%d",
+        stats["scanned"],
+        stats["indexed"],
+        stats["skipped"],
+        stats["failed"],
+    )
+    return stats
+
+
 def search_for_agent(
     db: Session,
     agent_id: str,

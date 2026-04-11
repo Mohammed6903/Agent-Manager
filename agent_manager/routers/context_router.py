@@ -151,9 +151,10 @@ def reindex_manual_context(
 ):
     """Force-rebuild the Qdrant chunks for a single manual context.
 
-    Useful for (a) backfilling contexts that predate the RAG indexer and
-    (b) retrying after an embedding failure during create/update. Uses
-    the current content from Postgres as the source of truth.
+    Useful for (a) retrying after an embedding failure during create/update
+    and (b) debugging a specific context. Uses the current content from
+    Postgres as the source of truth. For bulk backfill of pre-RAG
+    contexts, use ``/reindex-all`` instead.
     """
     ctx = svc.get_global_context_by_id(context_id)
     chunk_count = manual_context_service.reindex_context(
@@ -168,6 +169,22 @@ def reindex_manual_context(
         "chunk_count": chunk_count,
         "content_hash": ctx.content_hash,
     }
+
+
+@router.post("/reindex-all")
+def reindex_all_unindexed_contexts(
+    db: Session = Depends(get_db),
+):
+    """Backfill every manual context whose ``content_hash`` is NULL.
+
+    Idempotent — running it again after a successful sweep is a no-op
+    (no rows match the NULL filter). Safe to run on startup or to invoke
+    explicitly after bulk-importing contexts. Embedding rate limits are
+    handled inside ``embed_service`` so large corpora self-throttle.
+
+    Returns ``{scanned, indexed, skipped, failed}``.
+    """
+    return manual_context_service.backfill_unindexed_contexts(db)
 
 
 @router.get("/ram/context/active")
