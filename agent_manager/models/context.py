@@ -10,6 +10,11 @@ class GlobalContext(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False, index=True)
     content = Column(Text, nullable=False)
+    # SHA-256 of content at the time of the last successful Qdrant index.
+    # Nullable → either not yet indexed (pre-RAG migration) or last index
+    # attempt failed. Used by ContextService.update_global_context to skip
+    # re-embedding when a rename-only edit doesn't change content.
+    content_hash = Column(String, nullable=True)
     org_id = Column(String, nullable=True, index=True)  # None = legacy/global
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

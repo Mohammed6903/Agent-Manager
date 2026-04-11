@@ -243,7 +243,16 @@ class AgentService:
         agent_dir = self._agent_dir(agent_id)
 
         # ── PRE-FLIGHT: Check wallet balance before doing any work ───────
-        if req.org_id and req.user_id:
+        # Only runs when the $24/mo subscription model is enforced. In
+        # pay-as-you-go mode this check is skipped entirely — agent
+        # creation is free, and users are only charged for actual token
+        # usage at chat time via the wallet balance gate in
+        # chat_service._check_wallet_balance.
+        if (
+            settings.ENFORCE_AGENT_SUBSCRIPTION
+            and req.org_id
+            and req.user_id
+        ):
             from ..clients.wallet_client import get_wallet_client
             wallet = get_wallet_client(agent_id)
             try:
@@ -344,8 +353,16 @@ class AgentService:
                 user_id=req.user_id,
             )
 
-        # PHASE 6: Create subscription and deduct initial $24
-        if self.db and req.org_id and req.user_id:
+        # PHASE 6: Create subscription and deduct initial $24.
+        # Gated on settings.ENFORCE_AGENT_SUBSCRIPTION so pay-as-you-go mode
+        # skips the monthly charge entirely. Users still pay for actual
+        # token usage via the wallet — that's handled in the chat path.
+        if (
+            settings.ENFORCE_AGENT_SUBSCRIPTION
+            and self.db
+            and req.org_id
+            and req.user_id
+        ):
             from .subscription_service import SubscriptionService
             sub_svc = SubscriptionService(self.db)
             try:
@@ -447,10 +464,19 @@ class AgentService:
     ) -> AgentResponse:
         agent = await self.get_agent(agent_id, org_id=org_id, user_id=user_id)
 
-        # Block updates for locked/deleted agents
+        # Block updates for deleted agents (always) and locked agents
+        # (only when the subscription model is enforced). With
+        # ENFORCE_AGENT_SUBSCRIPTION=False, locked agents are still usable
+        # so we don't gate updates on that state either.
         if self._sub_repo:
             sub = self._sub_repo.get_by_agent_id(agent_id)
-            if sub and sub.status == "locked":
+            if sub and sub.status == "deleted":
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+            if (
+                sub
+                and sub.status == "locked"
+                and settings.ENFORCE_AGENT_SUBSCRIPTION
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -458,8 +484,6 @@ class AgentService:
                         "message": "Agent is locked due to unpaid subscription. Please add credits to unlock.",
                     },
                 )
-            if sub and sub.status == "deleted":
-                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
         workspace = self._workspace(agent_id)
 

@@ -19,6 +19,7 @@ from ..schemas.context import (
     GlobalContextResponse,
     GlobalContextUpdate,
 )
+from ..services import manual_context_service
 from ..services.context_service import ContextService
 from ..services.third_party_context_service import ThirdPartyContextService
 from agent_manager.tasks.gmail.ingest_task import get_active_tasks
@@ -115,6 +116,59 @@ def get_context_content(
     content = svc.get_context_content_for_agent(agent_id, context_id)
     context = svc.get_global_context_by_id(context_id)
     return ContextContentResponse(id=context.id, name=context.name, content=content)
+
+
+# ── Manual-context RAG endpoints ────────────────────────────────────────────
+# These expose the chunked + embedded manual contexts via explicit search
+# and admin reindex. There is NO automatic injection into chat or voice
+# prompts — callers (client UI, or a future agent tool) decide when to
+# look something up and pay the token cost deliberately.
+
+
+@router.post("/search", response_model=List[dict])
+def search_manual_contexts(
+    agent_id: str = Query(..., description="Which agent's assigned contexts to search"),
+    query: str = Query(..., description="Natural-language query to match against chunks"),
+    top_k: int = Query(default=manual_context_service.DEFAULT_TOP_K, ge=1, le=20),
+    db: Session = Depends(get_db),
+):
+    """Search an agent's assigned manual contexts for relevant chunks.
+
+    Returns the top-k chunks (by cosine similarity) with their text,
+    score, and source context metadata. Returns an empty list if the
+    agent has no assigned contexts or the query is empty.
+    """
+    return manual_context_service.search_for_agent(
+        db=db, agent_id=agent_id, query=query, top_k=top_k,
+    )
+
+
+@router.post("/{context_id}/reindex")
+def reindex_manual_context(
+    context_id: uuid.UUID,
+    svc: ContextService = Depends(get_context_service),
+    db: Session = Depends(get_db),
+):
+    """Force-rebuild the Qdrant chunks for a single manual context.
+
+    Useful for (a) backfilling contexts that predate the RAG indexer and
+    (b) retrying after an embedding failure during create/update. Uses
+    the current content from Postgres as the source of truth.
+    """
+    ctx = svc.get_global_context_by_id(context_id)
+    chunk_count = manual_context_service.reindex_context(
+        ctx.id, ctx.name, ctx.content
+    )
+    ctx.content_hash = manual_context_service.compute_content_hash(ctx.content)
+    db.commit()
+    db.refresh(ctx)
+    return {
+        "context_id": str(ctx.id),
+        "name": ctx.name,
+        "chunk_count": chunk_count,
+        "content_hash": ctx.content_hash,
+    }
+
 
 @router.get("/ram/context/active")
 def list_active_tasks():

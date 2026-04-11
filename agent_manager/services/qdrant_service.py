@@ -8,6 +8,7 @@ from qdrant_client.models import (
     PointStruct,
     Filter,
     FieldCondition,
+    MatchAny,
     MatchValue,
 )
 from ..config import settings
@@ -116,6 +117,76 @@ def list_payloads_for_agent_source(
         offset = next_offset
 
     return payloads
+
+
+# ── Manual context helpers ─────────────────────────────────────────────────
+# Manual contexts (GlobalContext) are NOT scoped by agent_id the way
+# third-party sources are — they're global documents that can be assigned
+# to multiple agents via the agent_contexts junction table. So their
+# Qdrant points use ``source="manual_context"`` + ``context_id`` for
+# filtering instead of ``agent_id``. The caller (manual_context_service)
+# resolves "which contexts does this agent have" from Postgres first,
+# then passes the resulting id list to search_manual_context.
+
+
+MANUAL_CONTEXT_SOURCE = "manual_context"
+
+
+def search_manual_context(
+    context_ids: list[str],
+    query_vector: list[float],
+    top_k: int = 5,
+) -> list[dict]:
+    """Semantic search across manual-context chunks filtered by context id.
+
+    Returns raw payloads (with ``score``) for the top-k matching chunks
+    across the given set of context ids. Empty list if ``context_ids`` is
+    empty (Qdrant won't error but we skip the round trip).
+    """
+    if not context_ids:
+        return []
+    client = get_client()
+    response = client.query_points(
+        collection_name=COLLECTION,
+        query=query_vector,
+        query_filter=Filter(
+            must=[
+                FieldCondition(key="source", match=MatchValue(value=MANUAL_CONTEXT_SOURCE)),
+                FieldCondition(key="context_id", match=MatchAny(any=context_ids)),
+            ]
+        ),
+        limit=top_k,
+        with_payload=True,
+    )
+    return [
+        {"score": r.score, **(r.payload or {})}
+        for r in response.points
+    ]
+
+
+def delete_points_for_context(context_id: str) -> int:
+    """Delete all manual-context chunks for a single context_id.
+
+    Called on GlobalContext update (to clear old chunks before reindexing)
+    and on delete. Returns the count of matched points before deletion.
+    """
+    client = get_client()
+    query_filter = Filter(
+        must=[
+            FieldCondition(key="source", match=MatchValue(value=MANUAL_CONTEXT_SOURCE)),
+            FieldCondition(key="context_id", match=MatchValue(value=context_id)),
+        ]
+    )
+    matched = client.count(
+        collection_name=COLLECTION,
+        count_filter=query_filter,
+        exact=True,
+    ).count
+    client.delete(
+        collection_name=COLLECTION,
+        points_selector=FilterSelector(filter=query_filter),
+    )
+    return matched
 
 
 def delete_points_for_agent_source(agent_id: str, source: str) -> int:

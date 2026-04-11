@@ -18,7 +18,6 @@ from ..clients.wallet_client import WalletClient, InsufficientBalanceError, get_
 from ..config import settings
 from ..database import SessionLocal
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post, execute_deliver_chat_message
-from ..services.context_injection_service import build_context_block
 from ..services.secret_service import SecretService
 from ..services.usage_service import UsageService
 from ..schemas.chat import ChatRequest, NewSessionResponse
@@ -112,13 +111,24 @@ async def _check_wallet_balance(user_id: str, agent_id: str = "") -> None:
 
 
 def _check_agent_subscription(agent_id: str, db: Session | None) -> None:
-    """Block chat if agent subscription is locked or deleted."""
+    """Block chat if agent subscription is locked or deleted.
+
+    No-op when ``settings.ENFORCE_AGENT_SUBSCRIPTION`` is False — in that
+    mode we only charge pay-as-you-go via the wallet balance check, and
+    the monthly $24 agent lock is not enforced. Flip the flag to re-enable.
+    The ``deleted`` state is still honored regardless because soft-deleted
+    agents should not be usable no matter which billing model is active.
+    """
     if not db:
         return
     sub_repo = SubscriptionRepository(db)
     sub = sub_repo.get_by_agent_id(agent_id)
     if not sub:
         return  # Legacy agent without subscription
+    if sub.status == "deleted":
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    if not settings.ENFORCE_AGENT_SUBSCRIPTION:
+        return  # Subscription enforcement disabled — pay-as-you-go only
     if sub.status == "locked":
         raise HTTPException(
             status_code=403,
@@ -127,8 +137,6 @@ def _check_agent_subscription(agent_id: str, db: Session | None) -> None:
                 "message": "Agent is locked due to unpaid subscription. Please add credits to unlock.",
             },
         )
-    if sub.status == "deleted":
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
 
 class ChatService:
@@ -319,22 +327,14 @@ class ChatService:
         )
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
-        # Inject third-party context (email context) into the system prompt
-        if db:
-            try:
-                context_block = await build_context_block(
-                    db, req.agent_id, req.message
-                )
-                if context_block:
-                    messages.insert(
-                        1, {"role": "system", "content": context_block}
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Context injection failed for agent %s: %s",
-                    req.agent_id,
-                    exc,
-                )
+        # NOTE: automatic context injection was removed deliberately. With
+        # many plugins assigned to an agent, the cumulative cost of dumping
+        # every integration's "latest snapshot + top-k semantic hits" into
+        # the system prompt on every turn was unsustainable. Retrieval is
+        # now explicit: callers that need context hit the search endpoints
+        # (POST /api/contexts/search for manual contexts, or the per-
+        # integration routes for third-party) and decide per-turn whether
+        # to include the results.
 
         headers = {
             "Content-Type": "application/json",
@@ -605,22 +605,10 @@ class ChatService:
 
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
-        # Inject third-party context
-        if db:
-            try:
-                context_block = await build_context_block(
-                    db, req.agent_id, req.message
-                )
-                if context_block:
-                    messages.insert(
-                        1, {"role": "system", "content": context_block}
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Context injection failed for agent %s: %s",
-                    req.agent_id,
-                    exc,
-                )
+        # Context auto-injection removed — see note in _stream_gateway.
+        # Callers that need context must hit POST /api/contexts/search
+        # explicitly and decide per-turn whether to include chunks in the
+        # message history.
 
         body = {
             "model": f"openclaw:{req.agent_id}",

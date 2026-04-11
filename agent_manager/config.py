@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     # ── Agent Subscriptions ──────────────────────────────────────────────────
     AGENT_MONTHLY_COST_CENTS: int = 2400  # $24.00/month per agent
     SUBSCRIPTION_DELETE_AFTER_DAYS: int = 7  # Soft-delete 7 days after locking
+    # Master kill-switch for the monthly $24 subscription model. When False,
+    # billing falls back to pure pay-as-you-go (only the wallet balance
+    # check gates chat, no monthly charge, no agent locking). Set to True
+    # to re-enable the subscription flow. Default False to lower friction
+    # for new customers while we grow. All three enforcement points read
+    # this flag: chat_service._check_agent_subscription,
+    # agent_service.update_agent, and the daily celery renewal task.
+    ENFORCE_AGENT_SUBSCRIPTION: bool = False
 
     # ── Twitter ─────────────────────────────────────────────────────────────────
     TWITTER_CLIENT_ID: str = ""
