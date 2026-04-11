@@ -251,8 +251,23 @@ async def _call_chat_completions(
         messages.append({"role": "system", "content": session.system_prompt})
     messages.extend(session.messages)
 
+    # Model selection. Default is the agent's openclaw alias, which
+    # resolves to whatever `agents.defaults.model.primary` is set to in
+    # openclaw.json (currently a frontier reasoning model on prod that
+    # takes 5-15s per turn — too slow for voice). When
+    # ``settings.VOICE_CALL_CHAT_MODEL`` is set, we override that with
+    # a direct provider/model string for voice turns only, letting
+    # chat keep its higher-quality default. We still pass through the
+    # openclaw gateway so billing, failover, and logging continue to
+    # work — we just bypass the per-agent alias resolution layer.
+    model_id = (
+        settings.VOICE_CALL_CHAT_MODEL
+        if settings.VOICE_CALL_CHAT_MODEL
+        else f"openclaw:{session.agent_id}"
+    )
+
     body = {
-        "model": f"openclaw:{session.agent_id}",
+        "model": model_id,
         "messages": messages,
         "stream": False,
         "user": session.user_field,

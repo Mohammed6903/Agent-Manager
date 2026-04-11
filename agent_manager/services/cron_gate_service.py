@@ -38,16 +38,24 @@ BALANCE_NEGATIVE_REASON = "balance_negative"
 
 
 async def is_user_wallet_blocked(user_id: str, agent_id: str = "") -> bool:
-    """Return True if the user is at or beyond the "can't run more work" line.
+    """Return True if the user's wallet is at or below zero.
 
-    Mirrors the rules in ``chat_service._check_wallet_balance``:
-    - Debt at or past the cap (``MAX_DEBT_CENTS``) → blocked.
-    - Balance below the minimum AND any debt exists → blocked.
-    - Balance below the minimum with no debt → blocked.
+    Cron gating uses a stricter rule than the chat gate in
+    ``chat_service._check_wallet_balance``. Chat has a grace window
+    (small debt allowed up to MAX_DEBT_CENTS, MIN_BALANCE_CENTS floor)
+    because a user can recover between turns. Crons fire autonomously
+    and burst through any grace window in minutes, so we block
+    immediately at the zero line:
+
+    - ``balance_cents <= 0`` → blocked (nothing to spend)
+    - ``debt_cents > 0``     → blocked (wallet is already underwater)
+
+    Any non-zero positive balance with zero debt is unblocked. Top-up
+    of even 1 cent lifts the block.
 
     On any wallet-service error we return False (fail-open). Blocking
-    the whole system when the wallet backend has a hiccup would be
-    worse than occasionally letting one extra cron run.
+    the whole cron system when the wallet backend has a hiccup would
+    be worse than letting one extra cron run.
     """
     if not settings.WALLET_INTERNAL_API_KEY and not settings.GARAGE_WALLET_INTERNAL_API_KEY:
         return False  # Wallet integration disabled entirely.
@@ -66,9 +74,9 @@ async def is_user_wallet_blocked(user_id: str, agent_id: str = "") -> bool:
         )
         return False
 
-    if debt_cents >= settings.MAX_DEBT_CENTS:
+    if balance_cents <= 0:
         return True
-    if balance_cents < settings.MIN_BALANCE_CENTS:
+    if debt_cents > 0:
         return True
     return False
 

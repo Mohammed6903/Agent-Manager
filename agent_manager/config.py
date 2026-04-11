@@ -249,6 +249,16 @@ class Settings(BaseSettings):
     VOICE_CALL_STT_SILENCE_MS: int = 1500
     VOICE_CALL_STT_MIN_TURN_MS: int = 300   # Minimum audio before STT is triggered (voxtral mode)
 
+    # Voice-call-specific LLM override. When set to a non-empty provider/
+    # model identifier (e.g. "google/gemini-2.5-flash"), the voice agent
+    # bridge uses this model for every voice-call chat completion,
+    # bypassing the agent's configured default model. Voice calls need
+    # sub-1s LLM responses to feel natural, while chat users often accept
+    # higher latency in exchange for the quality of a frontier model.
+    # Leave empty to use the agent's default model for voice calls too.
+    # The regular (non-voice) chat path in chat_service is NOT affected.
+    VOICE_CALL_CHAT_MODEL: str = ""
+
     # ── Manual context PDF uploads ──────────────────────────────────────────
     # Max PDF upload size for manual-context ingestion. 10 MB is enough for
     # a several-thousand-page text document or a few dozen pages of scans.

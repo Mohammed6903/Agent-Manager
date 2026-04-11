@@ -1,6 +1,8 @@
-"""PDF → markdown extraction for the manual-context upload path.
+"""Document → markdown extraction for the manual-context upload path.
 
-Two extraction backends, selected by the caller via the ``use_ocr`` flag:
+Supports **PDF** and **DOCX** uploads. DOCX is handled via ``python-docx``
+(XML-based, no OCR needed, zero ambiguity about structure). PDF uses
+two backends selected by the ``use_ocr`` flag:
 
 1. **Local (non-OCR)** — uses ``pdfplumber`` (MIT, pure Python, ~3 MB)
    plus a small custom converter that reconstructs structured markdown
@@ -110,28 +112,50 @@ _OCR_TIMEOUT = httpx.Timeout(300.0, connect=15.0)
 
 
 @dataclass
-class PdfExtractionResult:
-    """Output of any extraction path. The router turns this into an
-    ``UploadPdfResponse`` (plus the created ``GlobalContext``) for the
-    HTTP response."""
+class DocumentExtractionResult:
+    """Output of any extraction path (PDF or DOCX). The router turns
+    this into an ``UploadDocumentResponse`` (plus the created
+    ``GlobalContext``) for the HTTP response.
+
+    ``source_format`` is "pdf" or "docx". ``page_count`` is always 1
+    for DOCX since the format doesn't have a meaningful page concept
+    for content extraction — docx uses explicit section breaks that
+    don't correspond to display pages the way PDFs do. ``used_ocr``
+    and ``warning`` are always ``False``/``None`` for DOCX because
+    DOCX is XML-based and always has real text.
+    """
 
     markdown: str
     page_count: int
     char_count: int
     used_ocr: bool
     warning: Optional[str]
+    source_format: str  # "pdf" | "docx"
 
 
-class PdfExtractionError(Exception):
-    """Generic downstream failure (docling/Mistral/pdfplumber crash,
+# Backwards-compat alias. Existing callers that still import
+# ``PdfExtractionResult`` keep working; new code uses the generic name.
+PdfExtractionResult = DocumentExtractionResult
+
+
+class DocumentExtractionError(Exception):
+    """Generic downstream failure (Mistral/pdfplumber/python-docx crash,
     timeout, upstream outage). Router maps to HTTP 502."""
 
 
-class InvalidPdfError(PdfExtractionError):
-    """The uploaded bytes are not a parseable PDF at all (encrypted,
-    corrupted, XFA-only, wrong file type). Router maps to HTTP 400 so
-    the client gets a clear "your file is invalid" response rather
-    than a generic "extraction failed" message."""
+class InvalidDocumentError(DocumentExtractionError):
+    """The uploaded bytes are not a parseable PDF or DOCX at all
+    (encrypted, corrupted, XFA-only, legacy .doc binary format, wrong
+    file type). Router maps to HTTP 400 so the client gets a clear
+    "your file is invalid" response rather than a generic
+    "extraction failed" message."""
+
+
+# Backwards-compat aliases — keep the PDF-specific error names callable
+# so old test code / scripts don't break. New callers should use the
+# generic names above.
+PdfExtractionError = DocumentExtractionError
+InvalidPdfError = InvalidDocumentError
 
 
 # ── OCR-need detector (local path only) ─────────────────────────────────────
@@ -622,12 +646,13 @@ def _extract_without_ocr_sync(pdf_bytes: bytes) -> PdfExtractionResult:
         "yes" if warning else "no",
     )
 
-    return PdfExtractionResult(
+    return DocumentExtractionResult(
         markdown=markdown,
         page_count=total_pages or page_count_h or 1,
         char_count=char_count,
         used_ocr=False,
         warning=warning,
+        source_format="pdf",
     )
 
 
@@ -718,12 +743,13 @@ async def _extract_with_ocr(pdf_bytes: bytes) -> PdfExtractionResult:
         len(markdown),
     )
 
-    return PdfExtractionResult(
+    return DocumentExtractionResult(
         markdown=markdown,
         page_count=len(pages),
         char_count=len(markdown),
         used_ocr=True,
         warning=None,
+        source_format="pdf",
     )
 
 
