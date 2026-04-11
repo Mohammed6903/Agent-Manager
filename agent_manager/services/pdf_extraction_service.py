@@ -753,14 +753,241 @@ async def _extract_with_ocr(pdf_bytes: bytes) -> PdfExtractionResult:
     )
 
 
-# ── Public entry point ──────────────────────────────────────────────────────
+# ── DOCX extraction (python-docx + custom markdown converter) ──────────────
+#
+# DOCX is XML underneath, so structure is explicit — no inference needed.
+# python-docx gives us ``doc.paragraphs`` and ``doc.tables`` as separate
+# sequences, but those lose document order (paragraphs in the middle of
+# a document don't know about the tables between them). To preserve
+# interleaved order we walk the raw OOXML body via ``iter_block_items``
+# and yield each ``Paragraph`` or ``Table`` in document order. This is
+# the canonical python-docx recipe.
+
+
+def _iter_docx_block_items(parent):
+    """Yield paragraphs and tables in document order.
+
+    ``parent`` is a ``docx.document.Document`` or ``docx.table._Cell``.
+    Walks the raw OOXML child elements and wraps each in the right
+    python-docx type based on its tag.
+    """
+    from docx.document import Document as _DocxDocument  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+    from docx.table import Table, _Cell  # noqa: PLC0415
+    from docx.text.paragraph import Paragraph  # noqa: PLC0415
+
+    if isinstance(parent, _DocxDocument):
+        parent_elm = parent.element.body
+    elif isinstance(parent, _Cell):
+        parent_elm = parent._tc
+    else:
+        raise TypeError(
+            f"_iter_docx_block_items: unsupported parent type {type(parent).__name__}"
+        )
+
+    for child in parent_elm.iterchildren():
+        if child.tag == qn("w:p"):
+            yield Paragraph(child, parent)
+        elif child.tag == qn("w:tbl"):
+            yield Table(child, parent)
+
+
+def _docx_runs_to_markdown(runs) -> str:
+    """Convert a paragraph's runs to markdown with inline bold/italic.
+
+    python-docx's Run exposes ``.text``, ``.bold``, ``.italic``. We emit
+    ``**bold**``, ``*italic*``, or ``***both***``. Underline and
+    strikethrough are dropped — markdown support for them is uneven
+    across editors and they rarely carry meaning that's lost.
+
+    Adjacent runs with the same formatting are naturally merged at the
+    string level because we concatenate without separators.
+    """
+    parts: list[str] = []
+    for run in runs:
+        text = run.text or ""
+        if not text:
+            continue
+        # Escape markdown special chars in body text. We're conservative
+        # here — over-escaping produces ugly output in the Notion editor
+        # but wrong escaping loses content. Only escape backticks and
+        # the leading # that would otherwise be interpreted as a heading.
+        text = text.replace("\\", "\\\\").replace("`", "\\`")
+        bold = bool(run.bold)
+        italic = bool(run.italic)
+        if bold and italic:
+            parts.append(f"***{text}***")
+        elif bold:
+            parts.append(f"**{text}**")
+        elif italic:
+            parts.append(f"*{text}*")
+        else:
+            parts.append(text)
+    return "".join(parts)
+
+
+def _docx_paragraph_to_markdown(para) -> str:
+    """Turn one docx Paragraph into a single line of markdown.
+
+    Classification priority:
+    1. Empty paragraph → empty string (caller drops it)
+    2. Heading style (``Heading 1``..``Heading 6``) → ``#`` markers
+    3. ``Title`` → ``#``; ``Subtitle`` → ``##``
+    4. ``List Bullet*`` → ``- ``; ``List Number*`` → ``1. ``
+    5. ``Quote``/``Intense Quote`` → ``> ``
+    6. Anything else (``Normal``, ``Body Text``, custom) → plain text
+    """
+    text = _docx_runs_to_markdown(para.runs).strip()
+    if not text:
+        return ""
+
+    style_name = (para.style.name or "").strip().lower() if para.style else ""
+
+    # Heading 1..6 — python-docx returns the exact style name from the
+    # Word template, e.g. "Heading 1", "Heading 2", etc.
+    for level in range(1, 7):
+        if style_name == f"heading {level}":
+            return f"{'#' * level} {text}"
+
+    if style_name == "title":
+        return f"# {text}"
+    if style_name == "subtitle":
+        return f"## {text}"
+
+    # List styles. Word's default bullet list style is "List Bullet";
+    # custom templates often have "List Bullet 2", "List Bullet 3" for
+    # nested indents. We collapse them all to the flat ``- `` marker —
+    # preserving indent depth would require tracking list state across
+    # the document, which isn't worth the complexity for a RAG-oriented
+    # extractor.
+    if "list bullet" in style_name or style_name == "list paragraph":
+        return f"- {text}"
+    if "list number" in style_name:
+        return f"1. {text}"
+
+    if "quote" in style_name:
+        return f"> {text}"
+
+    return text
+
+
+def _docx_table_to_markdown(table) -> str:
+    """Convert a docx Table to a markdown pipe table.
+
+    First row becomes the header. Cell text has newlines collapsed to
+    spaces and pipes escaped so the table stays on one logical line per
+    row. Rows are padded to the same column count (Word tables can have
+    ragged rows from merged cells; we render the underlying column
+    structure without trying to reproduce merges).
+    """
+    rows: list[list[str]] = []
+    for row in table.rows:
+        cells = []
+        for cell in row.cells:
+            cell_text = (cell.text or "").replace("\n", " ").replace("|", "\\|").strip()
+            cells.append(cell_text)
+        rows.append(cells)
+
+    if not rows:
+        return ""
+    # Drop rows where every cell is empty
+    rows = [r for r in rows if any(c for c in r)]
+    if not rows:
+        return ""
+
+    max_cols = max(len(r) for r in rows)
+    rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+    header = rows[0]
+    body = rows[1:]
+    if not any(header):
+        header = [f"Col {i+1}" for i in range(max_cols)]
+        body = rows
+
+    lines = [
+        "| " + " | ".join(c or " " for c in header) + " |",
+        "| " + " | ".join(["---"] * max_cols) + " |",
+    ]
+    for row in body:
+        lines.append("| " + " | ".join(c or " " for c in row) + " |")
+
+    return "\n".join(lines)
+
+
+def _extract_docx_sync(docx_bytes: bytes) -> DocumentExtractionResult:
+    """Synchronous DOCX → markdown extraction.
+
+    Opens the bytes as an in-memory ``Document``, walks the block-level
+    children in document order, converts each to markdown, and joins
+    with blank lines. Raises ``InvalidDocumentError`` (→ HTTP 400) when
+    python-docx can't open the file — the common reason is the user
+    uploaded a legacy ``.doc`` (binary Word 97 format) instead of
+    ``.docx`` (Open Office XML). The error message tells them so.
+    """
+    from docx import Document  # noqa: PLC0415
+
+    try:
+        doc = Document(io.BytesIO(docx_bytes))
+    except Exception as exc:
+        logger.warning("python-docx failed to open DOCX: %s", exc)
+        raise InvalidDocumentError(
+            "The uploaded file is not a valid Microsoft Word (.docx) "
+            "document. python-docx reported: "
+            f"{exc}. If this is a legacy .doc (binary Word 97-2003) "
+            "file, open it in Word or LibreOffice and save it as .docx "
+            "before uploading. If it was exported from a non-Microsoft "
+            "tool, try re-exporting or uploading as PDF instead."
+        ) from exc
+
+    blocks: list[str] = []
+    try:
+        for item in _iter_docx_block_items(doc):
+            # Each item is either a Paragraph or a Table. We classify
+            # by the class-name-ending rather than isinstance checks
+            # so we don't re-import the python-docx types here.
+            cls_name = type(item).__name__
+            if cls_name == "Paragraph":
+                md = _docx_paragraph_to_markdown(item)
+            elif cls_name == "Table":
+                md = _docx_table_to_markdown(item)
+            else:
+                continue
+            if md:
+                blocks.append(md)
+    except Exception as exc:
+        logger.exception("DOCX block iteration failed")
+        raise DocumentExtractionError(
+            f"DOCX extraction failed mid-document: {exc}"
+        ) from exc
+
+    markdown = "\n\n".join(blocks).strip()
+    char_count = len(markdown)
+
+    logger.info(
+        "DOCX extract: blocks=%d chars=%d", len(blocks), char_count
+    )
+
+    return DocumentExtractionResult(
+        markdown=markdown,
+        # DOCX has no meaningful page count for content extraction —
+        # pagination is a display concept that depends on fonts, zoom,
+        # and the renderer. Report 1 so the client has a stable field.
+        page_count=1,
+        char_count=char_count,
+        used_ocr=False,
+        warning=None,
+        source_format="docx",
+    )
+
+
+# ── Public entry points ─────────────────────────────────────────────────────
 
 
 async def extract_pdf(
     pdf_bytes: bytes,
     *,
     use_ocr: bool = False,
-) -> PdfExtractionResult:
+) -> DocumentExtractionResult:
     """Extract a PDF to markdown, optionally using Mistral OCR.
 
     ``use_ocr=False`` (default) runs the local pdfplumber path and
@@ -768,11 +995,12 @@ async def extract_pdf(
     ``use_ocr=True`` calls Mistral OCR directly — no warning is ever
     emitted on the OCR path because OCR either works or fails loudly.
 
-    Raises ``InvalidPdfError`` (HTTP 400) for unparseable files and
-    ``PdfExtractionError`` (HTTP 502) for downstream/provider failures.
+    Raises ``InvalidDocumentError`` (HTTP 400) for unparseable files
+    and ``DocumentExtractionError`` (HTTP 502) for downstream/provider
+    failures.
     """
     if not pdf_bytes:
-        raise PdfExtractionError("Empty PDF payload")
+        raise DocumentExtractionError("Empty PDF payload")
 
     if use_ocr:
         return await _extract_with_ocr(pdf_bytes)
@@ -781,3 +1009,47 @@ async def extract_pdf(
     # Offload to a worker thread so the event loop stays responsive.
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _extract_without_ocr_sync, pdf_bytes)
+
+
+async def extract_docx(docx_bytes: bytes) -> DocumentExtractionResult:
+    """Extract a DOCX to markdown.
+
+    No OCR option — DOCX is XML, all text is always directly readable.
+    No heuristic detector — DOCX can't be "image-only" the way a
+    scanned PDF can. The only failure mode is "not a valid DOCX at
+    all," which raises ``InvalidDocumentError`` (HTTP 400).
+
+    Offloaded to a worker thread because python-docx's zip+XML parsing
+    is synchronous and CPU-bound; we don't want to block the event
+    loop on a large document.
+    """
+    if not docx_bytes:
+        raise DocumentExtractionError("Empty DOCX payload")
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _extract_docx_sync, docx_bytes)
+
+
+async def extract_document(
+    file_bytes: bytes,
+    *,
+    source_format: str,
+    use_ocr: bool = False,
+) -> DocumentExtractionResult:
+    """Unified dispatcher: extract a PDF or DOCX based on ``source_format``.
+
+    ``source_format`` must be ``"pdf"`` or ``"docx"`` (case-insensitive).
+    The ``use_ocr`` flag only affects the PDF path; it's silently
+    ignored for DOCX since DOCX never needs OCR.
+
+    This is the function the router endpoint calls after it has
+    classified the uploaded file by content-type + filename extension.
+    """
+    fmt = (source_format or "").strip().lower()
+    if fmt == "pdf":
+        return await extract_pdf(file_bytes, use_ocr=use_ocr)
+    if fmt == "docx":
+        return await extract_docx(file_bytes)
+    raise DocumentExtractionError(
+        f"Unsupported source_format={source_format!r}; expected 'pdf' or 'docx'"
+    )

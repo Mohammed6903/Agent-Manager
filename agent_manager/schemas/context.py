@@ -45,30 +45,53 @@ class ContextContentResponse(BaseModel):
     content: str
 
 
-class UploadPdfResponse(BaseModel):
-    """Response for POST /contexts/upload-pdf.
+class UploadDocumentResponse(BaseModel):
+    """Response for POST /contexts/upload-document.
 
-    Wraps the freshly-created GlobalContext with extraction metadata so the
-    client can surface page counts, the OCR mode that was used, and — most
-    importantly — a ``warning`` string when our heuristics detected that
-    the PDF is probably scanned or image-based and would benefit from
-    re-uploading with OCR enabled.
+    Wraps the freshly-created GlobalContext with extraction metadata so
+    the client can surface page counts, the extraction mode used, and —
+    most importantly — a ``warning`` string when our heuristics detected
+    that a PDF is probably scanned or image-based and would benefit
+    from re-uploading with OCR enabled. DOCX uploads never emit a
+    warning because DOCX is always XML-based with readable text.
     """
 
     context: GlobalContextResponse
-    page_count: int = Field(..., description="Total number of pages in the PDF")
+    source_format: str = Field(
+        ...,
+        description="File format the upload was classified as. 'pdf' or 'docx'.",
+    )
+    page_count: int = Field(
+        ...,
+        description=(
+            "Number of pages in the source document. For DOCX this is "
+            "always 1 because DOCX doesn't have a meaningful page count "
+            "for content extraction — pagination is a display concept."
+        ),
+    )
     char_count: int = Field(
-        ..., description="Characters of markdown text produced by the extraction"
+        ..., description="Characters of markdown text produced by the extraction."
     )
     used_ocr: bool = Field(
-        ..., description="Whether Mistral OCR was used. False means local text extraction."
+        ...,
+        description=(
+            "Whether Mistral OCR was used. False means local text "
+            "extraction (pdfplumber for PDF, python-docx for DOCX). "
+            "Always False for DOCX."
+        ),
     )
     warning: Optional[str] = Field(
         None,
         description=(
-            "Professional warning message when the extraction heuristic "
-            "detected that the document may be scanned or image-based and "
-            "the text density is lower than expected. None when the "
-            "extraction result looks complete or when OCR was used."
+            "Professional warning message when the PDF extraction "
+            "heuristic detected that the document may be scanned or "
+            "image-based and the text density is lower than expected. "
+            "None for DOCX uploads, for OCR uploads, and for PDF "
+            "uploads where the result looks complete."
         ),
     )
+
+
+# Backwards-compat alias — keep the old name importable for any scripts
+# or future tests that still reference it.
+UploadPdfResponse = UploadDocumentResponse

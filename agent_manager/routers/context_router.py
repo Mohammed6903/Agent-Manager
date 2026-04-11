@@ -20,7 +20,7 @@ from ..schemas.context import (
     GlobalContextCreate,
     GlobalContextResponse,
     GlobalContextUpdate,
-    UploadPdfResponse,
+    UploadDocumentResponse,
 )
 from ..services import manual_context_service, pdf_extraction_service
 from ..services.context_service import ContextService
@@ -44,9 +44,41 @@ def create_global_context(
     return svc.create_global_context(req, org_id=org_id)
 
 
-@router.post("/upload-pdf", response_model=UploadPdfResponse)
-async def upload_pdf_context(
-    file: UploadFile = File(..., description="PDF file to extract into a knowledge context"),
+# MIME types we accept for each format. UploadFile.content_type is
+# whatever the client advertised, which can lie — so we also accept the
+# extension as a fallback signal.
+_PDF_MIMES = {"application/pdf", "application/x-pdf"}
+_DOCX_MIMES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/x-docx",
+    # Some browsers send the generic octet-stream on drag-and-drop, so
+    # we also fall back to extension-based detection.
+}
+
+
+def _classify_upload(file: UploadFile) -> Optional[str]:
+    """Classify an UploadFile as 'pdf' or 'docx', or None if unsupported.
+
+    Uses content-type first (what the client said), then filename
+    extension as a fallback (what the client *actually* uploaded).
+    Returns the lowercase format string or None if we can't identify it.
+    """
+    content_type = (file.content_type or "").lower()
+    ext = os.path.splitext(file.filename or "")[1].lower()
+
+    if content_type in _PDF_MIMES or ext == ".pdf":
+        return "pdf"
+    if content_type in _DOCX_MIMES or ext == ".docx":
+        return "docx"
+    return None
+
+
+@router.post("/upload-document", response_model=UploadDocumentResponse)
+async def upload_document_context(
+    file: UploadFile = File(
+        ...,
+        description="PDF or DOCX file to extract into a knowledge context",
+    ),
     name: Optional[str] = Query(
         default=None,
         description=(
@@ -57,66 +89,65 @@ async def upload_pdf_context(
     use_ocr: bool = Query(
         default=False,
         description=(
-            "Run Mistral OCR on the PDF. Enable for scanned, image-based, "
-            "or heavily-formatted documents. Leave off for born-digital "
-            "PDFs — the local path is faster and free."
+            "For PDF uploads only: run Mistral OCR on the document. Enable "
+            "for scanned, image-based, or heavily-formatted PDFs. Ignored "
+            "for DOCX uploads since DOCX is always XML-based and readable."
         ),
     ),
     org_id: Optional[str] = Query(default=None),
     svc: ContextService = Depends(get_context_service),
 ):
-    """Upload a PDF and create a manual context from its contents.
+    """Upload a PDF or DOCX and create a manual context from its contents.
 
     Flow:
 
-    1. Validate MIME (application/pdf) and size (``MANUAL_CONTEXT_PDF_MAX_BYTES``).
-    2. Extract markdown via ``pdf_extraction_service.extract_pdf``.
-       The ``use_ocr`` flag selects between the local docling path (fast,
-       free, good for born-digital) and the Mistral OCR path (handles
-       scanned documents and complex layouts).
-    3. Hand the extracted markdown to ``ContextService.create_global_context``,
-       which triggers the existing chunk + embed + Qdrant pipeline.
-    4. Return the created ``GlobalContext`` alongside extraction metadata
-       (page count, char count, OCR flag, and — if the heuristic fired —
-       a warning that the document may need OCR for complete results).
+    1. Classify the upload as PDF or DOCX by content-type + filename.
+    2. Validate size (``MANUAL_CONTEXT_PDF_MAX_BYTES``) and non-empty.
+    3. Extract markdown via ``pdf_extraction_service.extract_document``:
+       - **PDF**: local pdfplumber path (fast, free) unless ``use_ocr=true``
+         which routes to Mistral OCR (handles scans and complex layouts)
+       - **DOCX**: python-docx path (XML-based, always direct text,
+         no OCR option because DOCX cannot be image-only)
+    4. Hand the extracted markdown to ``ContextService.create_global_context``,
+       which triggers the existing chunk + embed + Qdrant RAG pipeline.
+    5. Return the created context alongside extraction metadata
+       (source_format, page count, char count, OCR flag, and — for PDFs —
+       an optional warning that the document may need OCR for complete
+       results).
 
-    The response ``warning`` field is ``null`` on OCR uploads and on
-    non-OCR uploads where the heuristic determined the content looks
-    complete. Clients should surface the warning to the user so they
-    know to re-upload with OCR if the stored context looks thin.
+    The response ``warning`` field is always ``null`` for DOCX uploads
+    and for PDF uploads processed via OCR. It's only populated when the
+    local PDF heuristic detects that the document is likely scanned
+    and suggests the user re-upload with ``use_ocr=true``.
     """
-    # ── Content-type check ─────────────────────────────────────────────
-    # FastAPI's UploadFile.content_type is what the client advertised,
-    # which can lie. We accept "application/pdf" and a couple of common
-    # variants; a hostile client could still spoof this but the downstream
-    # extractors will fail on non-PDF bytes, so this is a cheap front-door
-    # filter, not a security boundary.
-    content_type = (file.content_type or "").lower()
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    is_pdf = content_type in ("application/pdf", "application/x-pdf") or ext == ".pdf"
-    if not is_pdf:
+    # ── Classify by content-type + extension ──────────────────────────
+    source_format = _classify_upload(file)
+    if source_format is None:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Expected a PDF upload (content-type 'application/pdf' or "
-                f"a .pdf filename), got content-type={content_type!r}, "
-                f"filename={file.filename!r}"
+                f"Unsupported file type. Expected a PDF or DOCX upload "
+                f"(content-type 'application/pdf' or "
+                f"'application/vnd.openxmlformats-officedocument."
+                f"wordprocessingml.document', or a .pdf/.docx filename). "
+                f"Got content-type={file.content_type!r}, "
+                f"filename={file.filename!r}."
             ),
         )
 
     # ── Size guard ─────────────────────────────────────────────────────
-    # Read the bytes up front (UploadFile is a SpooledTemporaryFile under
-    # the hood so this is cheap for typical sizes). Enforce the cap in
-    # one pass rather than trying to stream-count — manual uploads are
-    # bounded to a few tens of MB, not gigabytes.
-    pdf_bytes = await file.read()
-    size = len(pdf_bytes)
+    # Read the bytes up front (UploadFile is a SpooledTemporaryFile
+    # under the hood so this is cheap for typical sizes). We reuse
+    # MANUAL_CONTEXT_PDF_MAX_BYTES as the cap for both formats — the
+    # name is historical; it's really "upload size limit" now.
+    file_bytes = await file.read()
+    size = len(file_bytes)
     if size > settings.MANUAL_CONTEXT_PDF_MAX_BYTES:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"PDF is {size:,} bytes, which exceeds the "
-                f"{settings.MANUAL_CONTEXT_PDF_MAX_BYTES:,}-byte upload limit. "
+                f"Upload is {size:,} bytes, which exceeds the "
+                f"{settings.MANUAL_CONTEXT_PDF_MAX_BYTES:,}-byte limit. "
                 f"If you need to upload larger documents, raise "
                 f"MANUAL_CONTEXT_PDF_MAX_BYTES in config."
             ),
@@ -125,51 +156,52 @@ async def upload_pdf_context(
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     # ── Extract ────────────────────────────────────────────────────────
-    # InvalidPdfError is a client error (bad file) — map to 400.
-    # The generic PdfExtractionError covers downstream failures
-    # (docling crash, Mistral OCR outage, timeouts) — map to 502.
+    # InvalidDocumentError is a client error (bad file) → 400.
+    # DocumentExtractionError covers downstream/provider failures → 502.
     try:
-        result = await pdf_extraction_service.extract_pdf(
-            pdf_bytes, use_ocr=use_ocr
+        result = await pdf_extraction_service.extract_document(
+            file_bytes, source_format=source_format, use_ocr=use_ocr,
         )
-    except pdf_extraction_service.InvalidPdfError as exc:
+    except pdf_extraction_service.InvalidDocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except pdf_extraction_service.PdfExtractionError as exc:
+    except pdf_extraction_service.DocumentExtractionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
     if not result.markdown.strip():
-        # Happens only when BOTH pypdf and docling returned nothing for
-        # a PDF that passed the front-door check — almost certainly a
-        # fully scanned doc uploaded without OCR. Tell the user instead
-        # of silently creating an empty context.
-        raise HTTPException(
-            status_code=422,
-            detail=(
+        # PDF: happens when the local path returned nothing for a doc
+        # that passed the front-door check (fully scanned, user didn't
+        # opt into OCR). Tell them to retry with use_ocr=true.
+        # DOCX: means the document had zero text content at all —
+        # technically valid but semantically useless as a context.
+        if source_format == "pdf":
+            detail = (
                 "No text content could be extracted from this PDF. It "
                 "appears to be a scanned or image-only document. Retry "
                 "with use_ocr=true to run Mistral OCR on the pages."
-            ),
-        )
+            )
+        else:
+            detail = (
+                "The DOCX file contains no text content to index. "
+                "Check that the document has text beyond images or "
+                "embedded objects before re-uploading."
+            )
+        raise HTTPException(status_code=422, detail=detail)
 
     # ── Resolve the context name ───────────────────────────────────────
     final_name = (name or "").strip()
     if not final_name:
-        # Derive from filename: strip directory (if any) and .pdf extension.
-        base = os.path.basename(file.filename or "uploaded-pdf.pdf")
-        final_name = os.path.splitext(base)[0] or "uploaded-pdf"
+        base = os.path.basename(file.filename or f"uploaded-{source_format}")
+        final_name = os.path.splitext(base)[0] or f"uploaded-{source_format}"
 
     # ── Create the context (runs the full RAG pipeline) ────────────────
-    try:
-        created = svc.create_global_context(
-            GlobalContextCreate(name=final_name, content=result.markdown),
-            org_id=org_id,
-        )
-    except HTTPException:
-        # Re-raise service-layer errors (name conflict, etc.) as-is.
-        raise
+    created = svc.create_global_context(
+        GlobalContextCreate(name=final_name, content=result.markdown),
+        org_id=org_id,
+    )
 
-    return UploadPdfResponse(
+    return UploadDocumentResponse(
         context=GlobalContextResponse.model_validate(created),
+        source_format=result.source_format,
         page_count=result.page_count,
         char_count=result.char_count,
         used_ocr=result.used_ocr,
