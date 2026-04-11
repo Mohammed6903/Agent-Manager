@@ -251,23 +251,24 @@ async def _call_chat_completions(
         messages.append({"role": "system", "content": session.system_prompt})
     messages.extend(session.messages)
 
-    # Model selection. Default is the agent's openclaw alias, which
-    # resolves to whatever `agents.defaults.model.primary` is set to in
-    # openclaw.json (currently a frontier reasoning model on prod that
-    # takes 5-15s per turn — too slow for voice). When
-    # ``settings.VOICE_CALL_CHAT_MODEL`` is set, we override that with
-    # a direct provider/model string for voice turns only, letting
-    # chat keep its higher-quality default. We still pass through the
-    # openclaw gateway so billing, failover, and logging continue to
-    # work — we just bypass the per-agent alias resolution layer.
-    model_id = (
-        settings.VOICE_CALL_CHAT_MODEL
-        if settings.VOICE_CALL_CHAT_MODEL
-        else f"openclaw:{session.agent_id}"
-    )
-
+    # Model selection. The body `model` field MUST be the openclaw
+    # agent alias form (`openclaw/<agentId>` or `openclaw`) — the
+    # gateway rejects plain provider strings at the API layer:
+    #
+    #     {"error":{"message":"Invalid `model`. Use `openclaw` or
+    #      `openclaw/<agentId>`.","type":"invalid_request_error"}}
+    #
+    # To override the model openclaw actually routes to, set the
+    # ``x-openclaw-model`` header to a provider/model string (e.g.
+    # "google/gemini-2.5-flash"). The header is honored by
+    # ``resolveOpenAiCompatModelOverride`` in the openclaw gateway
+    # and validated against the agent's allowed-models set from
+    # openclaw.json — the chosen model must appear in
+    # ``agents.defaults.models`` (or the per-agent allowed list).
+    # Invalid models return a 400 with "Model 'X' is not allowed
+    # for agent 'Y'."
     body = {
-        "model": model_id,
+        "model": f"openclaw:{session.agent_id}",
         "messages": messages,
         "stream": False,
         "user": session.user_field,
@@ -282,6 +283,18 @@ async def _call_chat_completions(
         **_gateway_headers(),
         "x-openclaw-agent-id": session.agent_id,
     }
+
+    # Voice-call model override. When ``settings.VOICE_CALL_CHAT_MODEL``
+    # is set, we pass it through the ``x-openclaw-model`` header — this
+    # is the openclaw-gateway-sanctioned way to route a single request
+    # to a different provider/model while keeping agent resolution,
+    # session tracking, billing, and logging wired up normally.
+    # The model must be present in ``agents.defaults.models`` (or the
+    # per-agent allowed list) in openclaw.json, otherwise the gateway
+    # returns 400 "Model 'X' is not allowed for agent 'Y'."
+    if settings.VOICE_CALL_CHAT_MODEL:
+        headers["x-openclaw-model"] = settings.VOICE_CALL_CHAT_MODEL
+
     url = f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions"
     timeout = httpx.Timeout(connect=10.0, read=timeout_s, write=10.0, pool=10.0)
 
