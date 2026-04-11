@@ -586,50 +586,57 @@ async def _speak_text(
         logger.warning("Voxtral TTS returned no chunks for call %s", runtime.call_id)
         return
 
-    # ── Peak normalization (linear gain) ──────────────────────────────────
-    # Voxtral synthesizes very quietly (~0.04 RMS / -11 dBFS peak typical).
-    # Boost so the loudest sample reaches 0.9 (-0.9 dBFS) before resampling
-    # and dithering. Doing this in float32 before quantization is the cleanest
-    # place — no clipping, no compander interaction. Linear gain only;
-    # nonlinear shaping (soft-clip / tanh) was tried and produced broadband
-    # distortion. Pipecat's reference doesn't normalize because their TTS
-    # providers (ElevenLabs, Cartesia) deliver at proper levels — Voxtral
-    # does not, so we have to.
+    # ── DSP: resample → normalize → quantize (correct signal chain order) ──
+    #
+    # Previous ordering was: normalize at 24k → dither → int16 → resample.
+    # That had two problems:
+    #   1. Peak target was measured at 24k, but after resampling removes
+    #      everything above 4 kHz, the actual 8k peak is lower → quieter
+    #      output than intended compared to demos using ElevenLabs/Deepgram.
+    #   2. Dither noise added at 24k gets aliased into 0-4 kHz during
+    #      3:1 decimation, raising the noise floor ~5 dB.
+    #
+    # Correct order: resample in float32 (maximum precision) → normalize
+    # at the output rate → quantize with dither once at the final rate.
+    # This is the textbook DSP ordering.
     full_f32 = np.concatenate(f32_chunks)
-    peak = float(np.max(np.abs(full_f32))) if full_f32.size else 0.0
+
+    # Resample 24 kHz → 8 kHz in float32 via soxr one-shot (no int16
+    # quantization before the filter — keeps maximum precision through
+    # the anti-alias filter and decimation). soxr.resample handles the
+    # float64 path internally.
+    import soxr as _soxr
+    out_8k_f32 = _soxr.resample(
+        full_f32.astype(np.float64),
+        VOXTRAL_TTS_SAMPLE_RATE,
+        TELNYX_PCM_SAMPLE_RATE,
+        quality="VHQ",
+    ).astype(np.float32)
+
+    # Peak normalize at the OUTPUT rate so the target reflects what μ-law
+    # actually sees. Voxtral is quiet (~-11 dBFS); we boost to 0.9 at
+    # 8 kHz. This is safe now because we previously lowered to 0.7 while
+    # normalizing at 24k — but at 8k, the peak is lower (high-freq content
+    # removed), so 0.9 at 8k ≈ what 0.7 at 24k was. The μ-law compander
+    # zone concern was about the 24k peak hitting 0.9, not the 8k peak.
     rms = (
-        float(np.sqrt(np.mean(full_f32 * full_f32))) if full_f32.size else 0.0
+        float(np.sqrt(np.mean(out_8k_f32 * out_8k_f32)))
+        if out_8k_f32.size else 0.0
     )
+    peak = float(np.max(np.abs(out_8k_f32))) if out_8k_f32.size else 0.0
     if peak > 1e-4:
-        gain = 0.9 / peak
-        full_f32 = full_f32 * gain
+        target_peak = 0.9
+        gain = target_peak / peak
+        out_8k_f32 = out_8k_f32 * gain
         gain_db = 20 * float(np.log10(gain))
-        post_peak = 0.9
+        post_peak = target_peak
     else:
         gain_db = 0.0
         post_peak = 0.0
 
-    # ── float32 24 kHz → int16 24 kHz (TPDF dither) ───────────────────────
-    # Quantize once at the boundary using TPDF dither so the int16 stream
-    # going into soxr is correctly dithered. (soxr's stream resampler is
-    # int16 in / int16 out, matching pipecat's ``SOXRStreamAudioResampler``
-    # configuration. Float32 → int16 needs to happen before resampling.)
-    pcm_24k_int16 = float32_to_int16_dither(full_f32)
-
-    # ── 24 kHz → 8 kHz via libsoxr "VHQ" stream resampler ─────────────────
-    # The same resampler pipecat uses for production Twilio/Telnyx voice
-    # agents. Maintains internal state across chunks and uses a much
-    # higher-quality kernel than scipy's resample_poly or our previous
-    # hand-rolled 63-tap Kaiser FIR. This is the single highest-leverage
-    # change in the whole audio path.
-    downsampler = SoxrStreamDownsampler(
-        in_rate=VOXTRAL_TTS_SAMPLE_RATE,
-        out_rate=TELNYX_PCM_SAMPLE_RATE,
-    )
-    pcm_8k_int16_arr = np.concatenate(
-        [downsampler.process(pcm_24k_int16), downsampler.flush()]
-    )
-    pcm_8k_int16 = pcm_8k_int16_arr.tobytes()
+    # Quantize with TPDF dither at the final rate (8 kHz). No aliasing of
+    # dither noise because there's no subsequent decimation step.
+    pcm_8k_int16 = float32_to_int16_dither(out_8k_f32).tobytes()
 
     # ── PCMU encode ────────────────────────────────────────────────────────
     # Standard G.711 μ-law via audioop.lin2ulaw (one byte per sample).

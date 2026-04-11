@@ -93,11 +93,16 @@ class AgentService:
     def _build_agents_raw(self, agents: List[dict[str, Any]]) -> str:
         entries: List[str] = []
         for a in agents:
+            agent_id = a.get("id", "")
+            # Legacy agent records predating the agentDir schema field don't
+            # carry it on the list_agents() response. Fall back to the
+            # canonical computed path instead of crashing create_agent.
+            agent_dir = a.get("agentDir") or self._agent_dir(agent_id)
             entry = (
-                f'{{ id: "{a["id"]}", '
-                f'name: "{a["name"]}", '
-                f'workspace: "{a["workspace"]}", '
-                f'agentDir: "{a["agentDir"]}" }}'
+                f'{{ id: "{agent_id}", '
+                f'name: "{a.get("name", "")}", '
+                f'workspace: "{a.get("workspace", "")}", '
+                f'agentDir: "{agent_dir}" }}'
             )
             entries.append(entry)
         joined = ", ".join(entries)

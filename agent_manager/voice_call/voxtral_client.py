@@ -57,8 +57,11 @@ from .audio_codec import (
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.mistral.ai/v1"
-TTS_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
-STT_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+TTS_TIMEOUT = httpx.Timeout(30.0, connect=15.0)
+# STT uploads can be large (30+ seconds of PCM = ~1 MB WAV) and Mistral's
+# transcription endpoint takes time to process. 60 s read timeout with a
+# generous connect timeout for the India→EU hop.
+STT_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 
 # How long we wait between SSE chunks before declaring a stream stalled.
 # Mistral's first delta usually arrives within ~500-700 ms; subsequent

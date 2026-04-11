@@ -119,6 +119,37 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Failed to bootstrap/sync shared files: %s", exc)
 
+    # Clean up stale voice calls from previous server sessions. Calls stuck
+    # in non-terminal states (initiated, ringing, etc.) for >2 minutes were
+    # almost certainly killed by a server restart and should not block the
+    # dedup check from placing new calls.
+    try:
+        from datetime import datetime, timezone, timedelta
+        from agent_manager.database import SessionLocal
+        from agent_manager.models.voice_call import VoiceCall
+
+        db = SessionLocal()
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        stale = (
+            db.query(VoiceCall)
+            .filter(
+                VoiceCall.state.in_(["initiated", "ringing", "answered", "speaking", "listening"]),
+                VoiceCall.started_at < cutoff,
+            )
+            .all()
+        )
+        if stale:
+            now = datetime.now(timezone.utc)
+            for c in stale:
+                c.state = "ended"
+                c.end_reason = "stale_cleanup"
+                c.ended_at = now
+            db.commit()
+            logger.info("Cleaned %d stale voice call(s) on startup", len(stale))
+        db.close()
+    except Exception as exc:
+        logger.warning("Failed to clean stale voice calls: %s", exc)
+
     # Start server-side heartbeat for all agents (every 5s)
     from agent_manager.services.heartbeat_service import start_heartbeat_task
     heartbeat_task = start_heartbeat_task()
