@@ -11,6 +11,13 @@ from pydantic import BaseModel, field_validator
 # ── Agent CRUD ──────────────────────────────────────────────────────────────────
 
 
+# Allowed values for ``agent_type`` on create/update. Mirrors the
+# module-level constants in ``agent_manager.models.agent_registry`` but
+# we keep them as a literal set here to avoid a schemas → models import
+# cycle. If you add a new type, update both places.
+_ALLOWED_AGENT_TYPES = ("default", "qa", "voice")
+
+
 class CreateAgentRequest(BaseModel):
     agent_id: str
     name: str
@@ -20,11 +27,35 @@ class CreateAgentRequest(BaseModel):
     org_id: str | None = None
     user_id: str | None = None
 
+    # Agent type + Q&A-specific configuration. All optional on create —
+    # ``agent_type`` defaults to "default" if omitted, preserving the
+    # historical behavior for any client that doesn't know about the
+    # new field yet. The four ``qa_*`` fields are only meaningful when
+    # ``agent_type == "qa"`` but we don't reject them on other types
+    # (so founders can flip an agent between types later without
+    # losing their Q&A config).
+    agent_type: Optional[str] = None
+    qa_welcome_message: Optional[str] = None
+    qa_persona_instructions: Optional[str] = None
+    qa_page_title: Optional[str] = None
+    qa_page_subtitle: Optional[str] = None
+
     @field_validator("agent_id")
     @classmethod
     def validate_agent_id(cls, v: str) -> str:
         if not re.fullmatch(r"[a-z0-9]+", v):
             raise ValueError("agent_id must be lowercase alphanumeric only")
+        return v
+
+    @field_validator("agent_type")
+    @classmethod
+    def validate_agent_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if v not in _ALLOWED_AGENT_TYPES:
+            raise ValueError(
+                f"agent_type must be one of {_ALLOWED_AGENT_TYPES}, got {v!r}"
+            )
         return v
 
 
@@ -33,6 +64,25 @@ class UpdateAgentRequest(BaseModel):
     role: Optional[str] = None
     soul: Optional[str] = None
     identity: Optional[str] = None
+    # Q&A-related fields are also updatable so founders can tune their
+    # Q&A agent's persona / welcome / branding without deleting and
+    # recreating the agent. Same validation rules as CreateAgentRequest.
+    agent_type: Optional[str] = None
+    qa_welcome_message: Optional[str] = None
+    qa_persona_instructions: Optional[str] = None
+    qa_page_title: Optional[str] = None
+    qa_page_subtitle: Optional[str] = None
+
+    @field_validator("agent_type")
+    @classmethod
+    def validate_agent_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if v not in _ALLOWED_AGENT_TYPES:
+            raise ValueError(
+                f"agent_type must be one of {_ALLOWED_AGENT_TYPES}, got {v!r}"
+            )
+        return v
 
 
 class AgentResponse(BaseModel):
@@ -43,6 +93,13 @@ class AgentResponse(BaseModel):
     status: str
     org_id: str | None = None
     user_id: str | None = None
+    # New metadata surfaced so the frontend can render the type badge
+    # and the Q&A config editor. All optional for backward compat.
+    agent_type: Optional[str] = None
+    qa_welcome_message: Optional[str] = None
+    qa_persona_instructions: Optional[str] = None
+    qa_page_title: Optional[str] = None
+    qa_page_subtitle: Optional[str] = None
 
 
 # ── Chat ────────────────────────────────────────────────────────────────────────

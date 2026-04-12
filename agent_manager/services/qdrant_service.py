@@ -77,6 +77,52 @@ def search(
     ]
 
 
+def search_third_party(
+    agent_id: str,
+    query_vector: list[float],
+    top_k: int = 3,
+) -> list[dict]:
+    """Unified semantic search across ALL third-party sources for an agent.
+
+    The old ``context_injection_service`` ran N parallel searches, one
+    per connected integration (gmail + drive + slack + ...) with a top-k
+    per source and a global char cap. That scaled linearly with the
+    number of integrations and produced unsustainable prompt bloat on
+    agents with 5+ sources.
+
+    This function runs ONE query and returns the top-k chunks across
+    the entire third-party corpus for this agent, regardless of source.
+    Cost is constant: 1 embedding (paid by the caller) + 1 Qdrant query.
+
+    Critically, this explicitly excludes ``source="manual_context"`` via
+    a ``must_not`` filter so the third-party auto-inject block doesn't
+    double-count chunks that the manual-context auto-inject is already
+    handling.
+    """
+    client = get_client()
+    response = client.query_points(
+        collection_name=COLLECTION,
+        query=query_vector,
+        query_filter=Filter(
+            must=[
+                FieldCondition(key="agent_id", match=MatchValue(value=agent_id)),
+            ],
+            must_not=[
+                FieldCondition(
+                    key="source",
+                    match=MatchValue(value=MANUAL_CONTEXT_SOURCE),
+                ),
+            ],
+        ),
+        limit=top_k,
+        with_payload=True,
+    )
+    return [
+        {"score": r.score, **(r.payload or {})}
+        for r in response.points
+    ]
+
+
 def list_payloads_for_agent_source(
     agent_id: str,
     source: str,

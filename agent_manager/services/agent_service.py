@@ -377,6 +377,15 @@ class AgentService:
                 agent_dir=agent_dir,
                 org_id=req.org_id,       # None for unscoped agents
                 user_id=req.user_id,
+                # Agent type + Q&A config. ``agent_type`` falls through
+                # to the model's server_default ("default") when None,
+                # and the four qa_* columns are only populated for
+                # Q&A agents. Already validated at the schema layer.
+                agent_type=req.agent_type,
+                qa_welcome_message=req.qa_welcome_message,
+                qa_persona_instructions=req.qa_persona_instructions,
+                qa_page_title=req.qa_page_title,
+                qa_page_subtitle=req.qa_page_subtitle,
             )
 
         # PHASE 6: Create subscription and deduct initial $24.
@@ -406,7 +415,7 @@ class AgentService:
                 await self.storage.delete_dir(str(Path(settings.OPENCLAW_STATE_DIR) / "agents" / agent_id))
                 raise
 
-        logger.info("Agent '%s' created successfully", agent_id)
+        logger.info("Agent '%s' created successfully (type=%s)", agent_id, req.agent_type or "default")
         return AgentResponse(
             agent_id=agent_id,
             name=req.name,
@@ -415,6 +424,11 @@ class AgentService:
             status="created",
             org_id=req.org_id,
             user_id=req.user_id,
+            agent_type=req.agent_type or "default",
+            qa_welcome_message=req.qa_welcome_message,
+            qa_persona_instructions=req.qa_persona_instructions,
+            qa_page_title=req.qa_page_title,
+            qa_page_subtitle=req.qa_page_subtitle,
         )
 
     async def list_agents(self, org_id: str | None = None, user_id: str | None = None) -> List[dict[str, Any]]:
@@ -433,6 +447,18 @@ class AgentService:
                     "agentDir": r.agent_dir,
                     "org_id": r.org_id,
                     "user_id": r.user_id,
+                    # Surface type + Q&A config so the frontend can
+                    # render type badges on list rows and show the
+                    # copy-link button on Q&A agents without an
+                    # extra round trip.
+                    "agent_type": r.agent_type,
+                    "qa_welcome_message": r.qa_welcome_message,
+                    "qa_page_title": r.qa_page_title,
+                    "qa_page_subtitle": r.qa_page_subtitle,
+                    # NOTE: intentionally omitting qa_persona_instructions
+                    # from list responses — it's a potentially long
+                    # field and only needed when editing a single agent,
+                    # not when rendering a list row.
                 }
                 # Include subscription status when available so the frontend
                 # can still render the "locked" badge if subscriptions are
@@ -463,6 +489,15 @@ class AgentService:
                 "agentDir": row.agent_dir,
                 "org_id": row.org_id,
                 "user_id": row.user_id,
+                # Full type + Q&A config on single-agent fetches. This
+                # is what the agent detail / edit view consumes, so
+                # ``qa_persona_instructions`` is included here (unlike
+                # the list view which omits it for payload size).
+                "agent_type": row.agent_type,
+                "qa_welcome_message": row.qa_welcome_message,
+                "qa_persona_instructions": row.qa_persona_instructions,
+                "qa_page_title": row.qa_page_title,
+                "qa_page_subtitle": row.qa_page_subtitle,
             }
             if self._sub_repo:
                 sub = self._sub_repo.get_by_agent_id(agent_id)
@@ -539,6 +574,33 @@ class AgentService:
             if self._registry:
                 self._registry.update_name(agent_id, req.name)
 
+        # Persist agent_type + Q&A config changes. Only touches columns
+        # the caller actually passed (each None value is preserved
+        # via the repository's selective-update pattern).
+        if self._registry and any(
+            getattr(req, f) is not None
+            for f in (
+                "agent_type",
+                "qa_welcome_message",
+                "qa_persona_instructions",
+                "qa_page_title",
+                "qa_page_subtitle",
+            )
+        ):
+            self._registry.update_qa_config(
+                agent_id=agent_id,
+                agent_type=req.agent_type,
+                qa_welcome_message=req.qa_welcome_message,
+                qa_persona_instructions=req.qa_persona_instructions,
+                qa_page_title=req.qa_page_title,
+                qa_page_subtitle=req.qa_page_subtitle,
+            )
+
+        # Re-read the row so the response reflects the final state
+        # including any QA fields we just persisted (the call to
+        # ``get_agent`` above captures the pre-update state).
+        updated_row = self._registry.get(agent_id) if self._registry else None
+
         return AgentResponse(
             agent_id=agent_id,
             name=req.name or agent.get("name", ""),
@@ -547,6 +609,11 @@ class AgentService:
             status="updated",
             org_id=org_id,
             user_id=user_id,
+            agent_type=(updated_row.agent_type if updated_row else agent.get("agent_type")),
+            qa_welcome_message=(updated_row.qa_welcome_message if updated_row else agent.get("qa_welcome_message")),
+            qa_persona_instructions=(updated_row.qa_persona_instructions if updated_row else agent.get("qa_persona_instructions")),
+            qa_page_title=(updated_row.qa_page_title if updated_row else agent.get("qa_page_title")),
+            qa_page_subtitle=(updated_row.qa_page_subtitle if updated_row else agent.get("qa_page_subtitle")),
         )
 
 

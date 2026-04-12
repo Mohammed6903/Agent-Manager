@@ -28,19 +28,69 @@ class AgentRegistryRepository:
         agent_dir: str,
         org_id: str | None = None,
         user_id: str | None = None,
+        agent_type: str | None = None,
+        qa_welcome_message: str | None = None,
+        qa_persona_instructions: str | None = None,
+        qa_page_title: str | None = None,
+        qa_page_subtitle: str | None = None,
     ) -> AgentRegistry:
-        entry = AgentRegistry(
+        # agent_type is stored as-is; None lets the model's server_default
+        # ("default") fill in for us at insert time.
+        kwargs: dict = dict(
             agent_id=agent_id,
             name=name,
             workspace=workspace,
             agent_dir=agent_dir,
             org_id=org_id,
             user_id=user_id,
+            qa_welcome_message=qa_welcome_message,
+            qa_persona_instructions=qa_persona_instructions,
+            qa_page_title=qa_page_title,
+            qa_page_subtitle=qa_page_subtitle,
         )
+        if agent_type is not None:
+            kwargs["agent_type"] = agent_type
+        entry = AgentRegistry(**kwargs)
         self.db.add(entry)
         self.db.commit()
         self.db.refresh(entry)
         return entry
+
+    def update_qa_config(
+        self,
+        agent_id: str,
+        agent_type: str | None = None,
+        qa_welcome_message: str | None = None,
+        qa_persona_instructions: str | None = None,
+        qa_page_title: str | None = None,
+        qa_page_subtitle: str | None = None,
+    ) -> bool:
+        """Update type + Q&A config fields on an existing agent.
+
+        Only fields passed as non-None are written — passing None means
+        "don't touch this column." Returns True if a row was updated.
+        Callers should verify ownership via ``get()`` before calling.
+        """
+        updates: dict = {}
+        if agent_type is not None:
+            updates["agent_type"] = agent_type
+        if qa_welcome_message is not None:
+            updates["qa_welcome_message"] = qa_welcome_message
+        if qa_persona_instructions is not None:
+            updates["qa_persona_instructions"] = qa_persona_instructions
+        if qa_page_title is not None:
+            updates["qa_page_title"] = qa_page_title
+        if qa_page_subtitle is not None:
+            updates["qa_page_subtitle"] = qa_page_subtitle
+        if not updates:
+            return False
+        count = (
+            self.db.query(AgentRegistry)
+            .filter(AgentRegistry.agent_id == agent_id)
+            .update(updates)
+        )
+        self.db.commit()
+        return count > 0
 
     def get(
         self,

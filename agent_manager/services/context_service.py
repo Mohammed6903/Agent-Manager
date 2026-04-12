@@ -60,17 +60,38 @@ class ContextService:
         # is identical to the last successful index and we can skip.
         if req.content is not None:
             new_hash = manual_context_service.compute_content_hash(ctx.content)
-            if new_hash != ctx.content_hash:
+            old_hash = ctx.content_hash
+            if new_hash != old_hash:
+                logger.info(
+                    "Context %s content changed (old_hash=%s new_hash=%s len=%d) — reindexing",
+                    ctx.id,
+                    (old_hash or "<none>")[:12],
+                    new_hash[:12],
+                    len(ctx.content or ""),
+                )
                 try:
-                    manual_context_service.reindex_context(ctx.id, ctx.name, ctx.content)
+                    n_chunks = manual_context_service.reindex_context(
+                        ctx.id, ctx.name, ctx.content
+                    )
                     ctx.content_hash = new_hash
                     self.db.commit()
                     self.db.refresh(ctx)
+                    logger.info(
+                        "Context %s reindexed: %d chunks written to Qdrant",
+                        ctx.id,
+                        n_chunks,
+                    )
                 except Exception:
                     logger.exception(
                         "Failed to reindex context %s after update — stored content is current but Qdrant may be stale",
                         ctx.id,
                     )
+            else:
+                logger.info(
+                    "Context %s update: content hash unchanged (%s) — skipping reindex",
+                    ctx.id,
+                    (old_hash or "<none>")[:12],
+                )
         return ctx
 
     def delete_global_context(self, context_id: uuid.UUID):

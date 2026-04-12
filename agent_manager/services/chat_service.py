@@ -18,7 +18,8 @@ from ..clients.wallet_client import WalletClient, InsufficientBalanceError, get_
 from ..config import settings
 from ..database import SessionLocal
 from ..tools.garage_tool import GARAGE_TOOLS, execute_create_garage_post, execute_deliver_chat_message
-from ..services import manual_context_service
+from ..services import embed_service, manual_context_service
+from ..services.context_injection_service import build_context_block as build_third_party_context_block
 from ..services.secret_service import SecretService
 from ..services.usage_service import UsageService
 from ..schemas.chat import ChatRequest, NewSessionResponse
@@ -328,23 +329,84 @@ class ChatService:
         )
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
-        # Auto-inject the most-relevant chunks from the agent's assigned
-        # manual contexts. This is the hybrid RAG path: a tight, score-
-        # gated, char-capped block that's pre-fetched on every turn so the
-        # model doesn't have to remember to call ``context_search`` for the
-        # common case. The relevance gate (AUTO_INJECT_MIN_SCORE) means
-        # unrelated turns (small talk, math, translation) skip injection
-        # entirely with no token cost beyond a single embedding call.
+        # ── Shared query embedding for both auto-inject paths ─────────
+        # Manual context and third-party context both embed the same
+        # ``req.message`` to run their semantic searches. Compute the
+        # vector at most once per chat turn and share it between both
+        # builders. The closure defers the actual compute until one
+        # of them needs it — agents with neither manual contexts nor
+        # third-party integrations assigned pay zero embedding cost.
+        _embed_cache: dict[str, list[float]] = {}
+
+        async def _get_query_vector() -> list[float] | None:
+            if "v" in _embed_cache:
+                return _embed_cache["v"]
+            try:
+                loop = asyncio.get_running_loop()
+                vec = await loop.run_in_executor(
+                    None, embed_service.embed_single, req.message
+                )
+                _embed_cache["v"] = vec
+                return vec
+            except Exception:
+                logger.exception(
+                    "Query embedding failed for auto-inject (agent=%s)",
+                    req.agent_id,
+                )
+                return None
+
+        # ── Auto-inject manual context ────────────────────────────────
+        # Top-3 chunks from the agent's assigned knowledge documents,
+        # relevance-gated and char-capped. See
+        # ``manual_context_service.build_auto_inject_block``.
         if db:
             try:
+                vec = await _get_query_vector()
                 ctx_block = manual_context_service.build_auto_inject_block(
-                    db, req.agent_id, req.message
+                    db, req.agent_id, req.message, query_vector=vec
                 )
                 if ctx_block:
                     messages.insert(1, {"role": "system", "content": ctx_block})
             except Exception as exc:
                 logger.warning(
                     "Manual context auto-inject failed for agent %s: %s",
+                    req.agent_id,
+                    exc,
+                )
+
+        # ── Auto-inject third-party context ───────────────────────────
+        # Top-3 chunks from the agent's connected integrations (Gmail,
+        # Drive, Notion, Slack, etc.), also relevance-gated and
+        # char-capped. Unified single-query implementation (no more
+        # per-source parallel queries) so the cost is constant
+        # regardless of how many integrations are connected. See
+        # ``context_injection_service.build_context_block``.
+        #
+        # Insertion order matters: since both blocks insert at index 1,
+        # the block inserted LATER shifts the earlier one down. With
+        # manual first then third-party second, the final message
+        # layout is:
+        #   [0] main system prompt
+        #   [1] third-party context block
+        #   [2] manual context block
+        #   [3+] conversation history
+        # Manual ends up CLOSER to the user message than third-party.
+        # That's deliberate — manual contexts are user-curated and
+        # higher-signal than third-party snippets (which include noisy
+        # email threads and random document excerpts), so putting
+        # manual closer to the user turn gives it more attention from
+        # the model.
+        if db:
+            try:
+                vec = await _get_query_vector()
+                tp_block = await build_third_party_context_block(
+                    db, req.agent_id, req.message, query_vector=vec
+                )
+                if tp_block:
+                    messages.insert(1, {"role": "system", "content": tp_block})
+            except Exception as exc:
+                logger.warning(
+                    "Third-party context auto-inject failed for agent %s: %s",
                     req.agent_id,
                     exc,
                 )
@@ -618,18 +680,53 @@ class ChatService:
 
         messages = self._build_messages(req, uploaded_file_paths=uploaded_file_paths)
 
-        # Auto-inject manual context — same hybrid RAG path as
-        # _stream_gateway. See that function for the rationale.
+        # Auto-inject manual + third-party context — same hybrid RAG
+        # path as _stream_gateway. See that function for the rationale,
+        # insertion-order comments, and shared-embedding design. Both
+        # paths share one embedding via the local cache closure.
+        _embed_cache2: dict[str, list[float]] = {}
+
+        async def _get_query_vector2() -> list[float] | None:
+            if "v" in _embed_cache2:
+                return _embed_cache2["v"]
+            try:
+                loop = asyncio.get_running_loop()
+                vec = await loop.run_in_executor(
+                    None, embed_service.embed_single, req.message
+                )
+                _embed_cache2["v"] = vec
+                return vec
+            except Exception:
+                logger.exception(
+                    "Query embedding failed for auto-inject (agent=%s)",
+                    req.agent_id,
+                )
+                return None
+
         if db:
             try:
+                vec = await _get_query_vector2()
                 ctx_block = manual_context_service.build_auto_inject_block(
-                    db, req.agent_id, req.message
+                    db, req.agent_id, req.message, query_vector=vec
                 )
                 if ctx_block:
                     messages.insert(1, {"role": "system", "content": ctx_block})
             except Exception as exc:
                 logger.warning(
                     "Manual context auto-inject failed for agent %s: %s",
+                    req.agent_id,
+                    exc,
+                )
+            try:
+                vec = await _get_query_vector2()
+                tp_block = await build_third_party_context_block(
+                    db, req.agent_id, req.message, query_vector=vec
+                )
+                if tp_block:
+                    messages.insert(1, {"role": "system", "content": tp_block})
+            except Exception as exc:
+                logger.warning(
+                    "Third-party context auto-inject failed for agent %s: %s",
                     req.agent_id,
                     exc,
                 )

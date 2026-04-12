@@ -361,6 +361,7 @@ def build_auto_inject_block(
     db: Session,
     agent_id: str,
     user_message: str,
+    query_vector: list[float] | None = None,
 ) -> str | None:
     """Build a system-message block for auto-injection on a chat turn.
 
@@ -391,10 +392,33 @@ def build_auto_inject_block(
     if not user_message or not user_message.strip():
         return None
 
-    hits = search_for_agent(
-        db=db,
-        agent_id=agent_id,
-        query=user_message,
+    # Fast assignment check before any embedding work. Mirrors
+    # ``search_for_agent`` but runs inline so we can short-circuit
+    # before deciding whether to compute an embedding vector.
+    repo = ContextRepository(db)
+    contexts = repo.get_assigned_contexts_for_agent(agent_id)
+    if not contexts:
+        return None
+    context_ids = [str(c.id) for c in contexts]
+
+    # If the caller (chat_service) already computed the query vector
+    # for the third-party auto-inject path, reuse it here rather than
+    # paying for a second identical embedding call. ``query_vector``
+    # is the same for all auto-inject paths within a single chat
+    # turn because they all embed the same ``user_message``.
+    if query_vector is None:
+        try:
+            query_vector = embed_service.embed_single(user_message)
+        except Exception:
+            logger.exception(
+                "Query embedding failed for manual context auto-inject (agent=%s)",
+                agent_id,
+            )
+            return None
+
+    hits = qdrant_service.search_manual_context(
+        context_ids=context_ids,
+        query_vector=query_vector,
         top_k=AUTO_INJECT_TOP_K,
     )
     if not hits:

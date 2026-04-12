@@ -79,6 +79,7 @@ from agent_manager.routers.billing_router import router as billing_router
 from agent_manager.routers.third_party_context_router import router as third_party_context_router
 from agent_manager.ws_manager import task_ws_manager, cron_ws_manager, activity_ws_manager
 from agent_manager.routers.agent_activity_router import router as agent_activity_router
+from agent_manager.routers.public_qa_router import router as public_qa_router
 from agent_manager.dependencies import get_storage, get_gateway
 from agent_manager.services.qdrant_service import ensure_collection
 
@@ -263,6 +264,16 @@ app.include_router(
     agent_router,
     prefix="/api",
     responses={404: {"description": "Agent or resource not found"}},
+)
+
+# Public Q&A endpoints (unauthenticated visitor chat for Q&A-typed agents).
+# Mounted at /api/public/qa — protections live inside the router
+# (rate limit, agent_type check, owner wallet/subscription gates,
+# tools=[] + guardian prompt). No auth dependency in v1.
+app.include_router(
+    public_qa_router,
+    prefix="/api/public/qa",
+    responses={404: {"description": "Assistant not found"}},
 )
 
 # Google Auth endpoints

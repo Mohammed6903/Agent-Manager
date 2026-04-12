@@ -265,6 +265,15 @@ class Settings(BaseSettings):
     # Bump this if users upload larger documents routinely.
     MANUAL_CONTEXT_PDF_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
 
+    # ── Public Q&A endpoint ─────────────────────────────────────────────────
+    # Salt for SHA-256-hashing visitor IPs before they land in Redis keys
+    # or log lines. Raw IPs never appear anywhere the operator could read
+    # them — this is both a privacy measure and a prerequisite for the
+    # per-IP rate limiter (which uses the hashed value as its Redis key).
+    # MUST be overridden to a non-default value in production so different
+    # deployments don't share a hash space.
+    QA_IP_HASH_SALT: str = "change-me-in-production"
+
     # On/off switch for Voxtral. When False, bypass the media stream entirely
     # and use Telnyx's built-in TTS (/actions/speak via Polly) and STT
     # (/actions/transcription_start via Google) — no client-side audio
