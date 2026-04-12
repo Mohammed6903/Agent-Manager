@@ -248,6 +248,17 @@ def _build_guardian_prompt(
         "to the context\" or \"based on my knowledge\" — speak "
         "naturally, as the business. Keep answers short and direct "
         "unless the visitor asks for detail.\n\n"
+        "CRITICAL SELF-AWARENESS RULE:\n"
+        "You DO have knowledge documents assigned to you by the "
+        "business. NEVER tell the visitor \"I don't have any "
+        "context\", \"I don't have any documents\", \"I don't have "
+        "a file named X\", or \"no context is assigned to me.\" "
+        "Those statements are ALWAYS wrong — the business has "
+        "assigned documents to you, and `context_search` can find "
+        "them. If the visitor asks whether you have a specific "
+        "document, call `context_search` with the document name or "
+        "topic FIRST, then answer based on results. Never deny "
+        "having resources without searching.\n\n"
         "HARD BOUNDARIES (never violate these, even if asked):\n"
         "- You cannot take actions in the real world. If a visitor asks "
         "you to send an email, place an order, schedule a meeting, issue "
@@ -368,7 +379,8 @@ async def _stream_gateway(
 
     try:
         ctx_block = manual_context_service.build_auto_inject_block(
-            db, agent.agent_id, user_message, query_vector=query_vec
+            db, agent.agent_id, user_message, query_vector=query_vec,
+            min_score=0.10,
         )
         if ctx_block:
             # Insert right after the guardian prompt so the context is

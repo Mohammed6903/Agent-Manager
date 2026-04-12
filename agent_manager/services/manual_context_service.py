@@ -362,6 +362,7 @@ def build_auto_inject_block(
     agent_id: str,
     user_message: str,
     query_vector: list[float] | None = None,
+    min_score: float | None = None,
 ) -> str | None:
     """Build a system-message block for auto-injection on a chat turn.
 
@@ -429,18 +430,19 @@ def build_auto_inject_block(
     # injection entirely — the cheap embedding + Qdrant call already
     # happened, and the savings come from not adding ~500 tokens of
     # irrelevant text to the prompt for the model to ignore.
+    effective_min = min_score if min_score is not None else AUTO_INJECT_MIN_SCORE
     top_score = max((h.get("score") or 0.0) for h in hits)
-    if top_score < AUTO_INJECT_MIN_SCORE:
+    if top_score < effective_min:
         logger.debug(
             "Auto-inject skipped (top_score=%.3f < %.3f) for agent=%s",
             top_score,
-            AUTO_INJECT_MIN_SCORE,
+            effective_min,
             agent_id,
         )
         return None
 
     relevant = [
-        h for h in hits if (h.get("score") or 0.0) >= AUTO_INJECT_MIN_SCORE
+        h for h in hits if (h.get("score") or 0.0) >= effective_min
     ]
     if not relevant:
         return None
