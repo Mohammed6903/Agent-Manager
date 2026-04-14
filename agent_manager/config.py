@@ -292,5 +292,15 @@ class Settings(BaseSettings):
     # received within this window into a single agent turn.
     VOICE_CALL_TRANSCRIPT_DEBOUNCE_MS: int = 1500
 
+    # Shared secret for service-to-service auth. Required on every non-public
+    # request in the form `Authorization: Bearer <secret>`. Empty value means
+    # enforcement is disabled (useful during rollout); set in production to
+    # the same value configured on roam-backend.
+    OPENCLAW_SERVICE_SECRET: str = ""
+    # Previous secret, accepted alongside the current one during rotation.
+    # Set this to the outgoing secret while you roll the new one out, then
+    # clear it once every caller has switched over.
+    OPENCLAW_SERVICE_SECRET_PREVIOUS: str = ""
+
 
 settings = Settings()

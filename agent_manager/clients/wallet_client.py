@@ -35,13 +35,19 @@ def get_wallet_client(agent_id: str) -> "WalletClient":
 
     Garage agents (prefixed with "garage") → roam-backend wallet.
     All other agents → NetworkChain wallet (default).
+
+    The agent_id is stashed on the returned client so every balance /
+    deduct call forwards it to the backend. roam-backend uses it to
+    resolve the right billing owner (employees' usage bills to the
+    founder of the agent's org).
     """
     if agent_id.startswith("garage"):
         return WalletClient(
             base_url=settings.GARAGE_WALLET_SERVICE_URL,
             api_key=settings.GARAGE_WALLET_INTERNAL_API_KEY,
+            agent_id=agent_id,
         )
-    return WalletClient()
+    return WalletClient(agent_id=agent_id)
 
 
 class WalletClient:
@@ -51,17 +57,22 @@ class WalletClient:
         self,
         base_url: str | None = None,
         api_key: str | None = None,
+        agent_id: str | None = None,
     ):
         self.base_url = (base_url or settings.WALLET_SERVICE_URL).rstrip("/")
         self.api_key = api_key or settings.WALLET_INTERNAL_API_KEY
+        self.agent_id = agent_id
         self._headers = {"X-Internal-Api-Key": self.api_key}
 
     async def check_balance(self, user_id: str) -> Dict[str, Any]:
         """Return wallet balance and debt for a user. Raises on network errors."""
+        params: Dict[str, str] = {"userId": user_id}
+        if self.agent_id:
+            params["agentId"] = self.agent_id
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             resp = await client.get(
                 f"{self.base_url}/wallet/internal/balance",
-                params={"userId": user_id},
+                params=params,
                 headers=self._headers,
             )
             resp.raise_for_status()
@@ -76,14 +87,17 @@ class WalletClient:
         - Partial balance → drained to $0, remainder becomes debt
         - Debt at cap → raises DebtLimitReachedError
         """
+        body: Dict[str, Any] = {
+            "userId": user_id,
+            "amountCents": amount_cents,
+            "description": description,
+        }
+        if self.agent_id:
+            body["agentId"] = self.agent_id
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             resp = await client.post(
                 f"{self.base_url}/wallet/internal/deduct",
-                json={
-                    "userId": user_id,
-                    "amountCents": amount_cents,
-                    "description": description,
-                },
+                json=body,
                 headers=self._headers,
             )
 

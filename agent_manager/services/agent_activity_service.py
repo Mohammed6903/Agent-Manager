@@ -29,11 +29,15 @@ async def log_activity(
     summary: str,
     metadata: dict[str, Any] | None = None,
     status: str = "success",
+    user_id: str | None = None,
 ) -> None:
     """Persist an activity record and broadcast it via WebSocket.
 
-    This is the single entry point for all agent activity logging.
-    Call it from any service after an action completes.
+    `user_id` identifies who triggered the activity. Pass it whenever
+    there's a human request in scope (chat, task action, integration
+    connect, etc.); leave None for system-generated activity (scheduler
+    runs, heartbeats, background context sync). Employee activity feeds
+    filter on this — NULL rows are visible to founders only.
     """
     try:
         repo = AgentActivityRepository(db)
@@ -43,12 +47,17 @@ async def log_activity(
             summary=summary,
             metadata=metadata,
             status=status,
+            user_id=user_id,
         )
 
-        # Broadcast to connected clients
+        # Broadcast to connected clients. user_id travels with the event
+        # so the WS proxy can filter by it — otherwise roam-backend
+        # can't tell whose activity it is and would have to forward all
+        # of them to all employees on the same agent.
         event_data = {
             "id": str(activity.id),
             "agent_id": activity.agent_id,
+            "user_id": activity.user_id,
             "activity_type": activity.activity_type,
             "summary": activity.summary,
             "metadata": activity.metadata_,
@@ -57,7 +66,7 @@ async def log_activity(
         }
 
         await activity_ws_manager.broadcast("agent_activity", event_data)
-        logger.debug("Activity logged: agent=%s type=%s", agent_id, activity_type)
+        logger.debug("Activity logged: agent=%s user=%s type=%s", agent_id, user_id, activity_type)
     except Exception:
         logger.exception("Failed to log activity: agent=%s type=%s", agent_id, activity_type)
 
@@ -69,6 +78,7 @@ def log_activity_sync(
     summary: str,
     metadata: dict[str, Any] | None = None,
     status: str = "success",
+    user_id: str | None = None,
 ) -> None:
     """Synchronous version for use in non-async contexts (Celery tasks, etc.).
 
@@ -83,7 +93,8 @@ def log_activity_sync(
             summary=summary,
             metadata=metadata,
             status=status,
+            user_id=user_id,
         )
-        logger.debug("Activity logged (sync): agent=%s type=%s", agent_id, activity_type)
+        logger.debug("Activity logged (sync): agent=%s user=%s type=%s", agent_id, user_id, activity_type)
     except Exception:
         logger.exception("Failed to log activity (sync): agent=%s type=%s", agent_id, activity_type)

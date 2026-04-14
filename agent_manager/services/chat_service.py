@@ -647,7 +647,8 @@ class ChatService:
             preview = (req.message or "")[:80]
             log_activity_sync(db, req.agent_id, "chat_message_received",
                 f"Chat: \"{preview}{'…' if len(req.message or '') > 80 else ''}\"",
-                metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": True})
+                metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": True},
+                user_id=req.user_id)
 
         return StreamingResponse(
             self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
@@ -767,11 +768,13 @@ class ChatService:
                     preview = (req.message or "")[:80]
                     log_activity_sync(db, req.agent_id, "chat_message_received",
                         f"Chat: \"{preview}{'…' if len(req.message or '') > 80 else ''}\"",
-                        metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": False})
+                        metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": False},
+                        user_id=req.user_id)
                     resp_preview = content[:80] if content else ""
                     log_activity_sync(db, req.agent_id, "chat_response_sent",
                         f"Reply: \"{resp_preview}{'…' if len(content) > 80 else ''}\"",
-                        metadata={"session_id": req.session_id, "response_length": len(content)})
+                        metadata={"session_id": req.session_id, "response_length": len(content)},
+                        user_id=req.user_id)
 
                 return {"response": content, "raw": data}
             except httpx.ConnectError as exc:

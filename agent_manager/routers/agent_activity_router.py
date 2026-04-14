@@ -22,15 +22,31 @@ def get_agent_activity(
     agent_id: str,
     limit: int = Query(50, ge=1, le=200),
     activity_type: Optional[str] = Query(None, description="Filter by type"),
+    user_id: Optional[str] = Query(
+        None,
+        description="Scope to a single user's activity. Omit for all-users view (founder).",
+    ),
     db: Session = Depends(get_db),
 ):
-    """Get recent activity for an agent (last 7 days, most recent first)."""
+    """Get recent activity for an agent.
+
+    `user_id` narrows the feed to a single actor — roam-backend injects
+    it for employees (their own userId) and omits it for founders
+    (full view). System-generated rows (user_id NULL) are excluded when
+    a filter is provided; included when it isn't.
+    """
     repo = AgentActivityRepository(db)
-    activities = repo.list_recent(agent_id, limit=limit, activity_type=activity_type)
+    activities = repo.list_recent(
+        agent_id,
+        limit=limit,
+        activity_type=activity_type,
+        user_id=user_id,
+    )
     return [
         {
             "id": str(a.id),
             "agent_id": a.agent_id,
+            "user_id": a.user_id,
             "activity_type": a.activity_type,
             "summary": a.summary,
             "metadata": a.metadata_,

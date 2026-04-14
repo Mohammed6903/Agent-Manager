@@ -22,6 +22,7 @@ class AgentActivityRepository:
         summary: str,
         metadata: dict | None = None,
         status: str = "success",
+        user_id: Optional[str] = None,
     ) -> AgentActivity:
         activity = AgentActivity(
             agent_id=agent_id,
@@ -29,6 +30,7 @@ class AgentActivityRepository:
             summary=summary,
             metadata_=metadata,
             status=status,
+            user_id=user_id,
         )
         self.db.add(activity)
         self.db.commit()
@@ -40,6 +42,7 @@ class AgentActivityRepository:
         agent_id: str,
         limit: int = 50,
         activity_type: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> list[AgentActivity]:
         stmt = (
             select(AgentActivity)
@@ -49,6 +52,11 @@ class AgentActivityRepository:
         )
         if activity_type:
             stmt = stmt.where(AgentActivity.activity_type == activity_type)
+        if user_id is not None:
+            # Caller supplied a user filter — employees get this. We match
+            # on exact user_id; NULL rows (system-generated) are excluded
+            # because the employee wasn't the actor there either.
+            stmt = stmt.where(AgentActivity.user_id == user_id)
         return list(self.db.execute(stmt).scalars().all())
 
     def delete_older_than(self, days: int = 30) -> int:

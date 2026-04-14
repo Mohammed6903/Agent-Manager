@@ -352,10 +352,15 @@ class CronService:
         ownership = self.ownership.get(job_id)
         agent_id = ownership.get("agent_id", "") if ownership else ""
         if agent_id:
+            # Cron ownership tracks the user who scheduled the job —
+            # attribute the triggered activity to them so their feed
+            # shows their own scheduled jobs firing.
+            owner_user_id = ownership.get("user_id") if ownership else None
             from .agent_activity_service import log_activity
             await log_activity(self.db, agent_id, "cron_triggered",
                 f"Cron job triggered: {job_id}",
-                metadata={"job_id": job_id})
+                metadata={"job_id": job_id},
+                user_id=owner_user_id)
 
         return result
 

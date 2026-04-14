@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from agent_manager.config import settings
+from agent_manager.middleware.service_auth import service_auth_middleware
 from agent_manager.routers.agent_router import router as agent_router
 from agent_manager.integrations.google.auth.router import router as google_auth_router
 from agent_manager.integrations.google.gmail.router import router as gmail_router
@@ -240,6 +241,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Service-to-service auth. Runs after CORS (added last = outermost in
+# Starlette's stack), so preflight OPTIONS still gets handled by CORS
+# if they somehow slip past the middleware's own OPTIONS bypass.
+# No-op until OPENCLAW_SERVICE_SECRET is set.
+app.middleware("http")(service_auth_middleware)
 
 # ── Global exception handler ───────────────────────────────────────────────────
 

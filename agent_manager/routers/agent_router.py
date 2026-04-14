@@ -604,7 +604,8 @@ async def cron_webhook_receiver(
         import asyncio
         asyncio.create_task(cron_ws_manager.broadcast("cron_run_finished", {"job_id": job_id, "run": run_data}))
 
-        # Log to unified activity stream
+        # Log to unified activity stream. Attribute the completion to
+        # whoever scheduled the cron so it shows up in their feed.
         if agent_id:
             from ..services.agent_activity_service import log_activity_sync
             duration_s = round(int(duration) / 1000, 1) if duration else 0
@@ -621,6 +622,7 @@ async def cron_webhook_receiver(
                     "model": payload.get("model"),
                 },
                 status="success" if pipeline_status == "success" else "error",
+                user_id=(_owner_wallet or {}).get("user_id"),
             )
 
         # Send summary to Garage chat (strip pipeline_result block)
