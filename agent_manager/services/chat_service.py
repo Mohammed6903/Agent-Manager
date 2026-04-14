@@ -241,7 +241,43 @@ class ChatService:
         messages.append({"role": "user", "content": user_content})
         return messages
     
-    def _raise_for_status(self, status_code: int, body: str, agent_id: str) -> None:
+    def _log_chat_error(
+        self,
+        db: Session | None,
+        agent_id: str,
+        user_id: str | None,
+        error_type: str,
+        summary: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Persist a chat/LLM error to the activity stream so founders and
+        employees can see it in the activity feed — live for the
+        affected user via WS, and in history for everyone who reads the
+        feed later. Critical for diagnosing cron-job failures: a cron
+        running overnight that hits a provider rate limit will surface
+        the error here, explaining the cron's downstream failure."""
+        if db is None:
+            return
+        try:
+            from .agent_activity_service import log_activity_sync
+            log_activity_sync(
+                db, agent_id, error_type, summary,
+                metadata=metadata or {},
+                status="error",
+                user_id=user_id,
+            )
+        except Exception:
+            # Never let logging-the-error shadow the real error.
+            logger.exception("failed to log chat error to activity stream")
+
+    def _raise_for_status(
+        self,
+        status_code: int,
+        body: str,
+        agent_id: str,
+        db: Session | None = None,
+        user_id: str | None = None,
+    ) -> None:
         """Raise appropriate HTTPException based on gateway status code."""
         if status_code == 429:
             # Try to extract retry-after from body if gateway forwards it
@@ -265,6 +301,12 @@ class ChatService:
                 detail["retry_after_seconds"] = retry_after
 
             logger.warning("Rate limit hit for agent %s: %s", agent_id, body[:200])
+            self._log_chat_error(
+                db, agent_id, user_id,
+                "llm_rate_limit",
+                "LLM rate limit hit" + (f" (retry after {retry_after}s)" if retry_after else ""),
+                metadata={"status_code": 429, "body_preview": body[:200], "retry_after": retry_after},
+            )
             raise HTTPException(status_code=429, detail=detail)
 
         if status_code == 500:
@@ -283,6 +325,12 @@ class ChatService:
                     "Suspected masked rate limit (500 internal error) for agent %s: %s",
                     agent_id, body[:200],
                 )
+                self._log_chat_error(
+                    db, agent_id, user_id,
+                    "llm_rate_limit",
+                    "LLM rate limit (masked as 500 by gateway)",
+                    metadata={"status_code": 500, "body_preview": body[:200]},
+                )
                 raise HTTPException(
                     status_code=429,
                     detail={
@@ -295,6 +343,12 @@ class ChatService:
                 )
 
         if status_code != 200:
+            self._log_chat_error(
+                db, agent_id, user_id,
+                "llm_error",
+                f"Gateway returned HTTP {status_code}",
+                metadata={"status_code": status_code, "body_preview": body[:200]},
+            )
             raise HTTPException(
                 status_code=status_code,
                 detail={
@@ -508,7 +562,7 @@ class ChatService:
                             ) as resp:
                                 if resp.status_code != 200:
                                     err = await resp.aread()
-                                    self._raise_for_status(resp.status_code, err.decode(), req.agent_id)
+                                    self._raise_for_status(resp.status_code, err.decode(), req.agent_id, db=db, user_id=req.user_id)
                                 received_content = False
                                 async for chunk in resp.aiter_bytes():
                                     if chunk:
@@ -574,7 +628,7 @@ class ChatService:
                         logger.error(
                             "Gateway returned %s: %s", resp.status_code, error_body.decode()[:500]
                         )
-                        self._raise_for_status(resp.status_code, error_body.decode(), req.agent_id)
+                        self._raise_for_status(resp.status_code, error_body.decode(), req.agent_id, db=db, user_id=req.user_id)
 
                     received_content = False
                     async for chunk in resp.aiter_bytes():
@@ -641,15 +695,10 @@ class ChatService:
         session_key = f"agent:{req.agent_id}:openai-user:{user_field}"
         bg_task.add_task(_sync_usage_after_delay, req.agent_id, session_key, req.user_id)
 
-        # Log chat activity
-        if db:
-            from .agent_activity_service import log_activity_sync
-            preview = (req.message or "")[:80]
-            log_activity_sync(db, req.agent_id, "chat_message_received",
-                f"Chat: \"{preview}{'…' if len(req.message or '') > 80 else ''}\"",
-                metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": True},
-                user_id=req.user_id)
-
+        # Intentionally no chat_message_received/chat_response_sent activity
+        # log here — full transcripts live in chat history already. Errors
+        # (rate limits, gateway failures) still surface via _raise_for_status
+        # → _log_chat_error so operators can spot them in the activity feed.
         return StreamingResponse(
             self._stream_gateway(req, uploaded_file_paths=uploaded_file_paths, db=db),
             media_type="text/event-stream",
@@ -754,7 +803,7 @@ class ChatService:
                     headers=headers,
                 )
                 if resp.status_code != 200:
-                    self._raise_for_status(resp.status_code, resp.text, req.agent_id)
+                    self._raise_for_status(resp.status_code, resp.text, req.agent_id, db=db, user_id=req.user_id)
                 data = resp.json()
                 content = ""
                 if "choices" in data and data["choices"]:
@@ -762,22 +811,17 @@ class ChatService:
                     message = choice.get("message", {})
                     content = message.get("content", "")
 
-                # Log chat activity
-                if db:
-                    from .agent_activity_service import log_activity_sync
-                    preview = (req.message or "")[:80]
-                    log_activity_sync(db, req.agent_id, "chat_message_received",
-                        f"Chat: \"{preview}{'…' if len(req.message or '') > 80 else ''}\"",
-                        metadata={"user_id": req.user_id, "session_id": req.session_id, "stream": False},
-                        user_id=req.user_id)
-                    resp_preview = content[:80] if content else ""
-                    log_activity_sync(db, req.agent_id, "chat_response_sent",
-                        f"Reply: \"{resp_preview}{'…' if len(content) > 80 else ''}\"",
-                        metadata={"session_id": req.session_id, "response_length": len(content)},
-                        user_id=req.user_id)
-
+                # No success-path activity log here — same rationale as
+                # chat_stream. Errors are handled by _raise_for_status +
+                # the except blocks below.
                 return {"response": content, "raw": data}
             except httpx.ConnectError as exc:
+                self._log_chat_error(
+                    db, req.agent_id, req.user_id,
+                    "llm_gateway_unreachable",
+                    "LLM gateway unreachable",
+                    metadata={"gateway_url": settings.OPENCLAW_GATEWAY_URL, "original_error": str(exc)[:200]},
+                )
                 raise HTTPException(
                     status_code=502,
                     detail={
