@@ -6,15 +6,31 @@ Heartbeats are emitted server-side every 5 seconds by heartbeat_service.py
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..repositories.agent_activity_repository import AgentActivityRepository
 
 router = APIRouter(tags=["Agent Activity"])
+
+
+def _parse_iso(name: str, value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        # Accepts 2026-04-14, 2026-04-14T10:00:00Z, 2026-04-14T10:00:00+00:00, etc.
+        # Python's fromisoformat handles the last two directly; the trailing
+        # Z needs a tiny fixup.
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as err:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {name} datetime: {value!r} (use ISO 8601)",
+        ) from err
 
 
 @router.get("/agents/{agent_id}/activity")
@@ -26,14 +42,24 @@ def get_agent_activity(
         None,
         description="Scope to a single user's activity. Omit for all-users view (founder).",
     ),
+    from_: Optional[str] = Query(
+        None,
+        alias="from",
+        description="ISO 8601 start of range (inclusive). e.g. 2026-04-12T00:00:00Z",
+    ),
+    to: Optional[str] = Query(
+        None,
+        description="ISO 8601 end of range (inclusive). e.g. 2026-04-14T23:59:59Z",
+    ),
     db: Session = Depends(get_db),
 ):
-    """Get recent activity for an agent.
+    """Get activity for an agent.
 
-    `user_id` narrows the feed to a single actor — roam-backend injects
-    it for employees (their own userId) and omits it for founders
-    (full view). System-generated rows (user_id NULL) are excluded when
-    a filter is provided; included when it isn't.
+    - `from` / `to` narrow the time window (defaults: no filter).
+    - `user_id` narrows to a single actor; injected by roam-backend for
+      employees so they only see their own rows. Omit for founder view.
+    - `limit` caps results — if the range is wider than the limit you'll
+      see only the most recent `limit` rows within it.
     """
     repo = AgentActivityRepository(db)
     activities = repo.list_recent(
@@ -41,6 +67,8 @@ def get_agent_activity(
         limit=limit,
         activity_type=activity_type,
         user_id=user_id,
+        from_time=_parse_iso("from", from_),
+        to_time=_parse_iso("to", to),
     )
     return [
         {

@@ -43,6 +43,8 @@ class AgentActivityRepository:
         limit: int = 50,
         activity_type: Optional[str] = None,
         user_id: Optional[str] = None,
+        from_time: Optional[datetime] = None,
+        to_time: Optional[datetime] = None,
     ) -> list[AgentActivity]:
         stmt = (
             select(AgentActivity)
@@ -57,6 +59,10 @@ class AgentActivityRepository:
             # on exact user_id; NULL rows (system-generated) are excluded
             # because the employee wasn't the actor there either.
             stmt = stmt.where(AgentActivity.user_id == user_id)
+        if from_time is not None:
+            stmt = stmt.where(AgentActivity.created_at >= from_time)
+        if to_time is not None:
+            stmt = stmt.where(AgentActivity.created_at <= to_time)
         return list(self.db.execute(stmt).scalars().all())
 
     def delete_older_than(self, days: int = 30) -> int:
