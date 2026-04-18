@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -45,9 +46,21 @@ _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/integrations/google/auth/callback",
 )
 
+# Path regexes that bypass the service-auth check. Used for trusted-internal
+# endpoints that the openclaw gateway process calls on localhost without a
+# bearer token (e.g., to resolve an agent's integration/tool list at request
+# setup time). Prefix matching is too broad for these, so we match exactly.
+_PUBLIC_REGEX_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # /api/integrations/agent/<agent_id>/names — openclaw gateway fetches
+    # the integration name list when assembling an agent's tool manifest.
+    re.compile(r"^/api/integrations/agent/[^/]+/names$"),
+)
+
 
 def _is_public_path(path: str) -> bool:
-    return any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
+    if any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
+        return True
+    return any(p.match(path) for p in _PUBLIC_REGEX_PATTERNS)
 
 
 def _valid_secrets() -> list[str]:
