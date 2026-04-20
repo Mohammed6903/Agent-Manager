@@ -85,13 +85,10 @@ def _make_http(credentials: Any) -> Any:
 # ── Progress Helpers ─────────────────────────────────────────────────────────
 
 
-def _update_progress(task_state: str, meta: dict[str, Any]) -> None:
-    """Push progress update to Celery backend (Redis).
-
-    Must be called from the main worker thread — Celery's ``current_task``
-    proxy uses thread-local storage and is not visible in spawned threads.
-    """
-    current_task.update_state(state=task_state, meta=meta)
+from agent_manager.tasks._progress_helper import update_progress as _update_progress
+# Must be called from the main worker thread — Celery's ``current_task``
+# proxy uses thread-local storage and is not visible in spawned threads.
+# The agent_id + task_id contextvars are set by the parent ingest task.
 
 
 def _emit(counters: dict[str, int], total: int) -> None:

@@ -52,8 +52,10 @@ def unregister_active_task(integration: str, agent_id: str, task_id: str, task_t
         r.hdel(_ACTIVE_KEY, field)
 
 
-def _update_progress(task_state: str, meta: dict[str, Any]) -> None:
-    current_task.update_state(state=task_state, meta=meta)
+from agent_manager.tasks._progress_helper import (
+    set_progress_context,
+    update_progress as _update_progress,
+)
 
 
 def _set_ctx_status(db: Any, ctx_id: uuid.UUID, status: str) -> None:
@@ -85,6 +87,7 @@ def ingest_and_pipeline(
     task_id: str = self.request.id
     ctx_id = uuid.UUID(context_id)
     db = SessionLocal()
+    set_progress_context(agent_id, task_id)
 
     provider = get_provider(integration_name)
     if not provider:
@@ -353,6 +356,7 @@ def delete_context_data(
     task_id: str = self.request.id
     ctx_id = uuid.UUID(context_id)
     db = SessionLocal()
+    set_progress_context(agent_id, task_id)
 
     provider = get_provider(integration_name)
     if not provider:
