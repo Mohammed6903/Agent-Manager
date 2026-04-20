@@ -157,6 +157,14 @@ async def lifespan(app: FastAPI):
     heartbeat_task = start_heartbeat_task()
     logger.info("Heartbeat service started")
 
+    # Start task_progress Redis pub/sub subscriber. Bridges Celery worker
+    # progress updates into task_ws_manager so the frontend receives them
+    # as `task_progress` events on /api/tasks/ws.
+    from agent_manager.services.task_progress_pubsub import subscribe_and_broadcast
+    task_progress_stop = asyncio.Event()
+    task_progress_task = asyncio.create_task(subscribe_and_broadcast(task_progress_stop))
+    logger.info("task_progress subscriber started")
+
     # Backfill pre-RAG manual contexts in the background. Pre-existing
     # GlobalContext rows created before the RAG pipeline landed have
     # ``content_hash IS NULL`` and no Qdrant chunks. We sweep them on
@@ -211,6 +219,12 @@ async def lifespan(app: FastAPI):
             await backfill_task
         except asyncio.CancelledError:
             pass
+    task_progress_stop.set()
+    if not task_progress_task.done():
+        try:
+            await asyncio.wait_for(task_progress_task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            task_progress_task.cancel()
     logger.info("OpenClaw API shutting down")
 
 
