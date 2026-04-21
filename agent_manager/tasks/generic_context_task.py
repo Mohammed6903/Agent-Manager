@@ -324,6 +324,26 @@ def ingest_and_pipeline(
             metadata={"integration": integration_name, "fetched": counters["fetched"], "processed": processed, "failed": failed},
             status="success")
 
+        # Emit a final SUCCESS event so the WS subscriber broadcasts it
+        # and the frontend's terminal-state check (status === "SUCCESS"
+        # || data.stage === "complete") trips the row-removal callback.
+        # Without this, the task returns silently and the UI is stuck
+        # showing the last "PROCESSING" snapshot forever.
+        _update_progress(
+            "SUCCESS",
+            {
+                "stage": "complete",
+                "message": "Ingest and pipeline complete.",
+                "current": processed,
+                "total": total_pipeline if total_pipeline else processed,
+                "percentage": 100,
+                "fetched": counters["fetched"],
+                "skipped": counters["skipped"],
+                "failed": failed,
+                "task_id": task_id,
+            },
+        )
+
         return {
             "stage": "complete",
             "message": "Ingest and pipeline complete.",
@@ -460,6 +480,22 @@ def delete_context_data(
         sync_repo.clear(agent_id)
 
         logger.info("Delete task %s complete for agent %s (context %s).", task_id, agent_id, context_id)
+        # Emit a final SUCCESS event so the frontend's DeleteTaskRow
+        # removes itself (it watches for status === "SUCCESS" ||
+        # stage === "complete").
+        _update_progress(
+            "SUCCESS",
+            {
+                "stage": "complete",
+                "message": f"{provider.display_name} context deleted successfully.",
+                "context_id": context_id,
+                "agent_id": agent_id,
+                "current": 1,
+                "total": 1,
+                "percentage": 100,
+                "task_id": task_id,
+            },
+        )
         return {
             "stage": "complete",
             "message": f"{provider.display_name} context deleted successfully.",
