@@ -81,8 +81,7 @@ def unregister_active_task(agent_id: str, task_id: str, task_type: str = "ingest
 
 # ── Progress Helpers ─────────────────────────────────────────────────────────
 
-def _update_progress(task_state: str, meta: dict[str, Any]) -> None:
-    current_task.update_state(state=task_state, meta=meta)
+from agent_manager.tasks._progress_helper import update_progress as _update_progress
 
 
 # ── Content Extraction ───────────────────────────────────────────────────────

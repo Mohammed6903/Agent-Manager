@@ -355,35 +355,80 @@ def reindex_all_unindexed_contexts(
     return manual_context_service.backfill_unindexed_contexts(db)
 
 
+_TERMINAL_STATES = {
+    "SUCCESS", "FAILURE", "REVOKED",
+    "TASK_CANCELLED", "TASK_ERROR",
+}
+
+
+def _drop_stale_active_field(field: str) -> None:
+    """Remove a single field from the openclaw:ingest:active Redis hash.
+    Used to self-heal the active-tasks list when we discover a terminal-state
+    task that should have been cleaned up but wasn't (e.g. worker killed
+    mid-finally, abort signal racing the cleanup hdel)."""
+    import redis as redis_lib
+    from agent_manager.config import settings
+    try:
+        r = redis_lib.from_url(settings.REDIS_URL, decode_responses=True)
+        r.hdel("openclaw:ingest:active", field)
+    except Exception:
+        # Cleanup is best-effort — never let it fail the list response.
+        pass
+
+
 @router.get("/ram/context/active")
 def list_active_tasks():
-    """Return all in-flight context sync tasks with their live Celery state."""
+    """Return all in-flight context sync tasks with their live Celery state.
+
+    Hydrates each row with the latest progress meta from
+    ``AsyncResult.info`` so the frontend has accurate counters
+    (current/total/percentage/stage/message) on first render — without
+    waiting for a fresh progress event to arrive.
+
+    Filters out terminal-state tasks (SUCCESS / FAILURE / REVOKED /
+    TASK_CANCELLED / TASK_ERROR) and self-heals the Redis active-tasks
+    hash by removing those entries.
+    """
     active = get_active_tasks()
     rows = []
     for key, task_id in active.items():
         parts = key.split(":")
         if len(parts) == 3:
-            # New format: integration:type:agent_id
             integration_name, task_type, agent_id = parts
         elif len(parts) == 2:
-            # Old format: integration:agent_id
             integration_name, agent_id = parts
             task_type = "ingest"
         else:
-            # Fallback
             integration_name = "gmail"
             agent_id = key
             task_type = "ingest"
 
-        rows.append(
-            {
-                "agent_id": agent_id,
-                "integration": integration_name,
-                "task_type": task_type,
-                "task_id": task_id,
-                "status": celery_app.AsyncResult(task_id).state,
-            }
-        )
+        result = celery_app.AsyncResult(task_id)
+        try:
+            state = result.state
+            info = result.info if isinstance(result.info, dict) else {}
+        except Exception:
+            state = "UNKNOWN"
+            info = {}
+
+        if state in _TERMINAL_STATES:
+            # Terminal-state task lingering in the active hash — clean it up
+            # and skip the row so the UI doesn't show a "running" task that
+            # has actually finished/failed/been-cancelled.
+            _drop_stale_active_field(key)
+            continue
+
+        row = {
+            "agent_id": agent_id,
+            "integration": integration_name,
+            "task_type": task_type,
+            "task_id": task_id,
+            "status": state,
+            # Spread Celery meta — usually has stage, message, current,
+            # total, percentage, skipped, failed.
+            **info,
+        }
+        rows.append(row)
     return rows
 
 

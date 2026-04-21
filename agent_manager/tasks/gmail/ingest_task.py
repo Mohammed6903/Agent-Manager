@@ -85,13 +85,10 @@ def _make_http(credentials: Any) -> Any:
 # ── Progress Helpers ─────────────────────────────────────────────────────────
 
 
-def _update_progress(task_state: str, meta: dict[str, Any]) -> None:
-    """Push progress update to Celery backend (Redis).
-
-    Must be called from the main worker thread — Celery's ``current_task``
-    proxy uses thread-local storage and is not visible in spawned threads.
-    """
-    current_task.update_state(state=task_state, meta=meta)
+from agent_manager.tasks._progress_helper import update_progress as _update_progress
+# Must be called from the main worker thread — Celery's ``current_task``
+# proxy uses thread-local storage and is not visible in spawned threads.
+# The agent_id + task_id contextvars are set by the parent ingest task.
 
 
 def _emit(counters: dict[str, int], total: int) -> None:
@@ -285,14 +282,16 @@ def _run_concurrent_batches(
                     logger.exception("Concurrent batch execution raised an unhandled error.")
                     if round_error is None:
                         round_error = exc
+                # as_completed yields on the main thread, so _emit (which uses
+                # current_task) is safe here. Emitting per-batch instead of
+                # per-round keeps the UI updated every ~_BATCH_SIZE messages
+                # instead of every _BATCH_SIZE × _MAX_CONCURRENT_BATCHES.
+                _emit(counters, total)
 
         if round_error is not None:
             # Re-raise so the Celery task fails properly and retries. This
             # prevents a broken sync from saving a historyId as if it succeeded.
             raise round_error
-
-        # Emit progress from the main thread after each round
-        _emit(counters, total)
 
         if round_start + _MAX_CONCURRENT_BATCHES < len(batches):
             time.sleep(_INTER_ROUND_DELAY)
