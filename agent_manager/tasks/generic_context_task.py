@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 _PIPELINE_BATCH_SIZE = 200
 
+
+class NonRetryableTaskError(Exception):
+    """Marker for task errors that should fail the task immediately,
+    bypassing Celery's max_retries / countdown logic.
+
+    Use for non-transient failures (missing OAuth credentials, invalid
+    config, deleted resources) where retrying just wastes worker time.
+    """
+
+
+class OAuthCredentialsMissingError(NonRetryableTaskError):
+    """OAuth credentials for the integration are missing or invalid."""
+
 # ── Active-task Registry ──────────────────────────────────────────────────────
 # Shared with the per-integration ingest_task modules (they use the same Redis hash).
 
@@ -124,7 +137,9 @@ def ingest_and_pipeline(
 
         creds = get_valid_credentials(db, agent_id)
         if not creds:
-            raise RuntimeError(f"{provider.display_name} service unavailable — check OAuth credentials")
+            raise OAuthCredentialsMissingError(
+                f"{provider.display_name} OAuth credentials missing or invalid for agent {agent_id}"
+            )
 
         api_service = provider.build_api_service(creds)
         account_email: str = provider.get_account_email(api_service)
@@ -333,6 +348,11 @@ def ingest_and_pipeline(
             "TASK_ERROR",
             {"stage": "error", "message": str(exc), "task_id": task_id},
         )
+        if isinstance(exc, NonRetryableTaskError):
+            # Non-transient failure (e.g. missing OAuth creds) — let Celery
+            # mark the task FAILURE on the first attempt instead of burning
+            # 3 × 300s of worker time on guaranteed failures.
+            raise
         raise self.retry(exc=exc, countdown=300)
 
     finally:
@@ -453,6 +473,8 @@ def delete_context_data(
 
     except Exception as exc:
         logger.exception("Delete task %s failed: %s", task_id, exc)
+        if isinstance(exc, NonRetryableTaskError):
+            raise
         raise self.retry(exc=exc, countdown=60)
 
     finally:
