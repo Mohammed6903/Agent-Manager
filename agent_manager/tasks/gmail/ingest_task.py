@@ -86,6 +86,26 @@ def _make_http(credentials: Any) -> Any:
 
 
 from agent_manager.tasks._progress_helper import update_progress as _update_progress
+
+
+def _abortable_sleep(seconds: float, is_aborted: Callable[[], bool] | None) -> bool:
+    """Sleep up to `seconds`, waking every 0.5s to check `is_aborted()`.
+
+    Returns True if the sleep completed normally, False if aborted early.
+    Crucial for cancellable tasks: a vanilla time.sleep(64) blocks the
+    revoke signal for 64s; this version notices the abort within 0.5s.
+    """
+    if is_aborted is None:
+        time.sleep(seconds)
+        return True
+    deadline = time.monotonic() + seconds
+    while True:
+        if is_aborted():
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True
+        time.sleep(min(0.5, remaining))
 # Must be called from the main worker thread — Celery's ``current_task``
 # proxy uses thread-local storage and is not visible in spawned threads.
 # The agent_id + task_id contextvars are set by the parent ingest task.
@@ -159,7 +179,11 @@ def _fetch_batch(
                 "Rate-limited: retrying %d message(s) in %.1fs (attempt %d/%d).",
                 len(pending), delay, attempt, _MAX_429_RETRIES,
             )
-            time.sleep(delay)
+            if not _abortable_sleep(delay, is_aborted):
+                # Aborted during backoff — count remaining as failed and exit.
+                with _lock:
+                    counters["failed"] += len(pending)
+                return
 
         # Collect 429-throttled IDs so we can retry them in the next iteration
         throttled: list[str] = []
@@ -294,7 +318,8 @@ def _run_concurrent_batches(
             raise round_error
 
         if round_start + _MAX_CONCURRENT_BATCHES < len(batches):
-            time.sleep(_INTER_ROUND_DELAY)
+            if not _abortable_sleep(_INTER_ROUND_DELAY, is_aborted):
+                return False
 
     return True
 
