@@ -282,14 +282,16 @@ def _run_concurrent_batches(
                     logger.exception("Concurrent batch execution raised an unhandled error.")
                     if round_error is None:
                         round_error = exc
+                # as_completed yields on the main thread, so _emit (which uses
+                # current_task) is safe here. Emitting per-batch instead of
+                # per-round keeps the UI updated every ~_BATCH_SIZE messages
+                # instead of every _BATCH_SIZE × _MAX_CONCURRENT_BATCHES.
+                _emit(counters, total)
 
         if round_error is not None:
             # Re-raise so the Celery task fails properly and retries. This
             # prevents a broken sync from saving a historyId as if it succeeded.
             raise round_error
-
-        # Emit progress from the main thread after each round
-        _emit(counters, total)
 
         if round_start + _MAX_CONCURRENT_BATCHES < len(batches):
             time.sleep(_INTER_ROUND_DELAY)
