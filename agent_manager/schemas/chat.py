@@ -17,6 +17,11 @@ from pydantic import BaseModel, field_validator
 # cycle. If you add a new type, update both places.
 _ALLOWED_AGENT_TYPES = ("default", "qa", "voice")
 
+# Allowed values for ``llm_model`` on create. Mirrors ``ALLOWED_LLM_MODELS``
+# in agent_manager.models.agent_registry; kept literal here to avoid the
+# import cycle. Update both when adding providers.
+_ALLOWED_LLM_MODELS = ("openai/gpt-4o", "anthropic/claude-sonnet-4-5")
+
 
 class CreateAgentRequest(BaseModel):
     agent_id: str
@@ -40,6 +45,11 @@ class CreateAgentRequest(BaseModel):
     qa_page_title: Optional[str] = None
     qa_page_subtitle: Optional[str] = None
 
+    # Per-agent LLM model. Sent to the openclaw gateway via the
+    # ``x-openclaw-model`` header on every chat call for this agent.
+    # Locked at create time: UpdateAgentRequest intentionally omits it.
+    llm_model: Optional[str] = None
+
     @field_validator("agent_id")
     @classmethod
     def validate_agent_id(cls, v: str) -> str:
@@ -55,6 +65,17 @@ class CreateAgentRequest(BaseModel):
         if v not in _ALLOWED_AGENT_TYPES:
             raise ValueError(
                 f"agent_type must be one of {_ALLOWED_AGENT_TYPES}, got {v!r}"
+            )
+        return v
+
+    @field_validator("llm_model")
+    @classmethod
+    def validate_llm_model(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if v not in _ALLOWED_LLM_MODELS:
+            raise ValueError(
+                f"llm_model must be one of {_ALLOWED_LLM_MODELS}, got {v!r}"
             )
         return v
 
@@ -100,6 +121,7 @@ class AgentResponse(BaseModel):
     qa_persona_instructions: Optional[str] = None
     qa_page_title: Optional[str] = None
     qa_page_subtitle: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 # ── Chat ────────────────────────────────────────────────────────────────────────

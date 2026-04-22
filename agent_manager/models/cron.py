@@ -39,6 +39,14 @@ class CronPipelineRun(Base):
     model = Column(String, nullable=True)
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
+    # Anthropic prompt-cache counts aggregated from the session JSONL.
+    # Openclaw caches the cron's full system + task prefix on the first
+    # assistant message, so a cold run writes a huge chunk here.
+    # total_cost already includes cache dollars (openclaw reports
+    # cost.total with cache priced in); these columns exist so the UI
+    # can show token-level breakdowns that match what was billed.
+    cache_read_tokens = Column(Integer, nullable=True)
+    cache_write_tokens = Column(Integer, nullable=True)
     input_cost = Column(Float, default=0.0)
     output_cost = Column(Float, default=0.0)
     total_cost = Column(Float, default=0.0)

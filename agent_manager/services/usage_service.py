@@ -378,6 +378,12 @@ class UsageService:
                         "prompt_tokens": int(usage.get("input") or 0),
                         "completion_tokens": int(usage.get("output") or 0),
                         "total_tokens": int(usage.get("totalTokens") or 0),
+                        # Anthropic prompt-cache counts. When the provider
+                        # is OpenAI these keys are absent → 0. cacheWrite
+                        # is the big one on cold turns; cacheRead dominates
+                        # on warm turns within the 5-minute cache TTL.
+                        "cache_read_tokens": int(usage.get("cacheRead") or 0),
+                        "cache_write_tokens": int(usage.get("cacheWrite") or 0),
                         "input_cost": float(cost.get("input") or 0.0) * settings.COST_MULTIPLIER,
                         "output_cost": float(cost.get("output") or 0.0) * settings.COST_MULTIPLIER,
                         "total_cost": float(cost.get("total") or 0.0) * settings.COST_MULTIPLIER,
@@ -407,6 +413,8 @@ class UsageService:
                     "prompt_tokens": stmt.excluded.prompt_tokens,
                     "completion_tokens": stmt.excluded.completion_tokens,
                     "total_tokens": stmt.excluded.total_tokens,
+                    "cache_read_tokens": stmt.excluded.cache_read_tokens,
+                    "cache_write_tokens": stmt.excluded.cache_write_tokens,
                     "input_cost": stmt.excluded.input_cost,
                     "output_cost": stmt.excluded.output_cost,
                     "total_cost": stmt.excluded.total_cost,
@@ -657,6 +665,8 @@ class UsageService:
             func.sum(ChatUsageLog.prompt_tokens).label("total_prompt"),
             func.sum(ChatUsageLog.completion_tokens).label("total_completion"),
             func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+            func.coalesce(func.sum(ChatUsageLog.cache_read_tokens), 0).label("total_cache_read"),
+            func.coalesce(func.sum(ChatUsageLog.cache_write_tokens), 0).label("total_cache_write"),
             func.sum(ChatUsageLog.total_cost).label("total_cost")
         )
         if user_id:
@@ -665,7 +675,7 @@ class UsageService:
             chat_query = chat_query.filter(ChatUsageLog.agent_id == agent_id)
         elif org_agent_ids is not None:
             chat_query = chat_query.filter(ChatUsageLog.agent_id.in_(org_agent_ids))
-        
+
         chat_results = chat_query.group_by(ChatUsageLog.model).all()
 
         # Cron Usage
@@ -674,6 +684,8 @@ class UsageService:
             func.sum(CronPipelineRun.input_tokens).label("total_prompt"),
             func.sum(CronPipelineRun.output_tokens).label("total_completion"),
             func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
+            func.coalesce(func.sum(CronPipelineRun.cache_read_tokens), 0).label("total_cache_read"),
+            func.coalesce(func.sum(CronPipelineRun.cache_write_tokens), 0).label("total_cache_write"),
             func.sum(CronPipelineRun.total_cost).label("total_cost")
         ).join(CronOwnership, CronOwnership.cron_id == CronPipelineRun.cron_id)
 
@@ -697,15 +709,23 @@ class UsageService:
                 "prompt_tokens": int(r.total_prompt or 0),
                 "completion_tokens": int(r.total_completion or 0),
                 "total_tokens": int(r.total_tokens or 0),
+                "cache_read_tokens": int(r.total_cache_read or 0),
+                "cache_write_tokens": int(r.total_cache_write or 0),
                 "total_cost": float(r.total_cost or 0.0)
             }
 
+        # Cron runs go through the same openclaw → anthropic cache path
+        # as chat turns (a cold cron writes the full system + task prefix
+        # on its first assistant message). Cache counts are summed the
+        # same way. Rows written before the migration have NULL → 0.
         for r in cron_results:
             model = r.model or "unknown"
             if model in merged:
                 merged[model]["prompt_tokens"] += int(r.total_prompt or 0)
                 merged[model]["completion_tokens"] += int(r.total_completion or 0)
                 merged[model]["total_tokens"] += int(r.total_tokens or 0)
+                merged[model]["cache_read_tokens"] += int(r.total_cache_read or 0)
+                merged[model]["cache_write_tokens"] += int(r.total_cache_write or 0)
                 merged[model]["total_cost"] += float(r.total_cost or 0.0)
             else:
                 merged[model] = {
@@ -713,6 +733,8 @@ class UsageService:
                     "prompt_tokens": int(r.total_prompt or 0),
                     "completion_tokens": int(r.total_completion or 0),
                     "total_tokens": int(r.total_tokens or 0),
+                    "cache_read_tokens": int(r.total_cache_read or 0),
+                    "cache_write_tokens": int(r.total_cache_write or 0),
                     "total_cost": float(r.total_cost or 0.0)
                 }
 
@@ -736,7 +758,9 @@ class UsageService:
         chat_query = self.db.query(
             ChatUsageLog.model,
             func.sum(ChatUsageLog.total_cost).label("total_cost"),
-            func.sum(ChatUsageLog.total_tokens).label("total_tokens")
+            func.sum(ChatUsageLog.total_tokens).label("total_tokens"),
+            func.coalesce(func.sum(ChatUsageLog.cache_read_tokens), 0).label("cache_read"),
+            func.coalesce(func.sum(ChatUsageLog.cache_write_tokens), 0).label("cache_write"),
         ).filter(ChatUsageLog.created_at >= start_of_month)
 
         if user_id:
@@ -752,7 +776,9 @@ class UsageService:
         cron_query = self.db.query(
             CronPipelineRun.model,
             func.sum(CronPipelineRun.total_cost).label("total_cost"),
-            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens")
+            func.sum(CronPipelineRun.input_tokens + CronPipelineRun.output_tokens).label("total_tokens"),
+            func.coalesce(func.sum(CronPipelineRun.cache_read_tokens), 0).label("cache_read"),
+            func.coalesce(func.sum(CronPipelineRun.cache_write_tokens), 0).label("cache_write"),
         ).join(CronOwnership, CronOwnership.cron_id == CronPipelineRun.cron_id).filter(CronPipelineRun.started_at >= start_of_month_ms)
 
         if user_id:
@@ -768,30 +794,56 @@ class UsageService:
         models_data: Dict[str, Dict[str, Any]] = {}
         total_cost = 0.0
         total_tokens = 0
+        total_cache_read = 0
+        total_cache_write = 0
 
         for r in chat_results:
             name = r.model or "unknown"
             cost = float(r.total_cost or 0.0)
             tokens = int(r.total_tokens or 0)
-            models_data[name] = {"name": name, "cost": cost, "tokens": tokens}
+            cr = int(r.cache_read or 0)
+            cw = int(r.cache_write or 0)
+            models_data[name] = {
+                "name": name,
+                "cost": cost,
+                "tokens": tokens,
+                "cache_read_tokens": cr,
+                "cache_write_tokens": cw,
+            }
             total_cost += cost
             total_tokens += tokens
+            total_cache_read += cr
+            total_cache_write += cw
 
         for r in cron_results:
             name = r.model or "unknown"
             cost = float(r.total_cost or 0.0)
             tokens = int(r.total_tokens or 0)
+            cr = int(r.cache_read or 0)
+            cw = int(r.cache_write or 0)
             if name in models_data:
                 models_data[name]["cost"] += cost
                 models_data[name]["tokens"] += tokens
+                models_data[name]["cache_read_tokens"] += cr
+                models_data[name]["cache_write_tokens"] += cw
             else:
-                models_data[name] = {"name": name, "cost": cost, "tokens": tokens}
+                models_data[name] = {
+                    "name": name,
+                    "cost": cost,
+                    "tokens": tokens,
+                    "cache_read_tokens": cr,
+                    "cache_write_tokens": cw,
+                }
             total_cost += cost
             total_tokens += tokens
-            
+            total_cache_read += cr
+            total_cache_write += cw
+
         return {
             "total_cost": total_cost,
             "total_tokens": total_tokens,
+            "total_cache_read_tokens": total_cache_read,
+            "total_cache_write_tokens": total_cache_write,
             "total_models_used": len(models_data),
             "models": list(models_data.values())
         }
@@ -949,6 +1001,8 @@ class UsageService:
         total_input_tokens = 0
         total_output_tokens = 0
         total_total_tokens = 0
+        total_cache_read = 0
+        total_cache_write = 0
         total_input_cost = 0.0
         total_output_cost = 0.0
         total_cost = 0.0
@@ -977,6 +1031,12 @@ class UsageService:
                     total_input_tokens += int(usage.get("input") or 0)
                     total_output_tokens += int(usage.get("output") or 0)
                     total_total_tokens += int(usage.get("totalTokens") or 0)
+                    # Anthropic prompt-cache counts. A cold cron run writes
+                    # a huge cache block on its first assistant message;
+                    # without this the UI under-reports token volume by
+                    # the size of the system + task prefix.
+                    total_cache_read += int(usage.get("cacheRead") or 0)
+                    total_cache_write += int(usage.get("cacheWrite") or 0)
 
                     total_input_cost += float(cost.get("input") or 0.0)
                     total_output_cost += float(cost.get("output") or 0.0)
@@ -990,6 +1050,8 @@ class UsageService:
                 affected = db.query(CronPipelineRun).filter(CronPipelineRun.id == run_id).update({
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
+                    "cache_read_tokens": total_cache_read,
+                    "cache_write_tokens": total_cache_write,
                     "input_cost": total_input_cost * settings.COST_MULTIPLIER,
                     "output_cost": total_output_cost * settings.COST_MULTIPLIER,
                     "total_cost": total_cost * settings.COST_MULTIPLIER
@@ -1423,7 +1485,7 @@ class UsageService:
             # If this deduction pushed the user below the min balance,
             # auto-disable every cron they own so scheduled jobs can't
             # keep draining what's already empty. Idempotent.
-            await self._auto_disable_crons_if_wallet_blocked(user_id)
+            await self._auto_disable_crons_if_wallet_blocked(user_id, agent_id)
         except (InsufficientBalanceError, DebtLimitReachedError) as exc:
             logger.warning(
                 "Wallet deduction failed for user %s, session %s: %s",
@@ -1431,7 +1493,7 @@ class UsageService:
             )
             # Wallet refused the deduction — user is definitely blocked.
             # Disable their crons immediately.
-            await self._auto_disable_crons_if_wallet_blocked(user_id)
+            await self._auto_disable_crons_if_wallet_blocked(user_id, agent_id)
         except Exception as exc:
             logger.error("Failed to deduct session cost for %s: %s", session_id, exc)
 
@@ -1501,18 +1563,18 @@ class UsageService:
             # pushed the user negative, disable all their other crons
             # before the next scheduled fire time. This is the primary
             # defense for "don't let crons keep draining a dry wallet".
-            await self._auto_disable_crons_if_wallet_blocked(user_id)
+            await self._auto_disable_crons_if_wallet_blocked(user_id, cron_agent_id)
         except (InsufficientBalanceError, DebtLimitReachedError) as exc:
             logger.warning(
                 "Wallet deduction failed for user %s, cron run %s: %s",
                 user_id, run_id, exc,
             )
             # Wallet refused — user is blocked. Disable immediately.
-            await self._auto_disable_crons_if_wallet_blocked(user_id)
+            await self._auto_disable_crons_if_wallet_blocked(user_id, cron_agent_id)
         except Exception as exc:
             logger.error("Failed to deduct cron cost for %s: %s", run_id, exc)
 
-    async def _auto_disable_crons_if_wallet_blocked(self, user_id: str) -> None:
+    async def _auto_disable_crons_if_wallet_blocked(self, user_id: str, agent_id: str = "") -> None:
         """Helper: if the user is now wallet-blocked, disable all their crons.
 
         Called after every successful OR failed wallet deduction so the
@@ -1537,11 +1599,11 @@ class UsageService:
                 is_user_wallet_blocked,
                 restore_crons_for_user_if_unblocked,
             )
-            if await is_user_wallet_blocked(user_id):
+            if await is_user_wallet_blocked(user_id, agent_id):
                 await disable_crons_for_user(self.db, self.gateway, user_id)
             else:
                 await restore_crons_for_user_if_unblocked(
-                    self.db, self.gateway, user_id
+                    self.db, self.gateway, user_id, agent_id
                 )
         except Exception as exc:
             logger.warning(

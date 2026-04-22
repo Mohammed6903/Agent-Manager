@@ -50,6 +50,78 @@ _HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=3000.0, write=10.0, pool=10.0)
 _HTTPX_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
 
 
+# Retry delays for transient openclaw-gateway unavailability. The gateway
+# reloads its Node process whenever its config is patched — notably after
+# every agent create/update via agent_service.patch_config, and on
+# installer/config-watch events. That creates a ~10 second window where
+# incoming chat requests see ``ConnectError`` before the gateway is ready.
+# Sum of delays here bridges a single cold boot transparently. We only
+# retry ``ConnectError`` — other exceptions bubble immediately.
+_GATEWAY_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+
+
+async def _post_with_gateway_retry(client: httpx.AsyncClient, url: str, **kwargs):
+    """POST that retries on ``ConnectError`` to absorb gateway restarts.
+
+    See ``_GATEWAY_RETRY_DELAYS_S`` for the backoff schedule. After the
+    schedule is exhausted, re-raises the last ``ConnectError``.
+    """
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate((0.0, *_GATEWAY_RETRY_DELAYS_S)):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            return await client.post(url, **kwargs)
+        except httpx.ConnectError as exc:
+            last_exc = exc
+            logger.warning(
+                "OpenClaw gateway ConnectError on attempt %d (%s); will retry",
+                attempt + 1, exc,
+            )
+    assert last_exc is not None
+    raise last_exc
+
+
+async def _wait_for_gateway_ready() -> None:
+    """Poll the gateway's dashboard root until it answers, then return.
+
+    Used before opening a streaming ``client.stream`` — httpx's stream
+    entry raises ConnectError for cold gateways, and retrying around
+    ``async with client.stream(...)`` is awkward. A fast readiness probe
+    on the same loopback address is simpler: it succeeds in ~1ms when
+    the gateway is up and retries transparently while it's still booting.
+
+    No-op (returns) on the first success. Raises ``HTTPException(502)``
+    after the retry schedule is exhausted.
+    """
+    last_exc: Exception | None = None
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+        for attempt, delay in enumerate((0.0, *_GATEWAY_RETRY_DELAYS_S)):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                # The dashboard root (``/``) is always served and cheap.
+                # We don't care about the status code, only that the TCP
+                # connection succeeds — a 200/404/405 all mean "up".
+                await client.get(settings.OPENCLAW_GATEWAY_URL + "/")
+                return
+            except httpx.ConnectError as exc:
+                last_exc = exc
+                logger.warning(
+                    "Gateway readiness probe failed on attempt %d (%s); will retry",
+                    attempt + 1, exc,
+                )
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "error": "gateway_connection_error",
+            "message": "OpenClaw gateway did not become ready",
+            "gateway_url": settings.OPENCLAW_GATEWAY_URL,
+            "original_error": str(last_exc) if last_exc else "unknown",
+        },
+    )
+
+
 async def _check_wallet_balance(user_id: str, agent_id: str = "") -> None:
     """Pre-flight balance + debt check. Raises HTTPException 402 if blocked."""
     if not settings.WALLET_INTERNAL_API_KEY and not settings.GARAGE_WALLET_INTERNAL_API_KEY:
@@ -472,6 +544,18 @@ class ChatService:
         if settings.OPENCLAW_GATEWAY_TOKEN:
             headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
 
+        # Per-agent LLM model override. Set at agent creation time on the
+        # agent_registry row. The openclaw gateway routes this call to
+        # the specified provider/model when the header is present and
+        # the model is in ``agents.defaults.models`` in openclaw.json.
+        # NULL llm_model (pre-existing rows) falls back to the gateway
+        # default. Same mechanism the voice bridge uses.
+        if db:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            agent_row = AgentRegistryRepository(db).get(req.agent_id)
+            if agent_row and agent_row.llm_model:
+                headers["x-openclaw-model"] = agent_row.llm_model
+
         # ── Tool-enabled path ──────────────────────────────────────────────────
         # Always include deliver_chat_message; only include create_garage_post if creds exist
         garage_creds = SecretService.get_secret(db, req.agent_id, "garage_feed") if db else None
@@ -486,13 +570,14 @@ class ChatService:
             }
             async with httpx.AsyncClient(timeout=_HTTPX_TIMEOUT) as client:
                 try:
-                    probe_resp = await client.post(
+                    probe_resp = await _post_with_gateway_retry(
+                        client,
                         f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
                         json=probe_body,
                         headers=headers,
                     )
                 except httpx.ConnectError as exc:
-                    logger.error("Cannot connect to OpenClaw Gateway: %s", exc)
+                    logger.error("Cannot connect to OpenClaw Gateway after retries: %s", exc)
                     raise HTTPException(
                         status_code=502,
                         detail={
@@ -552,6 +637,10 @@ class ChatService:
                         "stream": True,
                         "user": user_field,
                     }
+                    # Wait for gateway readiness before streaming — absorbs
+                    # the ~10s cold-boot window after create_agent patches
+                    # the config. See _wait_for_gateway_ready.
+                    await _wait_for_gateway_ready()
                     async with httpx.AsyncClient(timeout=_HTTPX_STREAM_TIMEOUT) as client:
                         try:
                             async with client.stream(
@@ -615,6 +704,8 @@ class ChatService:
             "stream": True,
             "user": user_field,
         }
+        # Readiness probe — same rationale as the tool-enabled path above.
+        await _wait_for_gateway_ready()
         async with httpx.AsyncClient(timeout=_HTTPX_STREAM_TIMEOUT) as client:
             try:
                 async with client.stream(
@@ -795,9 +886,19 @@ class ChatService:
         if settings.OPENCLAW_GATEWAY_TOKEN:
             headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
 
+        # Per-agent LLM model override — see comment in chat_stream's
+        # headers block. Looks up the agent's llm_model from the registry
+        # and forwards it as ``x-openclaw-model``.
+        if db:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            agent_row = AgentRegistryRepository(db).get(req.agent_id)
+            if agent_row and agent_row.llm_model:
+                headers["x-openclaw-model"] = agent_row.llm_model
+
         async with httpx.AsyncClient(timeout=_HTTPX_TIMEOUT) as client:
             try:
-                resp = await client.post(
+                resp = await _post_with_gateway_retry(
+                    client,
                     f"{settings.OPENCLAW_GATEWAY_URL}/v1/chat/completions",
                     json=body,
                     headers=headers,

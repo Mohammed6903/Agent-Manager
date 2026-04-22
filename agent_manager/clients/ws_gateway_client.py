@@ -74,6 +74,19 @@ OPERATOR_SCOPES = ["operator.read", "operator.write", "operator.admin"]
 PAIR_RETRY_ATTEMPTS = 6
 PAIR_RETRY_DELAY_S = 4.0
 
+# Cold-boot retry budget. The openclaw gateway restarts its Node
+# process on any ``config.patch`` — notably after every agent
+# create/update — which creates a ~10s window where:
+#   - fresh connects get ``OSError: Connection refused``
+#   - the existing WS we cached is now dead → ``ConnectionClosed`` on
+#     the next send.
+# Both are safe to retry because (a) ``_connect`` fails before any RPC
+# is sent, and (b) ``ConnectionClosed mid-send`` means the request
+# bytes never reached the gateway, so there's no side-effect risk of
+# retrying. Timeouts (``asyncio.TimeoutError``) are NOT retried because
+# the request may have been processed server-side.
+COLD_BOOT_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
@@ -421,7 +434,54 @@ class WSGatewayClient(GatewayClient):
                     )
             self._pending.clear()
 
+    # Detail strings raised from _call_once that indicate the connection
+    # failed before the request reached the gateway. Safe to retry.
+    _COLD_BOOT_DETAIL_PREFIXES = (
+        "Cannot connect to gateway",
+        "Gateway connection closed mid-send",
+        "Gateway connection unavailable",
+    )
+
     async def _call(self, method: str, params: dict) -> Any:
+        """Invoke an RPC, retrying on gateway cold-boot failures.
+
+        The gateway restarts its Node process on ``config.patch`` (agent
+        create/update) which either (a) kills our cached WS or (b) refuses
+        new connects while it's booting. Both are retried per
+        ``COLD_BOOT_RETRY_DELAYS_S``. Other failures (timeout, 4xx-style
+        RPC errors, auth failures) are not retried.
+        """
+        last_exc: HTTPException | None = None
+        for attempt, delay in enumerate((0.0, *COLD_BOOT_RETRY_DELAYS_S)):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                return await self._call_once(method, params)
+            except HTTPException as exc:
+                detail_str = str(exc.detail)
+                is_cold_boot = exc.status_code == 502 and any(
+                    detail_str.startswith(p) for p in self._COLD_BOOT_DETAIL_PREFIXES
+                )
+                if not is_cold_boot:
+                    raise
+                # Wipe the cached WS so the next attempt reconnects fresh.
+                # _reader_loop should clear it too, but racing its
+                # cleanup in every caller is fragile — do it here.
+                if self._ws is not None:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
+                last_exc = exc
+                logger.warning(
+                    "Gateway RPC %s failed on attempt %d (%s); retrying",
+                    method, attempt + 1, detail_str,
+                )
+        assert last_exc is not None
+        raise last_exc
+
+    async def _call_once(self, method: str, params: dict) -> Any:
         await self._ensure_connected()
         ws = self._ws
         if ws is None:
