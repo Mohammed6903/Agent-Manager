@@ -17,10 +17,19 @@ from pydantic import BaseModel, field_validator
 # cycle. If you add a new type, update both places.
 _ALLOWED_AGENT_TYPES = ("default", "qa", "voice")
 
-# Allowed values for ``llm_model`` on create. Mirrors ``ALLOWED_LLM_MODELS``
-# in agent_manager.models.agent_registry; kept literal here to avoid the
+# Allowed values for ``llm_model`` on create AND for the per-request
+# ``ChatRequest.model`` override. Mirrors ``ALLOWED_LLM_MODELS`` in
+# agent_manager.models.agent_registry; kept literal here to avoid the
 # import cycle. Update both when adding providers.
-_ALLOWED_LLM_MODELS = ("openai/gpt-4o", "anthropic/claude-sonnet-4-5")
+_ALLOWED_LLM_MODELS = (
+    "openai/gpt-5.1",
+    "openai/gpt-4.1",
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    "anthropic/claude-opus-4-5",
+    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-haiku-4-5",
+)
 
 
 class CreateAgentRequest(BaseModel):
@@ -141,6 +150,22 @@ class ChatRequest(BaseModel):
     # Group chat fields — set room_id for @mention in a group room
     room_id: Optional[str] = None
     recent_context: Optional[str] = None
+    # Per-turn LLM model override. When omitted, the agent's locked
+    # default (``agent_registry.llm_model``) is used; when both are
+    # absent the gateway falls back to its configured primary. Must
+    # be one of ``_ALLOWED_LLM_MODELS``.
+    model: Optional[str] = None
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v not in _ALLOWED_LLM_MODELS:
+            raise ValueError(
+                f"model must be one of {_ALLOWED_LLM_MODELS}, got {v!r}"
+            )
+        return v
 
 
 class ChatResponse(BaseModel):

@@ -14,17 +14,24 @@ AGENT_TYPE_QA = "qa"
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPES = (AGENT_TYPE_DEFAULT, AGENT_TYPE_QA, AGENT_TYPE_VOICE)
 
-# Allowed LLM models for per-agent routing. The user picks one of these
-# at create time (via the frontend's "provider" selector) and it is
-# stored on the agent row forever. At chat time chat_service sends it
-# as the ``x-openclaw-model`` header so the gateway routes this agent's
-# calls to that specific model. Each string MUST also appear in the
+# Allowed LLM models. The agent's default is picked at create time
+# (``agent_registry.llm_model``); every chat request can override it
+# per-turn via ``ChatRequest.model``. Both flow to the openclaw gateway
+# as ``x-openclaw-model``. Each string MUST also appear in the
 # gateway's ``agents.defaults.models`` allowlist in openclaw.json —
 # otherwise the gateway rejects with "Model 'X' is not allowed for
 # agent 'Y'." Keep in sync with that file.
-LLM_MODEL_OPENAI = "openai/gpt-4o"
-LLM_MODEL_ANTHROPIC = "anthropic/claude-sonnet-4-5"
-ALLOWED_LLM_MODELS = (LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC)
+ALLOWED_LLM_MODELS = (
+    # OpenAI
+    "openai/gpt-5.1",
+    "openai/gpt-4.1",
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    # Anthropic
+    "anthropic/claude-opus-4-5",
+    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-haiku-4-5",
+)
 
 
 class AgentRegistry(Base):
