@@ -53,11 +53,13 @@ _HTTPX_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=
 # Retry delays for transient openclaw-gateway unavailability. The gateway
 # reloads its Node process whenever its config is patched — notably after
 # every agent create/update via agent_service.patch_config, and on
-# installer/config-watch events. That creates a ~10 second window where
-# incoming chat requests see ``ConnectError`` before the gateway is ready.
-# Sum of delays here bridges a single cold boot transparently. We only
-# retry ``ConnectError`` — other exceptions bubble immediately.
-_GATEWAY_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+# installer/config-watch events. That creates a ~10 second window (sometimes
+# more) where incoming chat requests see ``ConnectError`` before the
+# gateway is ready. Sum of delays here bridges several cold boots
+# transparently. We only retry ``ConnectError`` — other exceptions
+# bubble immediately.
+# _GATEWAY_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+_GATEWAY_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0)
 
 
 async def _post_with_gateway_retry(client: httpx.AsyncClient, url: str, **kwargs):

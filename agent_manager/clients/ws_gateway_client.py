@@ -76,7 +76,7 @@ PAIR_RETRY_DELAY_S = 4.0
 
 # Cold-boot retry budget. The openclaw gateway restarts its Node
 # process on any ``config.patch`` — notably after every agent
-# create/update — which creates a ~10s window where:
+# create/update — which creates a ~10s+ window where:
 #   - fresh connects get ``OSError: Connection refused``
 #   - the existing WS we cached is now dead → ``ConnectionClosed`` on
 #     the next send.
@@ -85,7 +85,8 @@ PAIR_RETRY_DELAY_S = 4.0
 # bytes never reached the gateway, so there's no side-effect risk of
 # retrying. Timeouts (``asyncio.TimeoutError``) are NOT retried because
 # the request may have been processed server-side.
-COLD_BOOT_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+# COLD_BOOT_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+COLD_BOOT_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0)
 
 
 def _b64url(data: bytes) -> str:
