@@ -74,9 +74,11 @@ OPERATOR_SCOPES = ["operator.read", "operator.write", "operator.admin"]
 PAIR_RETRY_ATTEMPTS = 6
 PAIR_RETRY_DELAY_S = 4.0
 
-# Cold-boot retry budget. The openclaw gateway restarts its Node
-# process on any ``config.patch`` — notably after every agent
-# create/update — which creates a ~10s+ window where:
+# Cold-boot retry budget. Agent lifecycle ops (create/update/restore)
+# now use ``agents.create`` / ``agents.update`` which hot-apply without
+# a Node restart, so the common case is steady. Retries here remain as
+# defense-in-depth for genuine cold-boot windows: installer updates,
+# manual restarts, and host reboots. Symptoms when those fire:
 #   - fresh connects get ``OSError: Connection refused``
 #   - the existing WS we cached is now dead → ``ConnectionClosed`` on
 #     the next send.
@@ -446,11 +448,13 @@ class WSGatewayClient(GatewayClient):
     async def _call(self, method: str, params: dict) -> Any:
         """Invoke an RPC, retrying on gateway cold-boot failures.
 
-        The gateway restarts its Node process on ``config.patch`` (agent
-        create/update) which either (a) kills our cached WS or (b) refuses
-        new connects while it's booting. Both are retried per
-        ``COLD_BOOT_RETRY_DELAYS_S``. Other failures (timeout, 4xx-style
-        RPC errors, auth failures) are not retried.
+        Steady-state agent ops (create/update/restore) now use
+        ``agents.create``/``agents.update``, which hot-apply without a
+        Node restart. Retries here cover genuine cold boots: installer
+        ``update.run`` respawns, manual restarts, host reboots — which
+        either (a) kill our cached WS or (b) refuse new connects while
+        booting. Both are retried per ``COLD_BOOT_RETRY_DELAYS_S``.
+        Other failures (timeout, 4xx-style RPC errors, auth) are not.
         """
         last_exc: HTTPException | None = None
         for attempt, delay in enumerate((0.0, *COLD_BOOT_RETRY_DELAYS_S)):
@@ -549,17 +553,39 @@ class WSGatewayClient(GatewayClient):
     async def get_config(self) -> dict:
         return await self._call("config.get", {})
 
-    async def patch_config(self, base_hash: str, raw_config: str) -> dict:
-        # _call() raises on frame-level errors, so reaching here means success.
-        # The CLI used to return the full frame (which had top-level `ok: true`)
-        # and agent_service.create_agent does `result.get("ok")` to verify, so
-        # we inject `ok: True` into the payload for backward compatibility.
-        result = await self._call(
-            "config.patch", {"baseHash": base_hash, "raw": raw_config}
+    async def create_agent_record(
+        self, agent_id: str, name: str, workspace: str
+    ) -> dict:
+        # The gateway derives ``agentId = normalizeAgentId(name)``. Our
+        # ``agent_id`` is already validated to ``^[a-z0-9]+$`` and passes
+        # through normalization unchanged, so we send ``name=agent_id`` to
+        # pin the gateway-side id, then ``agents.update`` to set the
+        # human-readable display name. Two RPCs, no SIGUSR1 — unlike the
+        # legacy ``config.patch`` path this replaces.
+        await self._call(
+            "agents.create", {"name": agent_id, "workspace": workspace}
         )
-        if isinstance(result, dict) and "ok" not in result:
-            result["ok"] = True
-        return result
+        if name and name != agent_id:
+            return await self._call(
+                "agents.update", {"agentId": agent_id, "name": name}
+            )
+        return {"ok": True, "agentId": agent_id}
+
+    async def update_agent_record(
+        self,
+        agent_id: str,
+        name: Optional[str] = None,
+        workspace: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> dict:
+        params: dict[str, Any] = {"agentId": agent_id}
+        if name is not None:
+            params["name"] = name
+        if workspace is not None:
+            params["workspace"] = workspace
+        if model is not None:
+            params["model"] = model
+        return await self._call("agents.update", params)
 
     async def delete_agent(self, agent_id: str) -> dict:
         return await self._call(

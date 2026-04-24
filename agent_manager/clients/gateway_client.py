@@ -11,7 +11,19 @@ class GatewayClient(ABC):
         pass
 
     @abstractmethod
-    async def patch_config(self, base_hash: str, raw_config: str) -> dict:
+    async def create_agent_record(
+        self, agent_id: str, name: str, workspace: str
+    ) -> dict:
+        pass
+
+    @abstractmethod
+    async def update_agent_record(
+        self,
+        agent_id: str,
+        name: Optional[str] = None,
+        workspace: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> dict:
         pass
 
     @abstractmethod

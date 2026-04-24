@@ -90,24 +90,6 @@ class AgentService:
             logger.error(f"Failed to load AGENTS.md template: {e}")
             return None
 
-    def _build_agents_raw(self, agents: List[dict[str, Any]]) -> str:
-        entries: List[str] = []
-        for a in agents:
-            agent_id = a.get("id", "")
-            # Legacy agent records predating the agentDir schema field don't
-            # carry it on the list_agents() response. Fall back to the
-            # canonical computed path instead of crashing create_agent.
-            agent_dir = a.get("agentDir") or self._agent_dir(agent_id)
-            entry = (
-                f'{{ id: "{agent_id}", '
-                f'name: "{a.get("name", "")}", '
-                f'workspace: "{a.get("workspace", "")}", '
-                f'agentDir: "{agent_dir}" }}'
-            )
-            entries.append(entry)
-        joined = ", ".join(entries)
-        return f"{{ agents: {{ list: [{joined}] }} }}"
-
     # ── Shared-file lifecycle ────────────────────────────────────────────────────
 
     async def ensure_shared_files(self) -> None:
@@ -269,12 +251,11 @@ class AgentService:
             except Exception as exc:
                 logger.warning("Wallet pre-flight check failed (allowing request): %s", exc)
 
-        # ── PHASE 1: Concurrent Network Reads ──────────────────────────────
-        # Fire both gateway requests at the same time instead of waiting for one to finish
-        existing_task = asyncio.create_task(self.gateway.list_agents())
-        config_task = asyncio.create_task(self.gateway.get_config())
-        
-        existing, config_data = await asyncio.gather(existing_task, config_task)
+        # ── PHASE 1: Gateway Read ──────────────────────────────────────────
+        # Single round-trip: list_agents for the 409 duplicate check.
+        # No more get_config — agents.create resolves its own config hash
+        # internally, so we don't need to ferry one through.
+        existing = await self.gateway.list_agents()
 
         if any(a.get("id") == agent_id for a in existing):
             raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
@@ -312,10 +293,6 @@ class AgentService:
                     },
                 )
 
-        config_hash = config_data.get("hash")
-        if not config_hash:
-             raise HTTPException(status_code=500, detail="Could not extract config hash")
-
         agents_md_content = self._default_agents_md()
         if not agents_md_content:
             raise HTTPException(status_code=500, detail="Could not generate default AGENTS.md")
@@ -327,12 +304,14 @@ class AgentService:
             self.storage.ensure_dir(agent_dir)
         )
 
-        # ── PHASE 3: Concurrent File Writing ───────────────────────────────
-        # Now that directories exist, write all files and symlinks at the exact same time
+        # ── PHASE 3: Concurrent SOUL.md / AGENTS.md write ──────────────────
+        # IDENTITY.md is written AFTER agents.create — see PHASE 5. The
+        # gateway's agents.create handler appends a ``- Name:`` stanza to
+        # IDENTITY.md, so writing our full template before would lose to
+        # the gateway's append; writing after guarantees our content wins.
         identity_content = req.identity or self._default_identity(agent_id, req.name, req.role or "")
-        
+
         file_tasks = [
-            self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content),
             self._copy_shared_or_write(workspace, "AGENTS.md", agents_md_content)
         ]
 
@@ -341,32 +320,20 @@ class AgentService:
         else:
             file_tasks.append(self._copy_shared_or_write(workspace, "SOUL.md", self._default_soul()))
 
-        # Execute all file writes in parallel
         await asyncio.gather(*file_tasks)
 
-        # ── PHASE 4: Sequential Gateway Patch ──────────────────────────────
-        # The patch must happen last, once the file system is fully prepped
-        new_entry = {
-            "id": agent_id,
-            "name": req.name,
-            "workspace": workspace,
-            "agentDir": agent_dir,
-        }
-        all_agents = existing + [new_entry]
-        raw = self._build_agents_raw(all_agents)
+        # ── PHASE 4: Gateway agent registration (no restart) ───────────────
+        # agents.create + agents.update hot-apply via writeConfigFile's
+        # in-memory refresh — no SIGUSR1, no downtime. Replaces the old
+        # config.patch path which respawned the Node process.
+        await self.gateway.create_agent_record(
+            agent_id=agent_id,
+            name=req.name,
+            workspace=workspace,
+        )
 
-        result = await self.gateway.patch_config(config_hash, raw)
-
-        if not result.get("ok"):
-            logger.error("config.patch did not return ok=true: %s", result)
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": "config_patch_failed",
-                    "message": "Gateway config.patch did not return ok=true",
-                    "gateway_response": result,
-                },
-            )
+        # ── PHASE 5: Overwrite IDENTITY.md with our template ───────────────
+        await self.storage.write_text(str(Path(workspace) / "IDENTITY.md"), identity_content)
         
         # PHASE 5: Write to DB registry for instant future lookups
         if self._registry:
@@ -565,14 +532,7 @@ class AgentService:
             await self.storage.write_text(identity_path, self._default_identity(agent_id, new_name, new_role))
 
         if req.name is not None:
-            config_data = await self.gateway.get_config()
-            config_hash = config_data.get("hash")
-            existing = await self.gateway.list_agents()
-            for a in existing:
-                if a.get("id") == agent_id:
-                    a["name"] = req.name
-                    break
-            await self.gateway.patch_config(config_hash, self._build_agents_raw(existing))
+            await self.gateway.update_agent_record(agent_id=agent_id, name=req.name)
 
             # Keep DB registry in sync
             if self._registry:
@@ -739,30 +699,22 @@ class AgentService:
                     self.db.commit()
 
         # Re-register with the openclaw gateway so it shows up again.
-        # We rebuild the agent list and patch the config the same way
-        # create_agent does.
+        # Uses agents.create (no SIGUSR1 restart) — same path as create_agent.
+        # If the gateway still has the row cached, agents.create returns
+        # "already exists" which we swallow as success.
         try:
-            existing = await self.gateway.list_agents()
-            config_data = await self.gateway.get_config()
-            config_hash = config_data.get("hash")
-            if config_hash:
-                # If the gateway already has the row (e.g. deleted from
-                # DB but still cached), don't append a duplicate.
-                if not any(a.get("id") == agent_id for a in existing):
-                    restored_entry = {
-                        "id": agent_id,
-                        "name": row.name,
-                        "workspace": row.workspace or self._workspace(agent_id),
-                        "agentDir": row.agent_dir or self._agent_dir(agent_id),
-                    }
-                    raw = self._build_agents_raw(existing + [restored_entry])
-                    await self.gateway.patch_config(config_hash, raw)
-        except Exception as exc:
-            logger.warning(
-                "Gateway re-register failed during restore of '%s': %s",
-                agent_id,
-                exc,
+            await self.gateway.create_agent_record(
+                agent_id=agent_id,
+                name=row.name,
+                workspace=row.workspace or self._workspace(agent_id),
             )
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                logger.warning(
+                    "Gateway re-register failed during restore of '%s': %s",
+                    agent_id,
+                    exc,
+                )
 
         logger.info("Agent '%s' restored (org=%s)", agent_id, org_id)
         return {"status": "restored", "agent_id": agent_id}
