@@ -33,6 +33,7 @@ class AgentRegistryRepository:
         qa_persona_instructions: str | None = None,
         qa_page_title: str | None = None,
         qa_page_subtitle: str | None = None,
+        llm_model: str | None = None,
     ) -> AgentRegistry:
         # agent_type is stored as-is; None lets the model's server_default
         # ("default") fill in for us at insert time.
@@ -47,6 +48,7 @@ class AgentRegistryRepository:
             qa_persona_instructions=qa_persona_instructions,
             qa_page_title=qa_page_title,
             qa_page_subtitle=qa_page_subtitle,
+            llm_model=llm_model,
         )
         if agent_type is not None:
             kwargs["agent_type"] = agent_type

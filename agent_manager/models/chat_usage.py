@@ -23,6 +23,12 @@ class ChatUsageLog(Base):
     prompt_tokens = Column(Integer, default=0, nullable=False)
     completion_tokens = Column(Integer, default=0, nullable=False)
     total_tokens = Column(Integer, default=0, nullable=False)
+    # Anthropic prompt-cache token counts surfaced by openclaw in the
+    # session JSONL under usage.cacheRead / usage.cacheWrite. Nullable
+    # for back-compat with rows written before this column existed;
+    # treat NULL as 0 at the aggregation layer.
+    cache_read_tokens = Column(Integer, default=0, nullable=True)
+    cache_write_tokens = Column(Integer, default=0, nullable=True)
 
     input_cost = Column(Float, default=0.0, nullable=False)
     output_cost = Column(Float, default=0.0, nullable=False)

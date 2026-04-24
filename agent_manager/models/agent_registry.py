@@ -14,6 +14,25 @@ AGENT_TYPE_QA = "qa"
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPES = (AGENT_TYPE_DEFAULT, AGENT_TYPE_QA, AGENT_TYPE_VOICE)
 
+# Allowed LLM models. The agent's default is picked at create time
+# (``agent_registry.llm_model``); every chat request can override it
+# per-turn via ``ChatRequest.model``. Both flow to the openclaw gateway
+# as ``x-openclaw-model``. Each string MUST also appear in the
+# gateway's ``agents.defaults.models`` allowlist in openclaw.json —
+# otherwise the gateway rejects with "Model 'X' is not allowed for
+# agent 'Y'." Keep in sync with that file.
+ALLOWED_LLM_MODELS = (
+    # OpenAI
+    "openai/gpt-5.1",
+    "openai/gpt-4.1",
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    # Anthropic
+    "anthropic/claude-opus-4-5",
+    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-haiku-4-5",
+)
+
 
 class AgentRegistry(Base):
     __tablename__ = "agent_registry"
@@ -61,6 +80,12 @@ class AgentRegistry(Base):
     qa_persona_instructions = Column(Text, nullable=True)
     qa_page_title = Column(String(200), nullable=True)
     qa_page_subtitle = Column(String(500), nullable=True)
+
+    # Per-agent LLM model (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5").
+    # Set at create time and never updated — the model the user picked
+    # is locked to the agent. NULL on rows created before this column
+    # existed; chat_service treats NULL as "use gateway default".
+    llm_model = Column(String, nullable=True)
 
     __table_args__ = (
         # Most common query: all agents for a given org

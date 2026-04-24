@@ -546,6 +546,24 @@ class ChatService:
         if settings.OPENCLAW_GATEWAY_TOKEN:
             headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
 
+        # LLM model override. Priority:
+        #   1. ``req.model`` — per-turn override from the chat UI picker.
+        #   2. ``agent_registry.llm_model`` — agent's locked default.
+        #   3. gateway's configured primary (no header sent).
+        # Both forms are validated against the same allowlist; the
+        # gateway enforces the allowlist too. Same header the voice
+        # bridge uses.
+        chosen_model: str | None = None
+        if getattr(req, "model", None):
+            chosen_model = req.model
+        elif db:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            agent_row = AgentRegistryRepository(db).get(req.agent_id)
+            if agent_row and agent_row.llm_model:
+                chosen_model = agent_row.llm_model
+        if chosen_model:
+            headers["x-openclaw-model"] = chosen_model
+
         # ── Tool-enabled path ──────────────────────────────────────────────────
         # Always include deliver_chat_message; only include create_garage_post if creds exist
         garage_creds = SecretService.get_secret(db, req.agent_id, "garage_feed") if db else None
@@ -875,6 +893,19 @@ class ChatService:
         }
         if settings.OPENCLAW_GATEWAY_TOKEN:
             headers["Authorization"] = f"Bearer {settings.OPENCLAW_GATEWAY_TOKEN}"
+
+        # LLM model override — see comment in chat_stream's headers block.
+        # Priority: req.model (per-turn) > agent.llm_model (default) > gateway primary.
+        chosen_model: str | None = None
+        if getattr(req, "model", None):
+            chosen_model = req.model
+        elif db:
+            from ..repositories.agent_registry_repository import AgentRegistryRepository
+            agent_row = AgentRegistryRepository(db).get(req.agent_id)
+            if agent_row and agent_row.llm_model:
+                chosen_model = agent_row.llm_model
+        if chosen_model:
+            headers["x-openclaw-model"] = chosen_model
 
         async with httpx.AsyncClient(timeout=_HTTPX_TIMEOUT) as client:
             try:

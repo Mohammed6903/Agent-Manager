@@ -138,6 +138,7 @@ async def restore_crons_for_user_if_unblocked(
     db: Session,
     gateway: GatewayClient,
     user_id: str,
+    agent_id: str = "",
 ) -> int:
     """Re-enable auto-disabled crons if the user is no longer wallet-blocked.
 
@@ -148,8 +149,22 @@ async def restore_crons_for_user_if_unblocked(
 
     Safe to call on every deduct / every top-up webhook — it's a no-op
     when the user is still blocked or has nothing to restore.
+
+    ``agent_id`` is forwarded to the wallet client so the balance check
+    hits the correct backend (Garage vs NetworkChain). When empty, we
+    sample one from the user's auto-disabled crons so the check still
+    routes correctly — without this, a Garage-only deployment would
+    fall back to the NetworkChain WALLET_SERVICE_URL and 404.
     """
-    blocked = await is_user_wallet_blocked(user_id)
+    if not agent_id:
+        sample = (
+            db.query(CronOwnership.agent_id)
+            .filter(CronOwnership.user_id == user_id)
+            .first()
+        )
+        if sample and sample.agent_id:
+            agent_id = sample.agent_id
+    blocked = await is_user_wallet_blocked(user_id, agent_id)
     if blocked:
         return 0  # still below min — leave disabled
 

@@ -386,6 +386,7 @@ class AgentService:
                 qa_persona_instructions=req.qa_persona_instructions,
                 qa_page_title=req.qa_page_title,
                 qa_page_subtitle=req.qa_page_subtitle,
+                llm_model=req.llm_model,
             )
 
         # PHASE 6: Create subscription and deduct initial $24.
@@ -429,6 +430,7 @@ class AgentService:
             qa_persona_instructions=req.qa_persona_instructions,
             qa_page_title=req.qa_page_title,
             qa_page_subtitle=req.qa_page_subtitle,
+            llm_model=req.llm_model,
         )
 
     async def list_agents(self, org_id: str | None = None, user_id: str | None = None) -> List[dict[str, Any]]:
@@ -455,6 +457,7 @@ class AgentService:
                     "qa_welcome_message": r.qa_welcome_message,
                     "qa_page_title": r.qa_page_title,
                     "qa_page_subtitle": r.qa_page_subtitle,
+                    "llm_model": r.llm_model,
                     # NOTE: intentionally omitting qa_persona_instructions
                     # from list responses — it's a potentially long
                     # field and only needed when editing a single agent,
@@ -498,6 +501,7 @@ class AgentService:
                 "qa_persona_instructions": row.qa_persona_instructions,
                 "qa_page_title": row.qa_page_title,
                 "qa_page_subtitle": row.qa_page_subtitle,
+                "llm_model": row.llm_model,
             }
             if self._sub_repo:
                 sub = self._sub_repo.get_by_agent_id(agent_id)
