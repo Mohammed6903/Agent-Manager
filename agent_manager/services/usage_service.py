@@ -20,33 +20,64 @@ from ..models.chat_usage import ChatUsageLog
 from ..models.cron import CronOwnership, CronPipelineRun
 
 # ── Model pricing (per token in USD) ─────────────────────────────────────────
-# Fallback pricing used when session metadata has token counts but no cost data.
-# Format: { model_prefix: (input_price_per_token, output_price_per_token) }
-MODEL_PRICING: dict[str, tuple[float, float]] = {
-    "gpt-4o":       (2.50 / 1_000_000, 10.00 / 1_000_000),
-    "gpt-4o-mini":  (0.15 / 1_000_000, 0.60 / 1_000_000),
-    "gpt-4.1":      (2.00 / 1_000_000, 8.00 / 1_000_000),
-    "gpt-4.1-mini": (0.40 / 1_000_000, 1.60 / 1_000_000),
-    "gpt-4.1-nano": (0.10 / 1_000_000, 0.40 / 1_000_000),
-    "gpt-5.1":      (2.00 / 1_000_000, 8.00 / 1_000_000),  # estimated, same as 4.1
-    "o3":           (2.00 / 1_000_000, 8.00 / 1_000_000),
-    "o3-mini":      (1.10 / 1_000_000, 4.40 / 1_000_000),
-    "o4-mini":      (1.10 / 1_000_000, 4.40 / 1_000_000),
+# Fallback pricing used when session metadata has token counts but no cost
+# data from the gateway. Format per entry: ``(input, output, cache_read,
+# cache_write)`` — all USD per token (rate per 1M / 1_000_000).
+#
+# OpenAI cache pricing: ``cache_read`` is the discounted "cached_tokens"
+# rate; ``cache_write`` is the same as ``input`` (no separate write fee).
+# Anthropic cache pricing: ``cache_read`` ≈ 10% of input,
+# ``cache_write`` (5-minute TTL) ≈ 125% of input.
+MODEL_PRICING: dict[str, tuple[float, float, float, float]] = {
+    # OpenAI
+    "gpt-4o":       (2.50 / 1_000_000, 10.00 / 1_000_000, 1.25 / 1_000_000, 2.50 / 1_000_000),
+    "gpt-4o-mini":  (0.15 / 1_000_000,  0.60 / 1_000_000, 0.075 / 1_000_000, 0.15 / 1_000_000),
+    "gpt-4.1":      (2.00 / 1_000_000,  8.00 / 1_000_000, 0.50 / 1_000_000, 2.00 / 1_000_000),
+    "gpt-4.1-mini": (0.40 / 1_000_000,  1.60 / 1_000_000, 0.10 / 1_000_000, 0.40 / 1_000_000),
+    "gpt-4.1-nano": (0.10 / 1_000_000,  0.40 / 1_000_000, 0.025 / 1_000_000, 0.10 / 1_000_000),
+    "gpt-5.1":      (2.00 / 1_000_000,  8.00 / 1_000_000, 0.50 / 1_000_000, 2.00 / 1_000_000),  # estimated, same as 4.1
+    "o3":           (2.00 / 1_000_000,  8.00 / 1_000_000, 0.50 / 1_000_000, 2.00 / 1_000_000),
+    "o3-mini":      (1.10 / 1_000_000,  4.40 / 1_000_000, 0.55 / 1_000_000, 1.10 / 1_000_000),
+    "o4-mini":      (1.10 / 1_000_000,  4.40 / 1_000_000, 0.275 / 1_000_000, 1.10 / 1_000_000),
+    # Anthropic — 5-minute cache TTL rates
+    "claude-opus-4-5":   (15.00 / 1_000_000, 75.00 / 1_000_000, 1.50 / 1_000_000, 18.75 / 1_000_000),
+    "claude-opus-4":     (15.00 / 1_000_000, 75.00 / 1_000_000, 1.50 / 1_000_000, 18.75 / 1_000_000),
+    "claude-sonnet-4-5": ( 3.00 / 1_000_000, 15.00 / 1_000_000, 0.30 / 1_000_000,  3.75 / 1_000_000),
+    "claude-sonnet-4":   ( 3.00 / 1_000_000, 15.00 / 1_000_000, 0.30 / 1_000_000,  3.75 / 1_000_000),
+    "claude-haiku-4-5":  ( 1.00 / 1_000_000,  5.00 / 1_000_000, 0.10 / 1_000_000,  1.25 / 1_000_000),
+    "claude-haiku-4":    ( 1.00 / 1_000_000,  5.00 / 1_000_000, 0.10 / 1_000_000,  1.25 / 1_000_000),
+    "claude-3-5-sonnet": ( 3.00 / 1_000_000, 15.00 / 1_000_000, 0.30 / 1_000_000,  3.75 / 1_000_000),
+    "claude-3-5-haiku":  ( 0.80 / 1_000_000,  4.00 / 1_000_000, 0.08 / 1_000_000,  1.00 / 1_000_000),
 }
-_DEFAULT_PRICING = (2.00 / 1_000_000, 8.00 / 1_000_000)  # safe fallback
+# Safe default when no prefix matches: GPT-4.1-shaped, no cache discount.
+_DEFAULT_PRICING = (2.00 / 1_000_000, 8.00 / 1_000_000, 2.00 / 1_000_000, 2.00 / 1_000_000)
 
 
-def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimate cost in USD from token counts using MODEL_PRICING."""
+def _estimate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float:
+    """Estimate cost in USD from token counts using MODEL_PRICING.
+
+    Cache token args default to 0 for backward compatibility with the
+    metadata-only path that has no cache info. Callers with cache data
+    (e.g. session JSONL parser) should pass the real counts.
+    """
     # Match longest prefix first
     pricing = _DEFAULT_PRICING
+    best_prefix_len = -1
     for prefix, p in MODEL_PRICING.items():
-        if model.startswith(prefix):
+        if model.startswith(prefix) and len(prefix) > best_prefix_len:
             pricing = p
-            break
+            best_prefix_len = len(prefix)
     input_cost = input_tokens * pricing[0]
     output_cost = output_tokens * pricing[1]
-    return input_cost + output_cost
+    cache_read_cost = cache_read_tokens * pricing[2]
+    cache_write_cost = cache_write_tokens * pricing[3]
+    return input_cost + output_cost + cache_read_cost + cache_write_cost
 
 logger = logging.getLogger("agent_manager.services.usage_service")
 
