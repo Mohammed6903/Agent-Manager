@@ -531,12 +531,19 @@ class AgentService:
             new_role = req.role if req.role is not None else current_role
             await self.storage.write_text(identity_path, self._default_identity(agent_id, new_name, new_role))
 
-        if req.name is not None:
-            await self.gateway.update_agent_record(agent_id=agent_id, name=req.name)
+        if req.name is not None or req.llm_model is not None:
+            await self.gateway.update_agent_record(
+                agent_id=agent_id,
+                name=req.name,
+                model=req.llm_model,
+            )
 
             # Keep DB registry in sync
             if self._registry:
-                self._registry.update_name(agent_id, req.name)
+                if req.name is not None:
+                    self._registry.update_name(agent_id, req.name)
+                if req.llm_model is not None:
+                    self._registry.update_llm_model(agent_id, req.llm_model)
 
         # Persist agent_type + Q&A config changes. Only touches columns
         # the caller actually passed (each None value is preserved
@@ -578,6 +585,7 @@ class AgentService:
             qa_persona_instructions=(updated_row.qa_persona_instructions if updated_row else agent.get("qa_persona_instructions")),
             qa_page_title=(updated_row.qa_page_title if updated_row else agent.get("qa_page_title")),
             qa_page_subtitle=(updated_row.qa_page_subtitle if updated_row else agent.get("qa_page_subtitle")),
+            llm_model=(updated_row.llm_model if updated_row else agent.get("llm_model")),
         )
 
 

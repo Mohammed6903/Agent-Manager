@@ -131,6 +131,12 @@ class AgentRegistryRepository:
         ).update({"name": name})
         self.db.commit()
 
+    def update_llm_model(self, agent_id: str, llm_model: str) -> None:
+        self.db.query(AgentRegistry).filter(
+            AgentRegistry.agent_id == agent_id
+        ).update({"llm_model": llm_model})
+        self.db.commit()
+
     def soft_delete(self, agent_id: str) -> bool:
         """Mark the agent as deleted by stamping ``deleted_at``.
 

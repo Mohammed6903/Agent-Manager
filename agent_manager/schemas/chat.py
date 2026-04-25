@@ -56,7 +56,7 @@ class CreateAgentRequest(BaseModel):
 
     # Per-agent LLM model. Sent to the openclaw gateway via the
     # ``x-openclaw-model`` header on every chat call for this agent.
-    # Locked at create time: UpdateAgentRequest intentionally omits it.
+    # Editable post-create via UpdateAgentRequest.llm_model.
     llm_model: Optional[str] = None
 
     @field_validator("agent_id")
@@ -102,6 +102,7 @@ class UpdateAgentRequest(BaseModel):
     qa_persona_instructions: Optional[str] = None
     qa_page_title: Optional[str] = None
     qa_page_subtitle: Optional[str] = None
+    llm_model: Optional[str] = None
 
     @field_validator("agent_type")
     @classmethod
@@ -111,6 +112,17 @@ class UpdateAgentRequest(BaseModel):
         if v not in _ALLOWED_AGENT_TYPES:
             raise ValueError(
                 f"agent_type must be one of {_ALLOWED_AGENT_TYPES}, got {v!r}"
+            )
+        return v
+
+    @field_validator("llm_model")
+    @classmethod
+    def validate_llm_model(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if v not in _ALLOWED_LLM_MODELS:
+            raise ValueError(
+                f"llm_model must be one of {_ALLOWED_LLM_MODELS}, got {v!r}"
             )
         return v
 
