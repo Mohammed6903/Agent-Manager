@@ -236,6 +236,7 @@ async def _parse_multipart(
     room_id = form.get("room_id") or None
     recent_context = form.get("recent_context") or None
     history_raw = form.get("history") or None
+    model = form.get("model") or None
     # Parse history JSON string
     history: list[ChatMessage] = []
     if history_raw:
@@ -253,6 +254,7 @@ async def _parse_multipart(
         room_id=str(room_id) if room_id else None,
         recent_context=str(recent_context) if recent_context else None,
         history=history,
+        model=str(model) if model else None,
     )
 
     # Collect uploaded files
